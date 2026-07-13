@@ -5,7 +5,18 @@ const entryList = document.querySelector('[data-entry-list]');
 const capacityMessage = document.querySelector('[data-capacity-message]');
 const addPersonButton = document.querySelector('[data-action="add-person"]');
 const addPetButton = document.querySelector('[data-action="add-pet"]');
+const treeReviewCard = document.querySelector('[data-tree-review-card]');
+const currentOrderItems = document.querySelector('[data-current-order-items]');
+const currentOrderSummary = document.querySelector('[data-current-order-summary]');
+const utilityOrderButtons = [...document.querySelectorAll('[data-action="view-current-order-utility"]')];
+const discardPanels = [...document.querySelectorAll('[data-discard-panel]')];
 const storageKey = 'forge-tree-ornament-draft';
+const orderItemsStorageKey = 'forge-order-items';
+const appStateStorageKey = 'forge-app-state';
+const reviewPriceBySize = {
+  Small: 26,
+  Large: 30
+};
 
 const treeFields = {
   size: document.querySelector('[name="size"]'),
@@ -31,10 +42,32 @@ const draft = {
   entries: []
 };
 
+const appState = {
+  currentScreen: 'welcome',
+  editingItemId: '',
+  reviewedItemId: ''
+};
+
+const reviewState = {
+  saving: false,
+  lastAddedItemId: '',
+  error: ''
+};
+
+const orderUiState = {
+  removeConfirmItemId: '',
+  note: '',
+  discardContext: ''
+};
+
+let orderUiNoteTimer = 0;
+
 function showScreen(name) {
   screens.forEach((screen) => {
     screen.classList.toggle('active', screen.dataset.screen === name);
   });
+  appState.currentScreen = name;
+  saveAppState();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -61,6 +94,18 @@ document.querySelectorAll('[data-action="back-ornaments"]').forEach((button) => 
   button.addEventListener('click', () => {
     clearTreeFormErrors();
     showScreen('ornaments');
+  });
+});
+
+document.querySelectorAll('[data-action="back-tree-customization"]').forEach((button) => {
+  button.addEventListener('click', () => {
+    showScreen('tree-customization');
+  });
+});
+
+document.querySelectorAll('[data-action="back-tree-review"]').forEach((button) => {
+  button.addEventListener('click', () => {
+    showScreen('tree-review');
   });
 });
 
@@ -93,6 +138,10 @@ function setFieldError(name, message) {
   if (error) {
     error.textContent = message;
   }
+}
+
+function getSavedOrderItemCount() {
+  return getOrderItems().length;
 }
 
 function clearTreeFormErrors() {
@@ -151,6 +200,30 @@ function hydrateFormFromDraft() {
 function saveDraft() {
   syncDraftFromFields();
   localStorage.setItem(storageKey, JSON.stringify(draft));
+}
+
+function saveAppState() {
+  localStorage.setItem(appStateStorageKey, JSON.stringify(appState));
+}
+
+function loadAppState() {
+  try {
+    const raw = localStorage.getItem(appStateStorageKey);
+    if (!raw) {
+      return;
+    }
+
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.currentScreen === 'string') {
+      appState.currentScreen = parsed.currentScreen;
+    }
+    if (typeof parsed.editingItemId === 'string') {
+      appState.editingItemId = parsed.editingItemId;
+    }
+    if (typeof parsed.reviewedItemId === 'string') {
+      appState.reviewedItemId = parsed.reviewedItemId;
+    }
+  } catch {}
 }
 
 function loadDraft() {
@@ -224,6 +297,8 @@ function renderEntries(focusId) {
   if (draft.entries.length === 0) {
     entryList.innerHTML = '<li class="entry-empty">Add a person or pet to start the ornament list.</li>';
     renderCapacityMessage();
+    renderCurrentOrderUtilityButtons();
+    renderDiscardPanels();
     return;
   }
 
@@ -308,6 +383,9 @@ function renderEntries(focusId) {
       }, 120);
     }
   }
+
+  renderCurrentOrderUtilityButtons();
+  renderDiscardPanels();
 }
 
 function escapeAttribute(value) {
@@ -316,6 +394,642 @@ function escapeAttribute(value) {
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+function escapeHtml(value) {
+  return escapeAttribute(value);
+}
+
+function formatPrice(amount) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD'
+  }).format(amount);
+}
+
+function getTreeUnitPrice(size) {
+  return reviewPriceBySize[size] ?? 0;
+}
+
+function getPetIconText(entry) {
+  if (entry.icon === 'No Icon') {
+    return 'No Icon';
+  }
+  return entry.icon || 'Not selected';
+}
+
+function getEntryCounts(entries) {
+  return entries.reduce((counts, entry) => {
+    if (entry.kind === 'pet') {
+      counts.petCount += 1;
+    } else {
+      counts.peopleCount += 1;
+    }
+    return counts;
+  }, { peopleCount: 0, petCount: 0 });
+}
+
+function getReviewEntriesMarkup(entries) {
+  return entries.map((entry, index) => {
+    const details = [];
+    if (entry.kind === 'pet') {
+      details.push(`Icon: ${escapeHtml(entry.icon || 'Not selected')}`);
+      if (entry.icon === 'Custom Icon' && sanitizeText(entry.iconOther || '')) {
+        details.push(`Custom icon: ${escapeHtml(sanitizeText(entry.iconOther))}`);
+      }
+    }
+
+    return `
+      <li class="review-entry-item">
+        <span class="review-entry-position">${index + 1}.</span>
+        <div class="review-entry-body">
+          <div class="review-entry-primary">
+            <span class="review-entry-name">${escapeHtml(sanitizeText(entry.name) || 'Unnamed')}</span>
+            <span class="review-entry-badge">${entry.kind === 'pet' ? 'Pet' : 'Person'}</span>
+          </div>
+          ${details.length > 0 ? `<div class="review-entry-detail">${details.join(' • ')}</div>` : ''}
+        </div>
+      </li>
+    `;
+  }).join('');
+}
+
+function createTreeReviewMarkup() {
+  const unitPrice = getTreeUnitPrice(draft.size);
+  const actionLabel = appState.editingItemId ? 'Save Changes' : 'Add to Order';
+  const statusMessage = reviewState.error || '';
+  const statusClass = reviewState.error ? 'inline-confirmation is-error' : 'inline-confirmation';
+
+  return `
+    <div class="review-card-layout">
+      <div>
+        <img class="review-product-photo" src="assets/products/tree-ornament.jpg" alt="Tree Ornament">
+      </div>
+      <div class="review-copy">
+        <div class="review-header">
+          <div>
+            <h3>Tree Ornament</h3>
+            <p class="review-subtitle">Item-level review before adding this ornament to the order.</p>
+          </div>
+          <div class="review-price">${formatPrice(unitPrice)}</div>
+        </div>
+
+        <div class="summary-grid">
+          <div class="summary-item">
+            <span class="summary-label">Size</span>
+            <div class="summary-value">${escapeHtml(draft.size)}</div>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Tree Color</span>
+            <div class="summary-value">${escapeHtml(draft.treeColor)}</div>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Bow Color</span>
+            <div class="summary-value">${escapeHtml(draft.bowColor)}</div>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Year</span>
+            <div class="summary-value">${escapeHtml(draft.year)}</div>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Family Name</span>
+            <div class="summary-value">${escapeHtml(draft.familyName)}</div>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Quantity</span>
+            <div class="summary-value">1</div>
+          </div>
+        </div>
+
+        <div class="review-list-card">
+          <h4>People &amp; Pets</h4>
+          <ol class="review-entry-list">
+            ${getReviewEntriesMarkup(draft.entries)}
+          </ol>
+        </div>
+
+        <p class="${statusClass}" data-review-confirmation aria-live="polite">${statusMessage}</p>
+
+        <div class="review-actions">
+          <button class="secondary-button" type="button" data-action="edit-tree-review">Edit Ornament</button>
+          <button class="primary-button" type="button" data-action="add-tree-to-order" ${reviewState.saving ? 'disabled' : ''}>
+            ${reviewState.saving ? 'Saving...' : actionLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function normalizeTreeOrderItem() {
+  const entries = draft.entries.map((entry, index) => ({
+    position: index + 1,
+    kind: entry.kind,
+    name: sanitizeText(entry.name),
+    icon: entry.kind === 'pet' ? entry.icon : null,
+    customIconDescription: entry.kind === 'pet' && entry.icon === 'Custom Icon'
+      ? sanitizeText(entry.iconOther || '')
+      : ''
+  }));
+
+  const { peopleCount, petCount } = getEntryCounts(entries);
+  const unitPrice = getTreeUnitPrice(draft.size);
+  const configurationSnapshot = {
+    size: draft.size,
+    treeColor: draft.treeColor,
+    bowColor: draft.bowColor,
+    familyName: draft.familyName,
+    year: draft.year,
+    entries
+  };
+
+  return {
+    itemId: appState.editingItemId || `tree-item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    productDefinitionId: 'tree_ornament',
+    displayName: 'Tree Ornament',
+    category: 'ornament',
+    quantity: 1,
+    unitPrice,
+    size: draft.size,
+    treeColor: draft.treeColor,
+    bowColor: draft.bowColor,
+    familyName: draft.familyName,
+    year: draft.year,
+    orderedEntries: entries,
+    peopleCount,
+    petCount,
+    hasCustomIcon: entries.some((entry) => entry.customIconDescription),
+    configurationSnapshot
+  };
+}
+
+function normalizeOrderItemRecord(record) {
+  if (!record || typeof record !== 'object') {
+    return null;
+  }
+
+  const itemId = typeof record.itemId === 'string' && record.itemId ? record.itemId : '';
+  const displayName = typeof record.displayName === 'string' ? record.displayName : '';
+  const category = typeof record.category === 'string' ? record.category : '';
+  const quantity = Number.isFinite(record.quantity) ? record.quantity : 1;
+  const unitPrice = Number.isFinite(record.unitPrice) ? record.unitPrice : 0;
+  const orderedEntries = Array.isArray(record.orderedEntries)
+    ? record.orderedEntries.map((entry, index) => {
+        if (!entry || (entry.kind !== 'person' && entry.kind !== 'pet')) {
+          return null;
+        }
+        return {
+          position: Number.isFinite(entry.position) ? entry.position : index + 1,
+          kind: entry.kind,
+          name: typeof entry.name === 'string' ? sanitizeText(entry.name) : '',
+          icon: typeof entry.icon === 'string' ? entry.icon : '',
+          customIconDescription: typeof entry.customIconDescription === 'string'
+            ? sanitizeText(entry.customIconDescription)
+            : ''
+        };
+      }).filter(Boolean)
+    : [];
+
+  if (!itemId || !displayName || quantity < 1) {
+    return null;
+  }
+
+  return {
+    itemId,
+    productDefinitionId: typeof record.productDefinitionId === 'string' ? record.productDefinitionId : '',
+    displayName,
+    category,
+    quantity,
+    unitPrice,
+    size: typeof record.size === 'string' ? record.size : '',
+    treeColor: typeof record.treeColor === 'string' ? record.treeColor : '',
+    bowColor: typeof record.bowColor === 'string' ? record.bowColor : '',
+    familyName: typeof record.familyName === 'string' ? sanitizeText(record.familyName) : '',
+    year: typeof record.year === 'string' ? record.year : '',
+    orderedEntries,
+    peopleCount: Number.isFinite(record.peopleCount) ? record.peopleCount : orderedEntries.filter((entry) => entry.kind === 'person').length,
+    petCount: Number.isFinite(record.petCount) ? record.petCount : orderedEntries.filter((entry) => entry.kind === 'pet').length,
+    hasCustomIcon: Boolean(record.hasCustomIcon),
+    configurationSnapshot: record.configurationSnapshot && typeof record.configurationSnapshot === 'object'
+      ? record.configurationSnapshot
+      : null
+  };
+}
+
+function getOrderItems() {
+  try {
+    const raw = localStorage.getItem(orderItemsStorageKey);
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map(normalizeOrderItemRecord).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveOrderItems(items) {
+  localStorage.setItem(orderItemsStorageKey, JSON.stringify(items));
+}
+
+function isTreeDraftBlank() {
+  return !draft.size
+    && !draft.treeColor
+    && !draft.bowColor
+    && !sanitizeText(draft.familyName)
+    && draft.entries.length === 0
+    && (!draft.year || draft.year === '2026');
+}
+
+function shouldShowCurrentOrderUtility(context) {
+  if (context === 'tree-customization' || context === 'tree-review') {
+    return Boolean(appState.editingItemId) || getSavedOrderItemCount() > 0;
+  }
+  return getSavedOrderItemCount() > 0;
+}
+
+function getCurrentOrderUtilityLabel(context) {
+  if ((context === 'tree-customization' || context === 'tree-review') && appState.editingItemId) {
+    return 'Cancel Edit';
+  }
+  return `View Current Order (${getSavedOrderItemCount()})`;
+}
+
+function renderCurrentOrderUtilityButtons() {
+  utilityOrderButtons.forEach((button) => {
+    const context = button.dataset.utilityContext || '';
+    const visible = shouldShowCurrentOrderUtility(context);
+    button.hidden = !visible;
+    if (visible) {
+      button.textContent = getCurrentOrderUtilityLabel(context);
+      button.setAttribute('aria-label', button.textContent);
+    }
+  });
+}
+
+function createDiscardPanelMarkup() {
+  return `
+    <p>Discard this unfinished ornament and return to your current order?</p>
+    <div class="inline-discard-actions">
+      <button class="secondary-button" type="button" data-action="keep-editing-discard">Keep Editing</button>
+      <button class="primary-button" type="button" data-action="discard-and-view-order">Discard and View Order</button>
+    </div>
+  `;
+}
+
+function renderDiscardPanels() {
+  discardPanels.forEach((panel) => {
+    const active = panel.dataset.discardPanel === orderUiState.discardContext;
+    panel.hidden = !active;
+    panel.innerHTML = active ? createDiscardPanelMarkup() : '';
+  });
+}
+
+function clearDiscardPrompt() {
+  orderUiState.discardContext = '';
+  renderDiscardPanels();
+}
+
+function openCurrentOrderUtilityFromContext(context) {
+  clearOrderUiNote();
+
+  if ((context === 'tree-customization' || context === 'tree-review') && appState.editingItemId) {
+    appState.editingItemId = '';
+    appState.reviewedItemId = '';
+    saveAppState();
+    clearDiscardPrompt();
+    openCurrentOrder();
+    return;
+  }
+
+  if (context === 'tree-customization') {
+    if (isTreeDraftBlank()) {
+      resetTreeDraftForNewItem();
+      clearDiscardPrompt();
+      openCurrentOrder();
+      return;
+    }
+    orderUiState.discardContext = 'tree-customization';
+    renderDiscardPanels();
+    return;
+  }
+
+  if (context === 'tree-review') {
+    orderUiState.discardContext = 'tree-review';
+    renderDiscardPanels();
+    return;
+  }
+
+  clearDiscardPrompt();
+  openCurrentOrder();
+}
+
+function clearOrderUiNote() {
+  if (orderUiNoteTimer) {
+    window.clearTimeout(orderUiNoteTimer);
+    orderUiNoteTimer = 0;
+  }
+  orderUiState.note = '';
+}
+
+function setOrderUiNote(message, autoDismissMs = 5000) {
+  clearOrderUiNote();
+  orderUiState.note = message;
+  if (autoDismissMs > 0) {
+    orderUiNoteTimer = window.setTimeout(() => {
+      orderUiState.note = '';
+      orderUiNoteTimer = 0;
+      if (appState.currentScreen === 'current-order') {
+        renderCurrentOrder();
+      }
+    }, autoDismissMs);
+  }
+}
+
+function buildDraftFromOrderItem(item) {
+  return {
+    size: item.size,
+    treeColor: item.treeColor,
+    bowColor: item.bowColor,
+    familyName: item.familyName,
+    year: item.year,
+    entries: item.orderedEntries.map((entry) => ({
+      id: createId(),
+      kind: entry.kind,
+      name: entry.name,
+      icon: entry.kind === 'pet' ? entry.icon : '',
+      iconOther: entry.customIconDescription || ''
+    }))
+  };
+}
+
+function renderTreeReview() {
+  if (!treeReviewCard) {
+    return;
+  }
+
+  treeReviewCard.innerHTML = createTreeReviewMarkup();
+  renderCurrentOrderUtilityButtons();
+  renderDiscardPanels();
+}
+
+function getCurrentOrderStats(items) {
+  return items.reduce((stats, item) => {
+    stats.itemCount += item.quantity;
+    stats.subtotal += item.quantity * item.unitPrice;
+    return stats;
+  }, { itemCount: 0, subtotal: 0 });
+}
+
+function createCurrentOrderItemMarkup(item) {
+  const entriesMarkup = item.orderedEntries.map((entry) => `
+    <li class="review-entry-item">
+      <span class="review-entry-position">${entry.position}.</span>
+      <div class="review-entry-body">
+        <div class="review-entry-primary">
+          <span class="review-entry-name">${escapeHtml(entry.name || 'Unnamed')}</span>
+          <span class="review-entry-badge">${entry.kind === 'pet' ? 'Pet' : 'Person'}</span>
+        </div>
+        ${entry.kind === 'pet' ? `
+          <div class="review-entry-detail">
+            Icon: ${escapeHtml(getPetIconText(entry))}
+            ${entry.customIconDescription ? ` • Custom icon: ${escapeHtml(entry.customIconDescription)}` : ''}
+          </div>
+        ` : ''}
+      </div>
+    </li>
+  `).join('');
+
+  const removeMarkup = orderUiState.removeConfirmItemId === item.itemId
+    ? `
+      <div class="inline-remove-actions">
+        <button class="secondary-button" type="button" data-action="confirm-remove-item" data-item-id="${item.itemId}">Confirm Remove</button>
+        <button class="text-button" type="button" data-action="cancel-remove-item">Cancel</button>
+      </div>
+    `
+    : `
+      <button class="text-button" type="button" data-action="request-remove-item" data-item-id="${item.itemId}">Remove Item</button>
+    `;
+
+  return `
+    <article class="current-order-item" data-item-id="${item.itemId}">
+      <div class="current-order-item-layout">
+        <div>
+          <img class="current-order-photo" src="assets/products/tree-ornament.jpg" alt="Tree Ornament order item">
+        </div>
+        <div class="current-order-copy">
+          <div class="current-order-header">
+            <div>
+              <h3>${escapeHtml(item.displayName)}</h3>
+            </div>
+            <div class="current-order-price">
+              <strong>${formatPrice(item.unitPrice * item.quantity)}</strong>
+              <span>${item.quantity} × ${formatPrice(item.unitPrice)}</span>
+            </div>
+          </div>
+
+          <div class="current-order-meta">
+            <div class="summary-item">
+              <span class="summary-label">Quantity</span>
+              <div class="summary-value">${item.quantity}</div>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Size</span>
+              <div class="summary-value">${escapeHtml(item.size)}</div>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Tree Color</span>
+              <div class="summary-value">${escapeHtml(item.treeColor)}</div>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Bow Color</span>
+              <div class="summary-value">${escapeHtml(item.bowColor)}</div>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Family Name</span>
+              <div class="summary-value">${escapeHtml(item.familyName)}</div>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Year</span>
+              <div class="summary-value">${escapeHtml(item.year)}</div>
+            </div>
+          </div>
+
+          <div class="current-order-list-card">
+            <h4>People &amp; Pets</h4>
+            <ol class="review-entry-list">
+              ${entriesMarkup}
+            </ol>
+          </div>
+
+          <div class="current-order-actions">
+            <button class="secondary-button" type="button" data-action="edit-order-item" data-item-id="${item.itemId}">Edit Item</button>
+            ${removeMarkup}
+          </div>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderCurrentOrder() {
+  const items = getOrderItems();
+  const { itemCount, subtotal } = getCurrentOrderStats(items);
+
+  if (currentOrderItems) {
+    currentOrderItems.innerHTML = items.length === 0
+      ? `
+        <div class="empty-order-card">
+          <h3>Your order is empty</h3>
+          <p>Add an ornament to begin building this order.</p>
+          <button class="primary-button" type="button" data-action="add-another-ornament">Add Another Ornament</button>
+        </div>
+      `
+      : items.map(createCurrentOrderItemMarkup).join('');
+  }
+
+  if (currentOrderSummary) {
+    currentOrderSummary.innerHTML = `
+      <h3>Order Summary</h3>
+      <div class="current-order-stats" aria-live="polite">
+        <div class="stat-row">
+          <span>Total Items</span>
+          <strong>${itemCount}</strong>
+        </div>
+        <div class="stat-row">
+          <span>Item Subtotal</span>
+          <strong>${formatPrice(subtotal)}</strong>
+        </div>
+      </div>
+      <p class="current-order-note" data-current-order-note aria-live="polite">${escapeHtml(orderUiState.note)}</p>
+      <button class="secondary-button current-order-secondary" type="button" data-action="add-another-ornament">Add Another Ornament</button>
+      <button class="primary-button current-order-primary" type="button" data-action="continue-customer-info">Continue to Customer Information</button>
+    `;
+  }
+
+  renderCurrentOrderUtilityButtons();
+}
+
+function resetTreeDraftForNewItem() {
+  draft.size = '';
+  draft.treeColor = '';
+  draft.bowColor = '';
+  draft.familyName = '';
+  draft.year = '2026';
+  draft.entries = [];
+  appState.editingItemId = '';
+  appState.reviewedItemId = '';
+  reviewState.saving = false;
+  reviewState.lastAddedItemId = '';
+  reviewState.error = '';
+  clearOrderUiNote();
+  clearDiscardPrompt();
+  saveDraft();
+  saveAppState();
+  renderEntries();
+  renderTreeReview();
+}
+
+function loadCartItemIntoDraft(itemId) {
+  const item = getOrderItems().find((cartItem) => cartItem.itemId === itemId);
+  if (!item) {
+    return;
+  }
+
+  const draftSource = buildDraftFromOrderItem(item);
+  draft.size = draftSource.size;
+  draft.treeColor = draftSource.treeColor;
+  draft.bowColor = draftSource.bowColor;
+  draft.familyName = draftSource.familyName;
+  draft.year = draftSource.year;
+  draft.entries = draftSource.entries;
+  appState.editingItemId = item.itemId;
+  appState.reviewedItemId = item.itemId;
+  clearOrderUiNote();
+  reviewState.saving = false;
+  reviewState.lastAddedItemId = '';
+  reviewState.error = '';
+  clearDiscardPrompt();
+  saveDraft();
+  saveAppState();
+  renderEntries();
+  renderTreeReview();
+  showScreen('tree-customization');
+}
+
+function removeOrderItem(itemId) {
+  const items = getOrderItems().filter((item) => item.itemId !== itemId);
+  saveOrderItems(items);
+  if (appState.editingItemId === itemId) {
+    appState.editingItemId = '';
+  }
+  if (appState.reviewedItemId === itemId) {
+    appState.reviewedItemId = '';
+  }
+  saveAppState();
+  orderUiState.removeConfirmItemId = '';
+  clearOrderUiNote();
+  clearDiscardPrompt();
+  renderCurrentOrder();
+}
+
+function openCurrentOrder() {
+  clearDiscardPrompt();
+  renderCurrentOrder();
+  showScreen('current-order');
+}
+
+function openTreeReview() {
+  reviewState.saving = false;
+  reviewState.lastAddedItemId = '';
+  reviewState.error = '';
+  appState.reviewedItemId = appState.editingItemId || '';
+  clearDiscardPrompt();
+  renderTreeReview();
+  showScreen('tree-review');
+}
+
+function addTreeItemToOrder() {
+  if (reviewState.saving) {
+    return;
+  }
+
+  reviewState.saving = true;
+  reviewState.error = '';
+  renderTreeReview();
+
+  try {
+    const item = normalizeTreeOrderItem();
+    const items = getOrderItems();
+    const existingIndex = items.findIndex((existingItem) => existingItem.itemId === item.itemId);
+    if (existingIndex >= 0) {
+      items.splice(existingIndex, 1, item);
+    } else {
+      items.push(item);
+    }
+    saveOrderItems(items);
+
+    const persistedItems = getOrderItems();
+    const savedItem = persistedItems.find((persistedItem) => persistedItem.itemId === item.itemId);
+    if (!savedItem) {
+      throw new Error('save_failed');
+    }
+
+    reviewState.saving = false;
+    reviewState.lastAddedItemId = item.itemId;
+    reviewState.error = '';
+    appState.reviewedItemId = item.itemId;
+    appState.editingItemId = '';
+    saveAppState();
+    setOrderUiNote(appState.editingItemId ? 'Tree Ornament updated.' : 'Tree Ornament added to your order.');
+    openCurrentOrder();
+  } catch {
+    reviewState.saving = false;
+    reviewState.error = 'We could not save this item. Please try again.';
+    renderTreeReview();
+  }
 }
 
 function addEntry(kind) {
@@ -469,11 +1183,30 @@ function validateTreeForm() {
 }
 
 if (treeForm) {
+  loadAppState();
   loadDraft();
   renderEntries();
+  renderTreeReview();
+  renderCurrentOrder();
+  renderCurrentOrderUtilityButtons();
+  renderDiscardPanels();
+
+  if (appState.currentScreen === 'tree-customization') {
+    showScreen('tree-customization');
+  } else if (appState.currentScreen === 'tree-review' && draft.entries.length > 0) {
+    showScreen('tree-review');
+  } else if (appState.currentScreen === 'current-order') {
+    showScreen('current-order');
+  }
 
   addPersonButton.addEventListener('click', () => addEntry('person'));
   addPetButton.addEventListener('click', () => addEntry('pet'));
+
+  utilityOrderButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      openCurrentOrderUtilityFromContext(button.dataset.utilityContext || '');
+    });
+  });
 
   treeForm.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -485,7 +1218,7 @@ if (treeForm) {
     }
 
     treeStatus.textContent = '';
-    alert('Tree ornament details saved. Review and checkout will be added in a future step.');
+    openTreeReview();
   });
 
   Object.entries(treeFields).forEach(([name, field]) => {
@@ -580,5 +1313,97 @@ if (treeForm) {
     }
     setFieldError('entries', '');
     treeStatus.textContent = '';
+  });
+
+  treeReviewCard?.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    if (!action) {
+      return;
+    }
+
+    if (action === 'edit-tree-review') {
+      showScreen('tree-customization');
+      return;
+    }
+
+    if (action === 'add-tree-to-order') {
+      addTreeItemToOrder();
+    }
+  });
+
+  currentOrderItems?.addEventListener('click', (event) => {
+    const target = event.target.closest('[data-action]');
+    if (!target) {
+      return;
+    }
+
+    const { action, itemId } = target.dataset;
+    clearOrderUiNote();
+
+    if (action === 'edit-order-item' && itemId) {
+      loadCartItemIntoDraft(itemId);
+      return;
+    }
+
+    if (action === 'request-remove-item' && itemId) {
+      orderUiState.removeConfirmItemId = itemId;
+      renderCurrentOrder();
+      return;
+    }
+
+    if (action === 'cancel-remove-item') {
+      orderUiState.removeConfirmItemId = '';
+      renderCurrentOrder();
+      return;
+    }
+
+    if (action === 'confirm-remove-item' && itemId) {
+      removeOrderItem(itemId);
+      return;
+    }
+
+    if (action === 'add-another-ornament') {
+      resetTreeDraftForNewItem();
+      showScreen('ornaments');
+    }
+  });
+
+  currentOrderSummary?.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    if (!action) {
+      return;
+    }
+
+    clearOrderUiNote();
+
+    if (action === 'add-another-ornament') {
+      resetTreeDraftForNewItem();
+      showScreen('ornaments');
+      return;
+    }
+
+    if (action === 'continue-customer-info') {
+      orderUiState.note = 'Customer information is the next step in development.';
+      renderCurrentOrder();
+    }
+  });
+
+  discardPanels.forEach((panel) => {
+    panel.addEventListener('click', (event) => {
+      const action = event.target.closest('[data-action]')?.dataset.action;
+      if (!action) {
+        return;
+      }
+
+      if (action === 'keep-editing-discard') {
+        clearDiscardPrompt();
+        return;
+      }
+
+      if (action === 'discard-and-view-order') {
+        resetTreeDraftForNewItem();
+        openCurrentOrder();
+      }
+    });
   });
 }

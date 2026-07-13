@@ -72,6 +72,7 @@
       <section class="screen" data-screen="ornaments">
         <div class="toolbar">
           <button class="secondary-button" type="button" data-action="back-categories">← Back</button>
+          <button class="secondary-button toolbar-utility" type="button" data-action="view-current-order-utility" data-utility-context="ornaments" hidden>View Current Order</button>
         </div>
         <div class="screen-heading">
           <p class="eyebrow">Choose an Ornament</p>
@@ -139,6 +140,7 @@
       <section class="screen" data-screen="tree-customization">
         <div class="toolbar">
           <button class="secondary-button" type="button" data-action="back-ornaments">← Back</button>
+          <button class="secondary-button toolbar-utility" type="button" data-action="view-current-order-utility" data-utility-context="tree-customization" hidden>View Current Order</button>
         </div>
 
         <div class="screen-heading">
@@ -216,6 +218,7 @@
               <p class="field-error" data-error-for="year" aria-live="polite"></p>
             </div>
 
+            <div class="inline-discard-panel" data-discard-panel="tree-customization" hidden></div>
             <p class="form-status" data-form-status aria-live="polite"></p>
 
             <div class="form-actions">
@@ -223,6 +226,41 @@
               <button class="primary-button" type="submit">Continue</button>
             </div>
           </form>
+        </div>
+      </section>
+
+      <section class="screen" data-screen="tree-review">
+        <div class="toolbar">
+          <button class="secondary-button" type="button" data-action="back-tree-customization">← Back</button>
+          <button class="secondary-button toolbar-utility" type="button" data-action="view-current-order-utility" data-utility-context="tree-review" hidden>View Current Order</button>
+        </div>
+
+        <div class="screen-heading">
+          <p class="eyebrow">Tree Ornament</p>
+          <h2>Review this item</h2>
+          <p>Double-check the ornament details before adding it to the order.</p>
+        </div>
+
+        <div class="review-layout">
+          <div class="inline-discard-panel" data-discard-panel="tree-review" hidden></div>
+          <div class="review-card order-summary-card" data-tree-review-card></div>
+        </div>
+      </section>
+
+      <section class="screen" data-screen="current-order">
+        <div class="toolbar">
+          <button class="secondary-button" type="button" data-action="back-tree-review">← Back</button>
+        </div>
+
+        <div class="screen-heading">
+          <p class="eyebrow">Current Order</p>
+          <h2>Your Current Order</h2>
+          <p>Review your items or add another before entering customer information.</p>
+        </div>
+
+        <div class="current-order-layout">
+          <div class="current-order-items" data-current-order-items></div>
+          <aside class="current-order-sidebar order-summary-card" data-current-order-summary></aside>
         </div>
       </section>
     </main>
