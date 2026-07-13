@@ -14,7 +14,24 @@
   <div class="app-shell">
     <header class="customer-header">
       <img class="brand-logo" src="assets/brand/hilltop-logo.png" alt="The Hilltop Shop">
-      <button class="staff-entry" type="button" aria-label="Staff access" data-action="staff">•••</button>
+      <div class="staff-controls">
+        <button class="staff-entry" type="button" aria-label="Staff access" aria-expanded="false" data-action="staff">•••</button>
+        <div class="staff-panel" data-staff-panel role="dialog" aria-labelledby="staff-panel-title" hidden>
+          <p class="staff-panel-title" id="staff-panel-title">Staff Tools</p>
+          <p class="staff-panel-copy">Reset this shared kiosk before the next customer begins.</p>
+          <div class="staff-panel-actions" data-staff-actions="default">
+            <button class="secondary-button" type="button" data-action="staff-reset-kiosk">Reset Kiosk</button>
+            <button class="secondary-button" type="button" data-action="close-staff-panel">Cancel</button>
+          </div>
+          <div class="staff-panel-confirm" data-staff-actions="confirm" hidden>
+            <p>Reset this kiosk? This will clear the current order and all customer information.</p>
+            <div class="staff-panel-buttons">
+              <button class="secondary-button" type="button" data-action="cancel-staff-reset">Cancel</button>
+              <button class="primary-button" type="button" data-action="confirm-staff-reset">Reset Kiosk</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </header>
 
     <main>
@@ -261,6 +278,120 @@
         <div class="current-order-layout">
           <div class="current-order-items" data-current-order-items></div>
           <aside class="current-order-sidebar order-summary-card" data-current-order-summary></aside>
+        </div>
+      </section>
+
+      <section class="screen" data-screen="customer-information">
+        <div class="toolbar">
+          <button class="secondary-button" type="button" data-action="back-current-order">← Back</button>
+        </div>
+
+        <div class="screen-heading">
+          <p class="eyebrow">Customer Information</p>
+          <h2>How should we contact you?</h2>
+          <p>Shipping is the default. Availability for needed-by dates is not guaranteed.</p>
+        </div>
+
+        <div class="customer-layout">
+          <div class="customer-form-card order-summary-card">
+            <div class="customer-order-context" data-customer-order-context aria-live="polite"></div>
+
+            <form class="customer-form" data-form="customer-information" autocomplete="off" novalidate>
+              <div class="form-group">
+                <label for="customer-full-name">Full Name</label>
+                <input id="customer-full-name" name="forgeCustomerFullName" data-customer-field="fullName" type="text" maxlength="80" spellcheck="false" autocorrect="off" autocomplete="off" autocapitalize="words" required>
+                <p class="field-error" data-customer-error-for="fullName" aria-live="polite"></p>
+              </div>
+
+              <div class="form-group">
+                <label for="customer-email">Email Address</label>
+                <input id="customer-email" name="forgeCustomerEmailAddress" data-customer-field="email" type="email" inputmode="email" spellcheck="false" autocorrect="off" autocomplete="off" autocapitalize="off" required>
+                <p class="field-error" data-customer-error-for="email" aria-live="polite"></p>
+              </div>
+
+              <div class="form-group">
+                <label for="customer-phone">Phone Number</label>
+                <input id="customer-phone" name="forgeCustomerPhoneNumber" data-customer-field="phone" type="tel" inputmode="tel" spellcheck="false" autocorrect="off" autocomplete="off" autocapitalize="off" required>
+                <p class="field-error" data-customer-error-for="phone" aria-live="polite"></p>
+              </div>
+
+              <div class="form-group">
+                <label>Preferred Contact</label>
+                <div class="choice-grid" role="group" aria-label="Preferred Contact">
+                  <button class="choice-card" type="button" data-contact-choice="Text">Text</button>
+                  <button class="choice-card" type="button" data-contact-choice="Email">Email</button>
+                </div>
+                <p class="field-error" data-customer-error-for="preferredContact" aria-live="polite"></p>
+              </div>
+
+              <div class="form-group">
+                <label>Fulfillment</label>
+                <div class="choice-grid" role="group" aria-label="Fulfillment Method">
+                  <button class="choice-card fulfillment-card" type="button" data-fulfillment-choice="Shipping">
+                    <span class="choice-card-title">Shipping</span>
+                    <span class="choice-card-copy">Ship this order to your address.</span>
+                  </button>
+                  <button class="choice-card fulfillment-card" type="button" data-fulfillment-choice="Local Pickup">
+                    <span class="choice-card-title">Local Pickup</span>
+                    <span class="choice-card-copy">Pick up this order locally.</span>
+                  </button>
+                </div>
+                <p class="field-error" data-customer-error-for="fulfillmentMethod" aria-live="polite"></p>
+              </div>
+
+              <div class="shipping-fields" data-shipping-fields>
+                <div class="form-group">
+                  <label for="address-line-1">Address Line 1</label>
+                  <input id="address-line-1" name="forgeShippingAddressLine1" data-customer-field="addressLine1" type="text" maxlength="80" spellcheck="false" autocorrect="off" autocomplete="off" autocapitalize="words">
+                  <p class="field-error" data-customer-error-for="addressLine1" aria-live="polite"></p>
+                </div>
+
+                <div class="form-group">
+                  <label for="address-line-2">Address Line 2</label>
+                  <input id="address-line-2" name="forgeShippingAddressLine2" data-customer-field="addressLine2" type="text" maxlength="80" spellcheck="false" autocorrect="off" autocomplete="off" autocapitalize="words">
+                  <p class="field-error" data-customer-error-for="addressLine2" aria-live="polite"></p>
+                </div>
+
+                <div class="form-group">
+                  <label for="city">City</label>
+                  <input id="city" name="forgeShippingCity" data-customer-field="city" type="text" maxlength="50" spellcheck="false" autocorrect="off" autocomplete="off" autocapitalize="words">
+                  <p class="field-error" data-customer-error-for="city" aria-live="polite"></p>
+                </div>
+
+                <div class="form-group">
+                  <label for="state">State</label>
+                  <input id="state" name="forgeShippingStateProvince" data-customer-field="state" type="text" maxlength="40" spellcheck="false" autocorrect="off" autocomplete="off" autocapitalize="characters">
+                  <p class="field-error" data-customer-error-for="state" aria-live="polite"></p>
+                </div>
+
+                <div class="form-group">
+                  <label for="postal-code">Postal Code</label>
+                  <input id="postal-code" name="forgeShippingPostalCode" data-customer-field="postalCode" type="text" inputmode="numeric" maxlength="20" spellcheck="false" autocorrect="off" autocomplete="off" autocapitalize="off">
+                  <p class="field-error" data-customer-error-for="postalCode" aria-live="polite"></p>
+                </div>
+
+                <div class="form-group">
+                  <label for="country">Country</label>
+                  <input id="country" name="forgeShippingCountryName" data-customer-field="country" type="text" maxlength="56" spellcheck="false" autocorrect="off" autocomplete="off" autocapitalize="words">
+                  <p class="field-error" data-customer-error-for="country" aria-live="polite"></p>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="needed-by">Needed By</label>
+                <input id="needed-by" name="forgeCustomerNeededByDate" data-customer-field="neededBy" type="date" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off">
+                <p class="field-help">Availability is not guaranteed.</p>
+                <p class="field-error" data-customer-error-for="neededBy" aria-live="polite"></p>
+              </div>
+
+              <p class="form-status" data-customer-form-status aria-live="polite"></p>
+
+              <div class="form-actions">
+                <button class="secondary-button" type="button" data-action="back-current-order-form">Back to Current Order</button>
+                <button class="primary-button" type="submit">Continue to Review</button>
+              </div>
+            </form>
+          </div>
         </div>
       </section>
     </main>

@@ -8,11 +8,22 @@ const addPetButton = document.querySelector('[data-action="add-pet"]');
 const treeReviewCard = document.querySelector('[data-tree-review-card]');
 const currentOrderItems = document.querySelector('[data-current-order-items]');
 const currentOrderSummary = document.querySelector('[data-current-order-summary]');
+const customerForm = document.querySelector('[data-form="customer-information"]');
+const staffButton = document.querySelector('[data-action="staff"]');
+const staffPanel = document.querySelector('[data-staff-panel]');
+const staffDefaultActions = document.querySelector('[data-staff-actions="default"]');
+const staffConfirmActions = document.querySelector('[data-staff-actions="confirm"]');
+const customerOrderContext = document.querySelector('[data-customer-order-context]');
+const customerStatus = document.querySelector('[data-customer-form-status]');
+const contactChoiceButtons = [...document.querySelectorAll('[data-contact-choice]')];
+const fulfillmentChoiceButtons = [...document.querySelectorAll('[data-fulfillment-choice]')];
+const shippingFieldsContainer = document.querySelector('[data-shipping-fields]');
 const utilityOrderButtons = [...document.querySelectorAll('[data-action="view-current-order-utility"]')];
 const discardPanels = [...document.querySelectorAll('[data-discard-panel]')];
 const storageKey = 'forge-tree-ornament-draft';
 const orderItemsStorageKey = 'forge-order-items';
 const appStateStorageKey = 'forge-app-state';
+const customerDraftStorageKey = 'forge-customer-draft';
 const reviewPriceBySize = {
   Small: 26,
   Large: 30
@@ -26,11 +37,26 @@ const treeFields = {
   year: document.querySelector('[name="year"]')
 };
 
+const customerFields = {
+  fullName: document.querySelector('[data-customer-field="fullName"]'),
+  email: document.querySelector('[data-customer-field="email"]'),
+  phone: document.querySelector('[data-customer-field="phone"]'),
+  addressLine1: document.querySelector('[data-customer-field="addressLine1"]'),
+  addressLine2: document.querySelector('[data-customer-field="addressLine2"]'),
+  city: document.querySelector('[data-customer-field="city"]'),
+  state: document.querySelector('[data-customer-field="state"]'),
+  postalCode: document.querySelector('[data-customer-field="postalCode"]'),
+  country: document.querySelector('[data-customer-field="country"]'),
+  neededBy: document.querySelector('[data-customer-field="neededBy"]')
+};
+
 const allowedValues = {
   size: ['Small', 'Large'],
   treeColor: ['Green', 'Brown'],
   bowColor: ['Red', 'White'],
-  petIcon: ['Paw', 'Fish', 'No Icon', 'Custom Icon']
+  petIcon: ['Paw', 'Fish', 'No Icon', 'Custom Icon'],
+  preferredContact: ['Text', 'Email'],
+  fulfillmentMethod: ['Shipping', 'Local Pickup']
 };
 
 const draft = {
@@ -42,10 +68,27 @@ const draft = {
   entries: []
 };
 
+const customerDraft = {
+  orderSessionId: '',
+  fullName: '',
+  email: '',
+  phone: '',
+  preferredContact: '',
+  fulfillmentMethod: 'Shipping',
+  addressLine1: '',
+  addressLine2: '',
+  city: '',
+  state: '',
+  postalCode: '',
+  country: 'United States',
+  neededBy: ''
+};
+
 const appState = {
   currentScreen: 'welcome',
   editingItemId: '',
-  reviewedItemId: ''
+  reviewedItemId: '',
+  activeOrderSessionId: ''
 };
 
 const reviewState = {
@@ -61,6 +104,7 @@ const orderUiState = {
 };
 
 let orderUiNoteTimer = 0;
+let lastStaffFocusTarget = null;
 
 function showScreen(name) {
   screens.forEach((screen) => {
@@ -123,10 +167,6 @@ document.querySelectorAll('[data-product]').forEach((button) => {
   });
 });
 
-document.querySelector('[data-action="staff"]').addEventListener('click', () => {
-  alert('Staff workspace will be added behind a PIN in the next staff sprint.');
-});
-
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./service-worker.js').catch(() => {});
@@ -135,6 +175,13 @@ if ('serviceWorker' in navigator) {
 
 function setFieldError(name, message) {
   const error = document.querySelector(`[data-error-for="${name}"]`);
+  if (error) {
+    error.textContent = message;
+  }
+}
+
+function setCustomerFieldError(name, message) {
+  const error = document.querySelector(`[data-customer-error-for="${name}"]`);
   if (error) {
     error.textContent = message;
   }
@@ -156,12 +203,48 @@ function clearTreeFormErrors() {
   }
 }
 
+function clearCustomerFormErrors() {
+  Object.keys(customerFields).forEach((name) => setCustomerFieldError(name, ''));
+  setCustomerFieldError('preferredContact', '');
+  setCustomerFieldError('fulfillmentMethod', '');
+  if (customerStatus) {
+    customerStatus.textContent = '';
+  }
+}
+
 function sanitizeText(value) {
   return value.replace(/\s+/g, ' ').trim();
 }
 
 function createId() {
   return `entry-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createSessionId() {
+  return `order-session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function resetCustomerDraftState() {
+  customerDraft.orderSessionId = appState.activeOrderSessionId || '';
+  customerDraft.fullName = '';
+  customerDraft.email = '';
+  customerDraft.phone = '';
+  customerDraft.preferredContact = '';
+  customerDraft.fulfillmentMethod = 'Shipping';
+  customerDraft.addressLine1 = '';
+  customerDraft.addressLine2 = '';
+  customerDraft.city = '';
+  customerDraft.state = '';
+  customerDraft.postalCode = '';
+  customerDraft.country = 'United States';
+  customerDraft.neededBy = '';
+}
+
+function ensureActiveOrderSession() {
+  if (!appState.activeOrderSessionId) {
+    appState.activeOrderSessionId = createSessionId();
+    saveAppState();
+  }
 }
 
 function getMaxEntries(size) {
@@ -223,6 +306,9 @@ function loadAppState() {
     if (typeof parsed.reviewedItemId === 'string') {
       appState.reviewedItemId = parsed.reviewedItemId;
     }
+    if (typeof parsed.activeOrderSessionId === 'string') {
+      appState.activeOrderSessionId = parsed.activeOrderSessionId;
+    }
   } catch {}
 }
 
@@ -246,6 +332,399 @@ function loadDraft() {
   }
 
   hydrateFormFromDraft();
+}
+
+function getTodayIsoDate() {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function sanitizeEmail(value) {
+  return value.trim();
+}
+
+function sanitizePhone(value) {
+  return value.replace(/[^\d+()\-.\s]/g, '').replace(/\s{2,}/g, ' ').trim();
+}
+
+function sanitizePostalCode(value) {
+  return value.replace(/\s{2,}/g, ' ').trim();
+}
+
+function isUnitedStatesCountry(value) {
+  const normalized = sanitizeText(value).toLowerCase().replace(/\./g, '');
+  return normalized === 'united states' || normalized === 'us';
+}
+
+function syncCustomerDraftFromFields() {
+  customerDraft.orderSessionId = appState.activeOrderSessionId;
+  customerDraft.fullName = sanitizeText(customerFields.fullName?.value || '');
+  customerDraft.email = sanitizeEmail(customerFields.email?.value || '');
+  customerDraft.phone = sanitizePhone(customerFields.phone?.value || '');
+  customerDraft.addressLine1 = sanitizeText(customerFields.addressLine1?.value || '');
+  customerDraft.addressLine2 = sanitizeText(customerFields.addressLine2?.value || '');
+  customerDraft.city = sanitizeText(customerFields.city?.value || '');
+  customerDraft.state = sanitizeText(customerFields.state?.value || '');
+  customerDraft.postalCode = sanitizePostalCode(customerFields.postalCode?.value || '');
+  customerDraft.country = sanitizeText(customerFields.country?.value || '') || 'United States';
+  customerDraft.neededBy = customerFields.neededBy?.value || '';
+}
+
+function saveCustomerDraft() {
+  ensureActiveOrderSession();
+  syncCustomerDraftFromFields();
+  localStorage.setItem(customerDraftStorageKey, JSON.stringify(customerDraft));
+}
+
+function renderCustomerChoiceStates() {
+  contactChoiceButtons.forEach((button) => {
+    const selected = button.dataset.contactChoice === customerDraft.preferredContact;
+    button.classList.toggle('is-selected', selected);
+    button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+  });
+
+  fulfillmentChoiceButtons.forEach((button) => {
+    const selected = button.dataset.fulfillmentChoice === customerDraft.fulfillmentMethod;
+    button.classList.toggle('is-selected', selected);
+    button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+  });
+}
+
+function renderShippingFieldsState() {
+  if (!shippingFieldsContainer) {
+    return;
+  }
+
+  const isShipping = customerDraft.fulfillmentMethod === 'Shipping';
+  shippingFieldsContainer.hidden = !isShipping;
+
+  ['addressLine1', 'addressLine2', 'city', 'state', 'postalCode', 'country'].forEach((name) => {
+    const field = customerFields[name];
+    if (field) {
+      field.disabled = !isShipping;
+    }
+  });
+}
+
+function hydrateCustomerFormFromDraft() {
+  if (!customerForm) {
+    return;
+  }
+
+  customerFields.fullName.value = customerDraft.fullName;
+  customerFields.email.value = customerDraft.email;
+  customerFields.phone.value = customerDraft.phone;
+  customerFields.addressLine1.value = customerDraft.addressLine1;
+  customerFields.addressLine2.value = customerDraft.addressLine2;
+  customerFields.city.value = customerDraft.city;
+  customerFields.state.value = customerDraft.state;
+  customerFields.postalCode.value = customerDraft.postalCode;
+  customerFields.country.value = customerDraft.country || 'United States';
+  customerFields.neededBy.value = customerDraft.neededBy;
+  customerFields.neededBy.min = getTodayIsoDate();
+  renderCustomerChoiceStates();
+  renderShippingFieldsState();
+}
+
+function loadCustomerDraft() {
+  try {
+    const raw = localStorage.getItem(customerDraftStorageKey);
+    if (!raw) {
+      resetCustomerDraftState();
+      hydrateCustomerFormFromDraft();
+      return;
+    }
+
+    const parsed = JSON.parse(raw);
+    const draftOrderSessionId = typeof parsed.orderSessionId === 'string' ? parsed.orderSessionId : parsed.sessionId;
+    if (!parsed || draftOrderSessionId !== appState.activeOrderSessionId) {
+      resetCustomerDraftState();
+      localStorage.removeItem(customerDraftStorageKey);
+      hydrateCustomerFormFromDraft();
+      return;
+    }
+
+    customerDraft.orderSessionId = draftOrderSessionId;
+    customerDraft.fullName = typeof parsed.fullName === 'string' ? sanitizeText(parsed.fullName) : '';
+    customerDraft.email = typeof parsed.email === 'string' ? sanitizeEmail(parsed.email) : '';
+    customerDraft.phone = typeof parsed.phone === 'string' ? sanitizePhone(parsed.phone) : '';
+    customerDraft.preferredContact = allowedValues.preferredContact.includes(parsed.preferredContact) ? parsed.preferredContact : '';
+    customerDraft.fulfillmentMethod = allowedValues.fulfillmentMethod.includes(parsed.fulfillmentMethod) ? parsed.fulfillmentMethod : 'Shipping';
+    customerDraft.addressLine1 = typeof parsed.addressLine1 === 'string' ? sanitizeText(parsed.addressLine1) : '';
+    customerDraft.addressLine2 = typeof parsed.addressLine2 === 'string' ? sanitizeText(parsed.addressLine2) : '';
+    customerDraft.city = typeof parsed.city === 'string' ? sanitizeText(parsed.city) : '';
+    customerDraft.state = typeof parsed.state === 'string' ? sanitizeText(parsed.state) : '';
+    customerDraft.postalCode = typeof parsed.postalCode === 'string' ? sanitizePostalCode(parsed.postalCode) : '';
+    customerDraft.country = typeof parsed.country === 'string' && sanitizeText(parsed.country) ? sanitizeText(parsed.country) : 'United States';
+    customerDraft.neededBy = typeof parsed.neededBy === 'string' ? parsed.neededBy : '';
+  } catch {
+    resetCustomerDraftState();
+    localStorage.removeItem(customerDraftStorageKey);
+  }
+
+  hydrateCustomerFormFromDraft();
+}
+
+function clearCustomerDraftForNextOrder() {
+  appState.activeOrderSessionId = createSessionId();
+  saveAppState();
+  resetCustomerDraftState();
+  localStorage.removeItem(customerDraftStorageKey);
+  clearDisplayedCustomerFields();
+  hydrateCustomerFormFromDraft();
+  clearCustomerFormErrors();
+}
+
+function clearDisplayedCustomerFields() {
+  Object.values(customerFields).forEach((field) => {
+    if (field) {
+      field.value = '';
+    }
+  });
+  if (customerFields.country) {
+    customerFields.country.value = 'United States';
+  }
+}
+
+function setStaffPanelState(isOpen, needsConfirmation = false) {
+  if (!staffPanel || !staffButton || !staffDefaultActions || !staffConfirmActions) {
+    return;
+  }
+
+  staffPanel.hidden = !isOpen;
+  staffButton.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+  staffDefaultActions.hidden = needsConfirmation;
+  staffConfirmActions.hidden = !needsConfirmation;
+
+  if (isOpen) {
+    const focusTarget = needsConfirmation
+      ? staffPanel.querySelector('[data-action="cancel-staff-reset"]')
+      : staffPanel.querySelector('[data-action="staff-reset-kiosk"]');
+    window.setTimeout(() => focusTarget?.focus(), 0);
+  }
+}
+
+function closeStaffPanel() {
+  setStaffPanelState(false, false);
+  if (lastStaffFocusTarget instanceof HTMLElement) {
+    lastStaffFocusTarget.focus();
+  }
+}
+
+function resetActiveOrderSession({ clearCart = true, goToWelcome = true } = {}) {
+  if (clearCart) {
+    saveOrderItems([]);
+  }
+
+  draft.size = '';
+  draft.treeColor = '';
+  draft.bowColor = '';
+  draft.familyName = '';
+  draft.year = '2026';
+  draft.entries = [];
+  localStorage.removeItem(storageKey);
+
+  localStorage.removeItem(customerDraftStorageKey);
+  localStorage.removeItem(orderItemsStorageKey);
+
+  clearOrderUiNote();
+  clearDiscardPrompt();
+  orderUiState.removeConfirmItemId = '';
+
+  appState.editingItemId = '';
+  appState.reviewedItemId = '';
+  appState.activeOrderSessionId = createSessionId();
+  saveAppState();
+
+  resetCustomerDraftState();
+  clearDisplayedCustomerFields();
+  hydrateFormFromDraft();
+  hydrateCustomerFormFromDraft();
+  clearTreeFormErrors();
+  clearCustomerFormErrors();
+  renderEntries();
+  renderTreeReview();
+  renderCurrentOrder();
+  renderCustomerOrderContext();
+  renderCurrentOrderUtilityButtons();
+  closeStaffPanel();
+
+  if (goToWelcome) {
+    showScreen('welcome');
+  }
+}
+
+function renderCustomerOrderContext() {
+  if (!customerOrderContext) {
+    return;
+  }
+
+  const { itemCount, subtotal } = getCurrentOrderStats(getOrderItems());
+  customerOrderContext.innerHTML = `
+    <div class="stat-row">
+      <span>Current Items</span>
+      <strong>${itemCount}</strong>
+    </div>
+    <div class="stat-row">
+      <span>Item Subtotal</span>
+      <strong>${formatPrice(subtotal)}</strong>
+    </div>
+    <p class="customer-context-note">Shipping and tax will be reviewed later.</p>
+  `;
+}
+
+function hasOrderItems() {
+  return getSavedOrderItemCount() > 0;
+}
+
+function openCustomerInformation() {
+  renderCurrentOrder();
+  if (!hasOrderItems()) {
+    setOrderUiNote('Add at least one item before entering customer information.');
+    renderCurrentOrder();
+    showScreen('current-order');
+    return;
+  }
+
+  clearCustomerFormErrors();
+  renderCustomerOrderContext();
+  hydrateCustomerFormFromDraft();
+  showScreen('customer-information');
+}
+
+function setPreferredContact(value) {
+  if (!allowedValues.preferredContact.includes(value)) {
+    return;
+  }
+
+  customerDraft.preferredContact = value;
+  renderCustomerChoiceStates();
+  setCustomerFieldError('preferredContact', '');
+  if (customerStatus) {
+    customerStatus.textContent = '';
+  }
+  saveCustomerDraft();
+}
+
+function setFulfillmentMethod(value) {
+  if (!allowedValues.fulfillmentMethod.includes(value)) {
+    return;
+  }
+
+  customerDraft.fulfillmentMethod = value;
+  renderCustomerChoiceStates();
+  renderShippingFieldsState();
+  setCustomerFieldError('fulfillmentMethod', '');
+  ['addressLine1', 'city', 'state', 'postalCode', 'country'].forEach((name) => setCustomerFieldError(name, ''));
+  if (customerStatus) {
+    customerStatus.textContent = '';
+  }
+  saveCustomerDraft();
+}
+
+function getCustomerFieldTarget(name) {
+  if (name === 'preferredContact') {
+    return contactChoiceButtons[0] || customerFields.fullName;
+  }
+  if (name === 'fulfillmentMethod') {
+    return fulfillmentChoiceButtons[0] || customerFields.fullName;
+  }
+  return customerFields[name] || customerFields.fullName;
+}
+
+function validateCustomerForm() {
+  clearCustomerFormErrors();
+  syncCustomerDraftFromFields();
+  renderShippingFieldsState();
+
+  let isValid = true;
+  let firstInvalidField = '';
+  const setInvalid = (name, message) => {
+    if (!firstInvalidField) {
+      firstInvalidField = name;
+    }
+    setCustomerFieldError(name, message);
+    isValid = false;
+  };
+
+  if (!hasOrderItems()) {
+    if (customerStatus) {
+      customerStatus.textContent = 'Add at least one item before continuing.';
+    }
+    return false;
+  }
+
+  if (!customerDraft.fullName) {
+    setInvalid('fullName', 'Please enter your full name.');
+  }
+
+  const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerDraft.email);
+  if (!customerDraft.email) {
+    setInvalid('email', 'Please enter an email address.');
+  } else if (!emailLooksValid) {
+    setInvalid('email', 'Enter a valid email address.');
+  }
+
+  const phoneDigits = customerDraft.phone.replace(/\D/g, '');
+  if (!customerDraft.phone) {
+    setInvalid('phone', 'Please enter a phone number.');
+  } else if (phoneDigits.length < 10) {
+    setInvalid('phone', 'Enter a valid phone number.');
+  }
+
+  if (!allowedValues.preferredContact.includes(customerDraft.preferredContact)) {
+    setInvalid('preferredContact', 'Choose how you would like us to contact you.');
+  }
+
+  if (!allowedValues.fulfillmentMethod.includes(customerDraft.fulfillmentMethod)) {
+    setInvalid('fulfillmentMethod', 'Choose shipping or local pickup.');
+  }
+
+  if (customerDraft.fulfillmentMethod === 'Shipping') {
+    if (!customerDraft.addressLine1) {
+      setInvalid('addressLine1', 'Please enter address line 1.');
+    }
+    if (!customerDraft.city) {
+      setInvalid('city', 'Please enter a city.');
+    }
+    if (!customerDraft.state) {
+      setInvalid('state', 'Please enter a state.');
+    }
+    if (!customerDraft.postalCode) {
+      setInvalid('postalCode', 'Please enter a postal code.');
+    } else if (isUnitedStatesCountry(customerDraft.country) && !/^\d{5}(-\d{4})?$/.test(customerDraft.postalCode)) {
+      setInvalid('postalCode', 'Enter a 5-digit ZIP code or ZIP+4.');
+    }
+    if (!customerDraft.country) {
+      setInvalid('country', 'Please enter a country.');
+    }
+  }
+
+  if (customerDraft.neededBy) {
+    const today = getTodayIsoDate();
+    if (customerDraft.neededBy < today) {
+      setInvalid('neededBy', 'Needed-by date cannot be earlier than today.');
+    }
+  }
+
+  if (!isValid) {
+    if (customerStatus) {
+      customerStatus.textContent = 'Please complete the required customer information.';
+    }
+    const target = getCustomerFieldTarget(firstInvalidField);
+    target?.focus();
+    return false;
+  }
+
+  if (customerStatus) {
+    customerStatus.textContent = 'Your information is saved. Final order review is the next step.';
+  }
+
+  saveCustomerDraft();
+  return true;
 }
 
 function normalizeEntry(entry) {
@@ -877,6 +1356,7 @@ function createCurrentOrderItemMarkup(item) {
 function renderCurrentOrder() {
   const items = getOrderItems();
   const { itemCount, subtotal } = getCurrentOrderStats(items);
+  const hasItems = items.length > 0;
 
   if (currentOrderItems) {
     currentOrderItems.innerHTML = items.length === 0
@@ -905,10 +1385,11 @@ function renderCurrentOrder() {
       </div>
       <p class="current-order-note" data-current-order-note aria-live="polite">${escapeHtml(orderUiState.note)}</p>
       <button class="secondary-button current-order-secondary" type="button" data-action="add-another-ornament">Add Another Ornament</button>
-      <button class="primary-button current-order-primary" type="button" data-action="continue-customer-info">Continue to Customer Information</button>
+      <button class="primary-button current-order-primary" type="button" data-action="continue-customer-info" ${hasItems ? '' : 'disabled'}>Continue to Customer Information</button>
     `;
   }
 
+  renderCustomerOrderContext();
   renderCurrentOrderUtilityButtons();
 }
 
@@ -972,6 +1453,10 @@ function removeOrderItem(itemId) {
   orderUiState.removeConfirmItemId = '';
   clearOrderUiNote();
   clearDiscardPrompt();
+  if (items.length === 0) {
+    resetActiveOrderSession();
+    return;
+  }
   renderCurrentOrder();
 }
 
@@ -996,6 +1481,7 @@ function addTreeItemToOrder() {
     return;
   }
 
+  const wasEditing = Boolean(appState.editingItemId);
   reviewState.saving = true;
   reviewState.error = '';
   renderTreeReview();
@@ -1023,7 +1509,7 @@ function addTreeItemToOrder() {
     appState.reviewedItemId = item.itemId;
     appState.editingItemId = '';
     saveAppState();
-    setOrderUiNote(appState.editingItemId ? 'Tree Ornament updated.' : 'Tree Ornament added to your order.');
+    setOrderUiNote(wasEditing ? 'Tree Ornament updated.' : 'Tree Ornament added to your order.');
     openCurrentOrder();
   } catch {
     reviewState.saving = false;
@@ -1184,10 +1670,13 @@ function validateTreeForm() {
 
 if (treeForm) {
   loadAppState();
+  ensureActiveOrderSession();
   loadDraft();
+  loadCustomerDraft();
   renderEntries();
   renderTreeReview();
   renderCurrentOrder();
+  renderCustomerOrderContext();
   renderCurrentOrderUtilityButtons();
   renderDiscardPanels();
 
@@ -1195,9 +1684,65 @@ if (treeForm) {
     showScreen('tree-customization');
   } else if (appState.currentScreen === 'tree-review' && draft.entries.length > 0) {
     showScreen('tree-review');
+  } else if (appState.currentScreen === 'customer-information' && hasOrderItems()) {
+    showScreen('customer-information');
   } else if (appState.currentScreen === 'current-order') {
     showScreen('current-order');
   }
+
+  staffButton?.addEventListener('click', () => {
+    lastStaffFocusTarget = staffButton;
+    const isOpen = !staffPanel?.hidden;
+    setStaffPanelState(isOpen ? false : true, false);
+  });
+
+  staffPanel?.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    if (!action) {
+      return;
+    }
+
+    if (action === 'staff-reset-kiosk') {
+      setStaffPanelState(true, true);
+      return;
+    }
+
+    if (action === 'close-staff-panel') {
+      closeStaffPanel();
+      return;
+    }
+
+    if (action === 'cancel-staff-reset') {
+      setStaffPanelState(true, false);
+      return;
+    }
+
+    if (action === 'confirm-staff-reset') {
+      resetActiveOrderSession();
+    }
+  });
+
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+    if (staffPanel?.hidden) {
+      return;
+    }
+    const insideStaffControls = target.closest('.staff-controls');
+    if (!insideStaffControls) {
+      closeStaffPanel();
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || staffPanel?.hidden) {
+      return;
+    }
+    event.preventDefault();
+    closeStaffPanel();
+  });
 
   addPersonButton.addEventListener('click', () => addEntry('person'));
   addPetButton.addEventListener('click', () => addEntry('pet'));
@@ -1383,9 +1928,78 @@ if (treeForm) {
     }
 
     if (action === 'continue-customer-info') {
-      orderUiState.note = 'Customer information is the next step in development.';
-      renderCurrentOrder();
+      openCustomerInformation();
     }
+  });
+
+  document.querySelectorAll('[data-action="back-current-order"], [data-action="back-current-order-form"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      clearCustomerFormErrors();
+      renderCurrentOrder();
+      showScreen('current-order');
+    });
+  });
+
+  contactChoiceButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      setPreferredContact(button.dataset.contactChoice || '');
+    });
+  });
+
+  fulfillmentChoiceButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      setFulfillmentMethod(button.dataset.fulfillmentChoice || '');
+    });
+  });
+
+  Object.entries(customerFields).forEach(([name, field]) => {
+    field?.addEventListener('input', () => {
+      if (name === 'phone') {
+        field.value = sanitizePhone(field.value);
+      } else if (name === 'email') {
+        field.value = sanitizeEmail(field.value);
+      } else if (name === 'postalCode') {
+        field.value = sanitizePostalCode(field.value);
+      } else if (name !== 'neededBy') {
+        field.value = field.value.replace(/\s{2,}/g, ' ');
+      }
+
+      setCustomerFieldError(name, '');
+      if (name === 'country') {
+        setCustomerFieldError('postalCode', '');
+      }
+      if (customerStatus) {
+        customerStatus.textContent = '';
+      }
+      saveCustomerDraft();
+    });
+
+    field?.addEventListener('change', () => {
+      if (name === 'phone') {
+        field.value = sanitizePhone(field.value);
+      } else if (name === 'email') {
+        field.value = sanitizeEmail(field.value);
+      } else if (name === 'postalCode') {
+        field.value = sanitizePostalCode(field.value);
+      } else if (name !== 'neededBy') {
+        field.value = sanitizeText(field.value);
+      }
+
+      setCustomerFieldError(name, '');
+      if (name === 'country') {
+        setCustomerFieldError('postalCode', '');
+      }
+      if (customerStatus) {
+        customerStatus.textContent = '';
+      }
+      saveCustomerDraft();
+    });
+  });
+
+  customerForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    saveCustomerDraft();
+    validateCustomerForm();
   });
 
   discardPanels.forEach((panel) => {
