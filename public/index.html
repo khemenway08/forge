@@ -135,6 +135,96 @@
           This first build establishes the real branded kiosk shell. Product customization is the next working feature.
         </div>
       </section>
+
+      <section class="screen" data-screen="tree-customization">
+        <div class="toolbar">
+          <button class="secondary-button" type="button" data-action="back-ornaments">← Back</button>
+        </div>
+
+        <div class="screen-heading">
+          <p class="eyebrow">Tree Ornament</p>
+          <h2>Customize your ornament</h2>
+          <p>Choose colors and personalization details before continuing.</p>
+        </div>
+
+        <div class="customization-layout">
+          <div class="customization-media">
+            <img src="assets/products/tree-ornament.jpg" alt="Tree Ornament">
+          </div>
+
+          <form class="customization-form" data-form="tree-ornament" novalidate>
+            <div class="form-group">
+              <label for="tree-size">Size</label>
+              <select id="tree-size" name="size" required>
+                <option value="">Select a size</option>
+                <option value="Small">Small</option>
+                <option value="Large">Large</option>
+              </select>
+              <p class="field-error" data-error-for="size" aria-live="polite"></p>
+            </div>
+
+            <div class="form-group">
+              <label for="tree-color">Tree Color</label>
+              <select id="tree-color" name="treeColor" required>
+                <option value="">Select a tree color</option>
+                <option value="Green">Green</option>
+                <option value="Brown">Brown</option>
+              </select>
+              <p class="field-error" data-error-for="treeColor" aria-live="polite"></p>
+            </div>
+
+            <div class="form-group">
+              <label for="bow-color">Bow Color</label>
+              <select id="bow-color" name="bowColor" required>
+                <option value="">Select a bow color</option>
+                <option value="Red">Red</option>
+                <option value="White">White</option>
+              </select>
+              <p class="field-error" data-error-for="bowColor" aria-live="polite"></p>
+            </div>
+
+            <div class="form-group">
+              <label for="family-name">Family Name</label>
+              <input id="family-name" name="familyName" type="text" maxlength="40" placeholder="Enter family name" required>
+              <p class="field-error" data-error-for="familyName" aria-live="polite"></p>
+            </div>
+
+            <div class="form-group people-pets-group">
+              <div class="section-heading">
+                <div>
+                  <label class="section-label" for="people-pets-list">People and Pets</label>
+                  <p class="section-copy">Add each person and pet in the exact order you want on the ornament.</p>
+                </div>
+              </div>
+
+              <ol class="entry-list" id="people-pets-list" data-entry-list></ol>
+
+              <div class="entry-controls">
+                <p class="capacity-message" data-capacity-message aria-live="polite"></p>
+                <div class="entry-actions">
+                  <button class="secondary-button" type="button" data-action="add-person">Add Person</button>
+                  <button class="secondary-button" type="button" data-action="add-pet">Add Pet</button>
+                </div>
+              </div>
+
+              <p class="field-error" data-error-for="entries" aria-live="polite"></p>
+            </div>
+
+            <div class="form-group">
+              <label for="ornament-year">Year</label>
+              <input id="ornament-year" name="year" type="number" inputmode="numeric" value="2026" min="1900" max="2100" required>
+              <p class="field-error" data-error-for="year" aria-live="polite"></p>
+            </div>
+
+            <p class="form-status" data-form-status aria-live="polite"></p>
+
+            <div class="form-actions">
+              <button class="secondary-button" type="button" data-action="back-ornaments">Back</button>
+              <button class="primary-button" type="submit">Continue</button>
+            </div>
+          </form>
+        </div>
+      </section>
     </main>
   </div>
 
