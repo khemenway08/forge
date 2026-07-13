@@ -1,0 +1,16 @@
+{
+  "name": "The Hilltop Shop Custom Orders",
+  "short_name": "Hilltop Orders",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#F7F1E7",
+  "theme_color": "#2F5938",
+  "icons": [
+    {
+      "src": "assets/brand/hilltop-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

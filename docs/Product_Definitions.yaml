@@ -1,0 +1,288 @@
+version: "1.1"
+status: approved
+last_updated: "2026-07-13"
+
+catalog:
+  currency: USD
+  default_fulfillment: shipping
+  allow_multiple_items_per_order: true
+  collect_customer_information_after_all_items: true
+  default_year: 2026
+
+shared_options:
+  pet_types:
+    dog: {label: Dog}
+    cat: {label: Cat}
+    other: {label: Other}
+
+  pet_icons:
+    paw: {label: Paw}
+    fish: {label: Fish}
+    custom:
+      label: Custom Icon
+      requires_description: true
+      creates_internal_flag: custom_icon
+    none: {label: No Icon}
+
+  bow_colors:
+    red: {label: Red, hex: "#B3261E"}
+    white: {label: White, hex: "#F4F1E8"}
+    pink: {label: Pink, hex: "#D98CA3"}
+    blue: {label: Blue, hex: "#4A74A8"}
+
+  tree_colors:
+    green: {label: Green, hex: "#345A3A"}
+    brown: {label: Brown, hex: "#7A5230"}
+
+  live_edge_icons:
+    pine_trees: {label: Pine Trees}
+    mountains: {label: Mountains}
+    other:
+      label: Other
+      requires_description: true
+
+global_rules:
+  personalization_order:
+    customer_controlled: true
+    preserve_through_review_and_production: true
+  personalization_text_inputs:
+    spellcheck: false
+    autocorrect: false
+    autocomplete: false
+  fulfillment:
+    default: shipping
+    pickup_available: true
+  years:
+    editable_when_present: true
+
+products:
+  tree_ornament:
+    display_name: Tree Ornament
+    category: ornament
+    active: true
+    image: {primary: "assets/ornaments/tree-ornament.jpg"}
+    pricing: {small: 26.00, large: 30.00}
+    customization_order: [size, tree_color, bow_color, family_name, people, pets, year]
+    options:
+      size:
+        required: true
+        choices:
+          small: {label: Small, max_total_names: 5}
+          large: {label: Large, max_total_names: 12}
+      tree_color: {required: true, choices: [green, brown]}
+      bow_color: {required: true, choices: [red, white]}
+    fields:
+      family_name: {required: true, type: text}
+      people: {required: false, type: ordered_repeatable_text}
+      pets:
+        required: false
+        type: ordered_repeatable_pet
+        pet_types: [dog, cat, other]
+        pet_icons: [paw, fish, custom, none]
+      year: {required: true, type: year, default: 2026, editable: true}
+    rules:
+      customer_selects_size: true
+      size_not_auto_selected_by_name_count: true
+      people_and_pets_share_capacity: true
+
+  antler_ornament:
+    display_name: Antler Ornament
+    category: ornament
+    active: true
+    image: {primary: "assets/ornaments/antler-ornament.jpg"}
+    pricing: {small: 26.00, large: 30.00}
+    customization_order: [size, family_name, people, pets, year]
+    options:
+      size:
+        required: true
+        choices:
+          small: {label: Small, max_total_names: 5}
+          large: {label: Large, max_total_names: 10}
+    fields:
+      family_name: {required: true, type: text}
+      people: {required: false, type: ordered_repeatable_text}
+      pets:
+        required: false
+        type: ordered_repeatable_pet
+        pet_types: [dog, cat, other]
+        pet_icons: [paw, fish, custom, none]
+      year: {required: true, type: year, default: 2026, editable: true}
+    rules:
+      customer_selects_size: true
+      size_not_auto_selected_by_name_count: true
+      people_and_pets_share_capacity: true
+
+  babys_first_christmas:
+    display_name: "Baby's First Christmas"
+    category: ornament
+    active: true
+    image: {primary: "assets/ornaments/babys-first-christmas.jpg"}
+    pricing: {base: 28.00}
+    customization_order: [bow_and_stocking_color, baby_name, year]
+    options:
+      bow_and_stocking_color: {required: true, choices: [pink, blue, red]}
+    fields:
+      baby_name: {required: true, type: text}
+      year: {required: true, type: year, default: 2026, editable: true}
+
+  mr_and_mrs_christmas:
+    display_name: "Mr. & Mrs. Christmas"
+    category: ornament
+    active: true
+    image: {primary: "assets/ornaments/mr-and-mrs-christmas.jpg"}
+    pricing: {base: 28.00}
+    customization_order: [last_name, wedding_year]
+    fields:
+      last_name: {required: true, type: text}
+      wedding_year: {required: true, type: year, default: 2026, editable: true}
+
+  little_reindeer_letter:
+    display_name: Little Reindeer Letter Ornament
+    category: ornament
+    active: true
+    image: {primary: "assets/ornaments/little-reindeer-letter.jpg"}
+    pricing:
+      base: 15.00
+      quantity_discount:
+        minimum_quantity: 2
+        unit_price: 13.00
+        applies_to_all_reindeer_items_in_order: true
+    customization_order: [letter, name]
+    fields:
+      letter: {required: true, type: single_character}
+      name: {required: true, type: text}
+    rules:
+      one_letter_per_ornament: true
+      one_name_per_ornament: true
+      separate_product_for_multiple_reindeer: false
+
+  present_stack:
+    display_name: Present Stack Ornament
+    category: ornament
+    active: true
+    image: {primary: "assets/ornaments/present-stack.jpg"}
+    pricing: {base: 30.00}
+    customization_order: [bow_color, family_name, people, pets, year]
+    options:
+      bow_color: {required: true, choices: [red, white]}
+    fields:
+      family_name: {required: true, type: text}
+      people: {required: true, type: ordered_repeatable_text}
+      pets:
+        required: false
+        type: ordered_repeatable_pet
+        pet_types: [dog, cat, other]
+        pet_icons: [paw, fish, custom, none]
+      year: {required: true, type: year, default: 2026, editable: true}
+    rules:
+      min_total_names: 1
+      max_total_names: 10
+      people_and_pets_share_capacity: true
+
+  grinch_tree:
+    display_name: Grinch Tree Ornament
+    category: ornament
+    active: true
+    image: {primary: "assets/ornaments/grinch-tree.jpg"}
+    pricing: {base: 30.00}
+    customization_order: [family_name, people, pets, year]
+    fields:
+      family_name: {required: true, type: text}
+      people: {required: true, type: ordered_repeatable_text}
+      pets:
+        required: false
+        type: ordered_repeatable_pet
+        pet_types: [dog, cat, other]
+        pet_icons: [paw, fish, custom, none]
+      year: {required: true, type: year, default: 2026, editable: true}
+    rules:
+      min_total_names: 1
+      max_total_names: 7
+      people_and_pets_share_capacity: true
+      color_options: none
+      fixed_colorway: true
+
+  veteran_flag:
+    display_name: Veteran Flag Ornament
+    category: ornament
+    active: true
+    image: {primary: "assets/ornaments/veteran-flag.jpg"}
+    pricing:
+      base: 25.00
+      customized_edge_text: 25.00
+    customization_order: [personalization_mode, edge_text]
+    options:
+      personalization_mode:
+        required: true
+        choices:
+          stock: {label: As Shown}
+          custom_edge_text: {label: Change Edge Text}
+    fields:
+      edge_text:
+        required_when: "personalization_mode == custom_edge_text"
+        type: text
+    rules:
+      stock_design_allowed: true
+      custom_edge_text_same_price: true
+
+  classic_family_sign:
+    display_name: Classic Family Sign
+    category: sign
+    active: true
+    image: {primary: "assets/signs/classic-family-sign.jpg"}
+    pricing: {base: 84.99}
+    customization_order: [family_name, established_year]
+    fields:
+      family_name: {required: true, type: text}
+      established_year: {required: true, type: year, default: null, editable: true}
+    rules:
+      year_not_prefilled: true
+
+  family_cutting_board:
+    display_name: Family Cutting Board
+    category: sign
+    active: true
+    image: {primary: "assets/signs/family-cutting-board.jpg"}
+    pricing: {base: 39.99}
+    customization_order: [last_name_initial, his_name, her_name, established_year]
+    fields:
+      last_name_initial: {required: true, type: single_character}
+      his_name: {required: true, type: text}
+      her_name: {required: true, type: text}
+      established_year: {required: true, type: year, default: null, editable: true}
+    rules:
+      year_not_prefilled: true
+
+  live_edge_family_sign:
+    display_name: Live Edge Family Sign
+    category: sign
+    active: true
+    image: {primary: "assets/signs/live-edge-family-sign.jpg"}
+    pricing: {base: 54.99}
+    customization_order: [family_name, established_year, icon]
+    options:
+      icon: {required: true, choices: [pine_trees, mountains, other]}
+    fields:
+      family_name: {required: true, type: text}
+      established_year: {required: true, type: year, default: null, editable: true}
+      other_icon_description:
+        required_when: "icon == other"
+        type: text
+    rules:
+      year_not_prefilled: true
+
+  custom_request:
+    display_name: Custom Request
+    category: custom
+    active: true
+    image: {primary: "assets/custom/custom-request.jpg"}
+    pricing: {mode: quote_required}
+    customization_order: [description, reference_upload, needed_by]
+    fields:
+      description: {required: true, type: textarea}
+      reference_upload: {required: false, type: file}
+      needed_by: {required: false, type: date}
+    rules:
+      requires_staff_review: true
+      creates_internal_flag: custom_artwork
+      no_customer_price_shown: true
