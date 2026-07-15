@@ -48,14 +48,15 @@ const fulfillmentChoiceButtons = [...document.querySelectorAll('[data-fulfillmen
 const shippingFieldsContainer = document.querySelector('[data-shipping-fields]');
 const utilityOrderButtons = [...document.querySelectorAll('[data-action="view-current-order-utility"]')];
 const discardPanels = [...document.querySelectorAll('[data-discard-panel]')];
+const forgeProductCatalog = globalThis.ForgeProductCatalog;
 const storageKey = 'forge-tree-ornament-draft';
 const orderItemsStorageKey = 'forge-order-items';
 const appStateStorageKey = 'forge-app-state';
 const customerDraftStorageKey = 'forge-customer-draft';
-const reviewPriceBySize = {
-  Small: 26,
-  Large: 30
-};
+
+if (!forgeProductCatalog) {
+  throw new Error('Forge product catalog failed to load before app.js.');
+}
 
 const ornamentProductConfigs = {
   tree_ornament: {
@@ -68,7 +69,6 @@ const ornamentProductConfigs = {
     requiresBowColor: true,
     requiresEntries: true,
     minimumEntryCount: 1,
-    priceBySize: { Small: 26, Large: 30 },
     customizationCopy: 'Choose colors and personalization details before continuing.',
     updateNote: 'Tree Ornament updated.'
   },
@@ -82,7 +82,6 @@ const ornamentProductConfigs = {
     requiresBowColor: false,
     requiresEntries: false,
     minimumEntryCount: 0,
-    priceBySize: { Small: 26, Large: 30 },
     customizationCopy: 'Choose personalization details before continuing.',
     updateNote: 'Antler Ornament updated.'
   },
@@ -96,7 +95,6 @@ const ornamentProductConfigs = {
     requiresBowColor: true,
     requiresEntries: true,
     minimumEntryCount: 1,
-    unitPrice: 30,
     customizationCopy: 'Choose personalization details before continuing.',
     updateNote: 'Present Stack Ornament updated.'
   },
@@ -110,7 +108,6 @@ const ornamentProductConfigs = {
     requiresBowColor: false,
     requiresEntries: true,
     minimumEntryCount: 1,
-    unitPrice: 30,
     customizationCopy: 'Choose personalization details before continuing.',
     updateNote: 'Grinch Tree Ornament updated.'
   },
@@ -124,7 +121,6 @@ const ornamentProductConfigs = {
     requiresBowColor: true,
     requiresEntries: false,
     minimumEntryCount: 0,
-    unitPrice: 28,
     allowedBowColors: ['Pink', 'Blue', 'Red'],
     customizationCopy: "Choose the bow and stocking color, baby name, and year before continuing.",
     familyFieldLabel: 'Baby Name',
@@ -142,7 +138,6 @@ const ornamentProductConfigs = {
     requiresBowColor: false,
     requiresEntries: false,
     minimumEntryCount: 0,
-    unitPrice: 28,
     familyFieldLabel: 'Last Name',
     familyFieldPlaceholder: 'Enter last name',
     familyFieldRequiredMessage: 'Please enter the last name.',
@@ -161,7 +156,6 @@ const ornamentProductConfigs = {
     requiresBowColor: false,
     requiresEntries: false,
     minimumEntryCount: 0,
-    unitPrice: 25,
     customizationCopy: 'Choose the reindeer name and year before continuing.',
     familyFieldLabel: 'Reindeer Name',
     familyFieldPlaceholder: 'Enter reindeer name',
@@ -180,7 +174,6 @@ const ornamentProductConfigs = {
     requiresFamilyName: false,
     requiresYear: false,
     requiresPersonalizationMode: true,
-    unitPrice: 25,
     customizationCopy: 'Choose whether to keep the design as shown or personalize the edge text.',
     updateNote: 'Veteran Flag Ornament updated.'
   }
@@ -484,12 +477,18 @@ let lastStaffFocusTarget = null;
 let lastConfirmationFocusTarget = null;
 
 function getProductConfig(productDefinitionId = draft.productDefinitionId) {
-  return ornamentProductConfigs[productDefinitionId] || ornamentProductConfigs.tree_ornament;
+  const resolvedProductDefinitionId = resolveConfiguredProductDefinitionId(productDefinitionId);
+  return ornamentProductConfigs[resolvedProductDefinitionId] || ornamentProductConfigs.tree_ornament;
 }
 
 function getActiveProductDefinitionId() {
-  return draft.productDefinitionId && ornamentProductConfigs[draft.productDefinitionId]
-    ? draft.productDefinitionId
+  return resolveConfiguredProductDefinitionId(draft.productDefinitionId);
+}
+
+function resolveConfiguredProductDefinitionId(productDefinitionId) {
+  const uiProductDefinitionId = forgeProductCatalog.getUiProductDefinitionId(productDefinitionId || '');
+  return uiProductDefinitionId && ornamentProductConfigs[uiProductDefinitionId]
+    ? uiProductDefinitionId
     : 'tree_ornament';
 }
 
@@ -589,7 +588,7 @@ function renderCustomizationScreenContent() {
 }
 
 function resetDraftState(productDefinitionId = 'tree_ornament') {
-  draft.productDefinitionId = ornamentProductConfigs[productDefinitionId] ? productDefinitionId : 'tree_ornament';
+  draft.productDefinitionId = resolveConfiguredProductDefinitionId(productDefinitionId);
   draft.size = '';
   draft.treeColor = '';
   draft.bowColor = '';
@@ -900,7 +899,7 @@ function loadDraft() {
     }
 
     const parsed = JSON.parse(raw);
-    draft.productDefinitionId = ornamentProductConfigs[parsed.productDefinitionId] ? parsed.productDefinitionId : 'tree_ornament';
+    draft.productDefinitionId = resolveConfiguredProductDefinitionId(parsed.productDefinitionId);
     draft.size = allowedValues.size.includes(parsed.size) ? parsed.size : '';
     draft.treeColor = allowedValues.treeColor.includes(parsed.treeColor) ? parsed.treeColor : '';
     draft.bowColor = getAllowedBowColors(draft.productDefinitionId).includes(parsed.bowColor) ? parsed.bowColor : '';
@@ -1653,40 +1652,22 @@ function getResolvedProductImage(productDefinitionId, configuration = {}, contex
   };
 }
 
-function getReindeerUnitPrice(reindeerCount) {
-  return reindeerCount >= 2 ? 20 : 25;
-}
-
 function applyDynamicOrderPricing(items) {
   const normalizedItems = Array.isArray(items)
     ? items.map(normalizeOrderItemRecord).filter(Boolean)
     : [];
-  const reindeerCount = normalizedItems.filter((item) => item.productDefinitionId === 'reindeer').length;
-  const reindeerUnitPrice = getReindeerUnitPrice(reindeerCount);
-
-  return normalizedItems.map((item) => (
-    item.productDefinitionId === 'reindeer'
-      ? { ...item, unitPrice: reindeerUnitPrice }
-      : item
-  ));
+  return forgeProductCatalog.applyCatalogPricingToItems(normalizedItems);
 }
 
 function getProductUnitPrice(productDefinitionId = getActiveProductDefinitionId(), size = draft.size, options = {}) {
-  const config = getProductConfig(productDefinitionId);
-  if (productDefinitionId === 'reindeer') {
-    const orderItems = Array.isArray(options.orderItems) ? options.orderItems : getOrderItems();
-    const hasExistingEditingReindeer = Boolean(
-      options.editingItemId
-      && orderItems.some((item) => item.itemId === options.editingItemId && item.productDefinitionId === 'reindeer')
-    );
-    const reindeerCount = orderItems.filter((item) => item.productDefinitionId === 'reindeer').length
-      + (options.includeCurrentDraft && !hasExistingEditingReindeer ? 1 : 0);
-    return getReindeerUnitPrice(reindeerCount);
-  }
-  if (config.requiresSize) {
-    return config.priceBySize?.[size] ?? 0;
-  }
-  return Number.isFinite(config.unitPrice) ? config.unitPrice : 0;
+  const orderItems = Array.isArray(options.orderItems) ? options.orderItems : getOrderItems();
+  return forgeProductCatalog.getFinalUnitPriceDollars(productDefinitionId, {
+    size,
+    orderItems,
+    includeCurrentDraft: Boolean(options.includeCurrentDraft),
+    currentDraftQuantity: options.currentDraftQuantity,
+    editingItemId: options.editingItemId
+  });
 }
 
 function getResolvedItemImageData(item) {
@@ -2051,7 +2032,7 @@ function getOrnamentOrderItemValidationIssues(item) {
   if (minimumEntryCount > 0 && entries.length < minimumEntryCount) {
     issues.push('Add at least one person or pet.');
   }
-  if (expectedUnitPrice > 0 && item.unitPrice !== expectedUnitPrice) {
+  if (Number.isFinite(expectedUnitPrice) && expectedUnitPrice > 0 && item.unitPrice !== expectedUnitPrice) {
     issues.push('This item has invalid pricing.');
   }
   if (limit && entries.length > limit) {
@@ -2618,7 +2599,7 @@ function closeAddConfirmation(restoreFocus = true) {
 
 function buildDraftFromOrderItem(item) {
   return {
-    productDefinitionId: item.productDefinitionId || 'tree_ornament',
+    productDefinitionId: resolveConfiguredProductDefinitionId(item.productDefinitionId),
     size: item.size,
     treeColor: item.treeColor,
     bowColor: item.bowColor,
@@ -2980,7 +2961,7 @@ function loadCartItemIntoDraft(itemId) {
   draft.edgeText = draftSource.edgeText;
   draft.year = draftSource.year;
   draft.entries = draftSource.entries;
-  draft.productDefinitionId = draftSource.productDefinitionId;
+  draft.productDefinitionId = resolveConfiguredProductDefinitionId(draftSource.productDefinitionId);
   appState.editingItemId = item.itemId;
   appState.reviewedItemId = item.itemId;
   clearOrderUiNote();
