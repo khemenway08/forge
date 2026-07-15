@@ -24,6 +24,7 @@ const yearGroup = document.querySelector('[data-product-field-group="year"]');
 const familyNameLabel = document.querySelector('[data-field-label="familyName"]');
 const familyNameInput = document.querySelector('[name="familyName"]');
 const yearLabel = document.querySelector('label[for="ornament-year"]');
+const bowColorLabel = document.getElementById('bow-color-label');
 const treeReviewCard = document.querySelector('[data-tree-review-card]');
 const currentOrderItems = document.querySelector('[data-current-order-items]');
 const currentOrderSummary = document.querySelector('[data-current-order-summary]');
@@ -113,22 +114,23 @@ const ornamentProductConfigs = {
     customizationCopy: 'Choose personalization details before continuing.',
     updateNote: 'Grinch Tree Ornament updated.'
   },
-  baby_ornament: {
-    displayName: 'Baby Ornament',
+  babys_first_christmas: {
+    displayName: "Baby's First Christmas",
     galleryProductKey: 'baby',
     requiresSize: false,
     sizeLimits: {},
     preSizeLimit: 0,
     requiresTreeColor: false,
-    requiresBowColor: false,
+    requiresBowColor: true,
     requiresEntries: false,
     minimumEntryCount: 0,
-    unitPrice: 30,
-    customizationCopy: 'Choose the baby name and birth year before continuing.',
+    unitPrice: 28,
+    allowedBowColors: ['Pink', 'Blue', 'Red'],
+    customizationCopy: "Choose the bow and stocking color, baby name, and year before continuing.",
     familyFieldLabel: 'Baby Name',
     familyFieldPlaceholder: 'Enter baby name',
-    yearFieldLabel: 'Birth Year',
-    updateNote: 'Baby Ornament updated.'
+    bowColorFieldLabel: 'Bow and Stocking Color',
+    updateNote: "Baby's First Christmas updated."
   },
   reindeer: {
     displayName: 'Reindeer Ornament',
@@ -170,7 +172,7 @@ const galleryProductDefinitionMap = {
   antler: 'antler_ornament',
   'present-stack': 'present_stack',
   grinch: 'grinch_tree',
-  baby: 'baby_ornament',
+  baby: 'babys_first_christmas',
   reindeer: 'reindeer',
   veteran: 'veteran_flag'
 };
@@ -300,20 +302,21 @@ const productReviewConfig = {
       year: 'Year'
     }
   },
-  baby_ornament: {
+  babys_first_christmas: {
     galleryImage: {
       src: '/assets/products/babys-first-christmas-pink.jpeg',
-      alt: 'Baby Ornament',
+      alt: "Baby's First Christmas ornament",
       width: 1536,
       height: 2048
     },
     image: '/assets/products/babys-first-christmas-pink.jpeg',
-    imageAlt: 'Baby Ornament',
+    imageAlt: "Baby's First Christmas ornament",
     imageWidth: 1536,
     imageHeight: 2048,
     fieldLabels: {
+      bowColor: 'Bow and Stocking Color',
       familyName: 'Baby Name',
-      year: 'Birth Year'
+      year: 'Year'
     }
   },
   reindeer: {
@@ -347,12 +350,6 @@ const productReviewConfig = {
       personalizationMode: 'Personalization',
       edgeText: 'Edge Text'
     }
-  },
-  babys_first_christmas: {
-    image: '/assets/products/babys-first-christmas-pink.jpeg',
-    imageAlt: "Baby's First Christmas ornament",
-    imageWidth: 1536,
-    imageHeight: 2048
   },
   mr_and_mrs_christmas: {
     image: '/assets/products/mr-and-mrs-first-christmas.jpeg',
@@ -501,6 +498,9 @@ function renderCustomizationScreenContent() {
   if (bowColorGroup) {
     bowColorGroup.hidden = !showBowColor;
   }
+  if (bowColorLabel) {
+    bowColorLabel.textContent = config.bowColorFieldLabel || 'Bow Color';
+  }
   if (personalizationModeGroup) {
     personalizationModeGroup.hidden = !showPersonalizationMode;
   }
@@ -519,6 +519,12 @@ function renderCustomizationScreenContent() {
   if (yearLabel) {
     yearLabel.textContent = config.yearFieldLabel || 'Year';
   }
+  const allowedBowColors = getAllowedBowColors();
+  optionChoiceButtons
+    .filter((button) => button.dataset.choiceField === 'bowColor')
+    .forEach((button) => {
+      button.hidden = !allowedBowColors.includes(button.dataset.choiceValue || '');
+    });
   if (entriesGroup) {
     entriesGroup.hidden = !showEntries;
   }
@@ -1402,6 +1408,13 @@ function getFamilyFieldLabel(productDefinitionId = getActiveProductDefinitionId(
   return 'Engraved Text';
 }
 
+function getAllowedBowColors(productDefinitionId = getActiveProductDefinitionId()) {
+  const config = getProductConfig(productDefinitionId);
+  return Array.isArray(config.allowedBowColors) && config.allowedBowColors.length > 0
+    ? config.allowedBowColors
+    : allowedValues.bowColor;
+}
+
 function formatDisplayValue(value) {
   if (typeof value === 'number') {
     return Number.isInteger(value) ? String(value) : value.toFixed(2);
@@ -1445,6 +1458,12 @@ function formatReadableDate(value) {
 
 function getColorSwatchTone(value) {
   const normalized = sanitizeText(String(value || '')).toLowerCase();
+  if (normalized === 'pink') {
+    return 'pink';
+  }
+  if (normalized === 'blue') {
+    return 'blue';
+  }
   if (normalized === 'green') {
     return 'green';
   }
@@ -1460,12 +1479,24 @@ function getColorSwatchTone(value) {
   return '';
 }
 
+function getColorSwatchInlineStyle(value) {
+  const tone = getColorSwatchTone(value);
+  if (tone === 'pink') {
+    return 'background:#d98ca3;';
+  }
+  if (tone === 'blue') {
+    return 'background:#4a74a8;';
+  }
+  return '';
+}
+
 function getColorDisplayMarkup(value) {
   const label = formatDisplayValue(value);
   const tone = getColorSwatchTone(label);
+  const swatchStyle = getColorSwatchInlineStyle(label);
   return `
     <span class="color-display">
-      ${tone ? `<span class="color-swatch color-swatch--${tone}" aria-hidden="true"></span>` : ''}
+      ${tone ? `<span class="color-swatch color-swatch--${tone}" aria-hidden="true"${swatchStyle ? ` style="${swatchStyle}"` : ''}></span>` : ''}
       <span>${escapeHtml(label || 'Not selected')}</span>
     </span>
   `;
@@ -1474,9 +1505,10 @@ function getColorDisplayMarkup(value) {
 function getCompactColorDisplayMarkup(value, noun) {
   const label = formatDisplayValue(value);
   const tone = getColorSwatchTone(label);
+  const swatchStyle = getColorSwatchInlineStyle(label);
   return `
     <span class="color-display">
-      ${tone ? `<span class="color-swatch color-swatch--${tone}" aria-hidden="true"></span>` : ''}
+      ${tone ? `<span class="color-swatch color-swatch--${tone}" aria-hidden="true"${swatchStyle ? ` style="${swatchStyle}"` : ''}></span>` : ''}
       <span>${escapeHtml(label || 'Not selected')} ${escapeHtml(noun)}</span>
     </span>
   `;
@@ -1923,7 +1955,7 @@ function getOrnamentOrderItemValidationIssues(item) {
   if (config.requiresTreeColor && !allowedValues.treeColor.includes(item.treeColor)) {
     issues.push('Choose a valid tree color.');
   }
-  if (config.requiresBowColor && !allowedValues.bowColor.includes(item.bowColor)) {
+  if (config.requiresBowColor && !getAllowedBowColors(item.productDefinitionId).includes(item.bowColor)) {
     issues.push('Choose a valid bow color.');
   }
   if (config.requiresPersonalizationMode && !allowedValues.personalizationMode.includes(item.personalizationMode)) {
@@ -3061,7 +3093,7 @@ function validateTreeForm() {
     setFieldError('treeColor', 'Please choose an option.');
     isValid = false;
   }
-  if (config.requiresBowColor && !allowedValues.bowColor.includes(values.bowColor)) {
+  if (config.requiresBowColor && !getAllowedBowColors().includes(values.bowColor)) {
     setFieldError('bowColor', 'Please choose an option.');
     isValid = false;
   }
