@@ -1242,6 +1242,18 @@ h1 {
   line-height: 1.5;
 }
 
+.current-order-entry-list {
+  gap: 6px;
+}
+
+.current-order-entry-list .review-entry-item {
+  padding: 10px 0;
+}
+
+.current-order-entry-list .review-entry-detail {
+  font-size: 14px;
+}
+
 .current-order-list-card {
   display: grid;
   gap: 6px;

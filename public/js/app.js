@@ -13,6 +13,7 @@ const customizationCopy = document.querySelector('[data-customization-copy]');
 const reviewEyebrow = document.querySelector('[data-review-eyebrow]');
 const reviewTitle = document.querySelector('[data-review-title]');
 const reviewCopy = document.querySelector('[data-review-copy]');
+const sizeGroup = document.querySelector('[data-product-field-group="size"]');
 const treeColorGroup = document.querySelector('[data-product-field-group="treeColor"]');
 const bowColorGroup = document.querySelector('[data-product-field-group="bowColor"]');
 const treeReviewCard = document.querySelector('[data-tree-review-card]');
@@ -51,25 +52,51 @@ const ornamentProductConfigs = {
   tree_ornament: {
     displayName: 'Tree Ornament',
     galleryProductKey: 'tree',
+    requiresSize: true,
     sizeLimits: { Small: 5, Large: 12 },
     preSizeLimit: 12,
     requiresTreeColor: true,
     requiresBowColor: true,
     requiresEntries: true,
+    minimumEntryCount: 1,
+    priceBySize: { Small: 26, Large: 30 },
     customizationCopy: 'Choose colors and personalization details before continuing.',
     updateNote: 'Tree Ornament updated.'
   },
   antler_ornament: {
     displayName: 'Antler Ornament',
     galleryProductKey: 'antler',
+    requiresSize: true,
     sizeLimits: { Small: 5, Large: 10 },
     preSizeLimit: 10,
     requiresTreeColor: false,
     requiresBowColor: false,
     requiresEntries: false,
+    minimumEntryCount: 0,
+    priceBySize: { Small: 26, Large: 30 },
     customizationCopy: 'Choose personalization details before continuing.',
     updateNote: 'Antler Ornament updated.'
+  },
+  present_stack: {
+    displayName: 'Present Stack Ornament',
+    galleryProductKey: 'present-stack',
+    requiresSize: false,
+    sizeLimits: {},
+    preSizeLimit: 10,
+    requiresTreeColor: false,
+    requiresBowColor: true,
+    requiresEntries: true,
+    minimumEntryCount: 1,
+    unitPrice: 30,
+    customizationCopy: 'Choose personalization details before continuing.',
+    updateNote: 'Present Stack Ornament updated.'
   }
+};
+
+const galleryProductDefinitionMap = {
+  tree: 'tree_ornament',
+  antler: 'antler_ornament',
+  'present-stack': 'present_stack'
 };
 
 const treeFields = {
@@ -162,10 +189,21 @@ const productReviewConfig = {
     }
   },
   present_stack: {
+    galleryImage: {
+      src: '/assets/products/present-stack-ornament.jpeg',
+      alt: 'Present Stack Ornament',
+      width: 1536,
+      height: 2048
+    },
     image: '/assets/products/present-stack-ornament.jpeg',
     imageAlt: 'Present Stack Ornament',
     imageWidth: 1536,
-    imageHeight: 2048
+    imageHeight: 2048,
+    fieldLabels: {
+      bowColor: 'Bow Color',
+      familyName: 'Engraved Text',
+      year: 'Year'
+    }
   },
   grinch_tree: {
     image: '/assets/products/grinch-family-tree.jpg',
@@ -292,6 +330,7 @@ function showScreen(name) {
 
 function renderCustomizationScreenContent() {
   const config = getProductConfig();
+  const showSize = config.requiresSize;
   const showTreeColor = config.requiresTreeColor;
   const showBowColor = config.requiresBowColor;
 
@@ -314,6 +353,9 @@ function renderCustomizationScreenContent() {
     reviewCopy.textContent = 'Double-check the ornament details before adding it to the order.';
   }
 
+  if (sizeGroup) {
+    sizeGroup.hidden = !showSize;
+  }
   if (treeColorGroup) {
     treeColorGroup.hidden = !showTreeColor;
   }
@@ -394,7 +436,8 @@ document.querySelectorAll('[data-action="back-tree-review"]').forEach((button) =
 
 document.querySelectorAll('[data-product]').forEach((button) => {
   button.addEventListener('click', () => {
-    if (button.dataset.product === 'tree' || button.dataset.product === 'antler') {
+    const productDefinitionId = galleryProductDefinitionMap[button.dataset.product || ''];
+    if (productDefinitionId) {
       appState.editingItemId = '';
       appState.reviewedItemId = '';
       saveAppState();
@@ -402,7 +445,7 @@ document.querySelectorAll('[data-product]').forEach((button) => {
       clearOrderUiNote();
       clearDiscardPrompt();
       clearTreeFormErrors();
-      resetDraftForProduct(button.dataset.product === 'antler' ? 'antler_ornament' : 'tree_ornament');
+      resetDraftForProduct(productDefinitionId);
       showScreen('tree-customization');
       return;
     }
@@ -533,6 +576,9 @@ function ensureActiveOrderSession() {
 
 function getMaxEntries(size) {
   const config = getProductConfig();
+  if (!config.requiresSize) {
+    return config.preSizeLimit;
+  }
   if (!size) {
     return config.preSizeLimit;
   }
@@ -540,18 +586,19 @@ function getMaxEntries(size) {
 }
 
 function getCapacityDetails() {
-  const size = treeFields.size.value;
+  const config = getProductConfig();
+  const size = config.requiresSize ? treeFields.size.value : '';
   const limit = getMaxEntries(size);
   const count = draft.entries.length;
   const reachedLimit = count >= limit;
-  const overLimit = size === 'Small' && count > limit;
+  const overLimit = count > limit;
 
   return { size, limit, count, reachedLimit, overLimit };
 }
 
 function syncDraftFromFields() {
   draft.productDefinitionId = getActiveProductDefinitionId();
-  draft.size = treeFields.size.value;
+  draft.size = getProductConfig().requiresSize ? treeFields.size.value : '';
   draft.treeColor = getProductConfig().requiresTreeColor ? treeFields.treeColor.value : '';
   draft.bowColor = getProductConfig().requiresBowColor ? treeFields.bowColor.value : '';
   draft.familyName = treeFields.familyName.value;
@@ -987,7 +1034,15 @@ function renderCapacityMessage() {
   const config = getProductConfig();
   const { size, limit, count, reachedLimit, overLimit } = getCapacityDetails();
 
-  if (!size) {
+  if (!config.requiresSize) {
+    if (overLimit) {
+      capacityMessage.textContent = `${config.displayName} supports up to ${limit} combined people and pets. Remove ${count - limit} entr${count - limit === 1 ? 'y' : 'ies'} before continuing.`;
+    } else if (reachedLimit) {
+      capacityMessage.textContent = `${config.displayName} is full at ${limit} combined people and pets. Remove one to add another.`;
+    } else {
+      capacityMessage.textContent = `${config.displayName} allows up to ${limit} combined people and pets. ${limit - count} slot${limit - count === 1 ? '' : 's'} remaining.`;
+    }
+  } else if (!size) {
     capacityMessage.textContent = `Choose a size to lock the limit. Up to ${config.preSizeLimit} combined people and pets can be drafted before size is selected.`;
   } else if (overLimit) {
     capacityMessage.textContent = `${size} supports up to ${limit} combined people and pets. Remove ${count - limit} entr${count - limit === 1 ? 'y' : 'ies'} before continuing.`;
@@ -1292,6 +1347,14 @@ function getResolvedProductImage(productDefinitionId, configuration = {}, contex
     width: image.width || 360,
     height: image.height || 480
   };
+}
+
+function getProductUnitPrice(productDefinitionId = getActiveProductDefinitionId(), size = draft.size) {
+  const config = getProductConfig(productDefinitionId);
+  if (config.requiresSize) {
+    return config.priceBySize?.[size] ?? 0;
+  }
+  return Number.isFinite(config.unitPrice) ? config.unitPrice : 0;
 }
 
 function getResolvedItemImageData(item) {
@@ -1621,10 +1684,12 @@ function getOrnamentOrderItemValidationIssues(item) {
   const issues = [];
   const config = getProductConfig(item.productDefinitionId);
   const size = item.size;
-  const limit = config.sizeLimits[size] || 0;
+  const limit = config.requiresSize ? (config.sizeLimits[size] || 0) : config.preSizeLimit;
   const entries = Array.isArray(item.orderedEntries) ? item.orderedEntries : [];
+  const minimumEntryCount = Number.isFinite(config.minimumEntryCount) ? config.minimumEntryCount : (config.requiresEntries ? 1 : 0);
+  const expectedUnitPrice = getProductUnitPrice(item.productDefinitionId, size);
 
-  if (!allowedValues.size.includes(size)) {
+  if (config.requiresSize && !allowedValues.size.includes(size)) {
     issues.push('Choose a valid size.');
   }
   if (config.requiresTreeColor && !allowedValues.treeColor.includes(item.treeColor)) {
@@ -1639,11 +1704,16 @@ function getOrnamentOrderItemValidationIssues(item) {
   if (!/^\d{4}$/.test(item.year || '')) {
     issues.push('Enter a valid year.');
   }
-  if (config.requiresEntries && entries.length === 0) {
+  if (minimumEntryCount > 0 && entries.length < minimumEntryCount) {
     issues.push('Add at least one person or pet.');
   }
+  if (expectedUnitPrice > 0 && item.unitPrice !== expectedUnitPrice) {
+    issues.push('This item has invalid pricing.');
+  }
   if (limit && entries.length > limit) {
-    issues.push(`${size} ornaments support up to ${limit} combined people and pets.`);
+    issues.push(config.requiresSize
+      ? `${size} ornaments support up to ${limit} combined people and pets.`
+      : `This ornament supports up to ${limit} combined people and pets.`);
   }
 
   entries.forEach((entry) => {
@@ -1685,7 +1755,7 @@ function getOrderItemValidationIssues(item) {
     issues.push('This item has an invalid quantity.');
   }
 
-  if (item.productDefinitionId === 'tree_ornament' || item.productDefinitionId === 'antler_ornament') {
+  if (ornamentProductConfigs[item.productDefinitionId]) {
     issues.push(...getOrnamentOrderItemValidationIssues(item));
   }
 
@@ -1724,10 +1794,6 @@ function formatPrice(amount) {
     style: 'currency',
     currency: 'USD'
   }).format(amount);
-}
-
-function getTreeUnitPrice(size) {
-  return reviewPriceBySize[size] ?? 0;
 }
 
 function getPetIconText(entry) {
@@ -1780,9 +1846,9 @@ function createTreeReviewMarkup() {
     displayName: config.displayName,
     productDefinitionId,
     quantity: 1,
-    unitPrice: getTreeUnitPrice(draft.size),
+    unitPrice: getProductUnitPrice(productDefinitionId, draft.size),
     configurationSnapshot: {
-      size: draft.size,
+      ...(config.requiresSize ? { size: draft.size } : {}),
       familyName: draft.familyName,
       year: draft.year,
       ...(config.requiresTreeColor ? { treeColor: draft.treeColor } : {}),
@@ -1829,9 +1895,9 @@ function normalizeTreeOrderItem() {
   }));
 
   const { peopleCount, petCount } = getEntryCounts(entries);
-  const unitPrice = getTreeUnitPrice(draft.size);
+  const unitPrice = getProductUnitPrice(productDefinitionId, draft.size);
   const configurationSnapshot = {
-    size: draft.size,
+    ...(config.requiresSize ? { size: draft.size } : {}),
     familyName: draft.familyName,
     year: draft.year,
     entries,
@@ -1847,7 +1913,7 @@ function normalizeTreeOrderItem() {
     category: 'ornament',
     quantity: 1,
     unitPrice,
-    size: draft.size,
+    size: config.requiresSize ? draft.size : '',
     treeColor: config.requiresTreeColor ? draft.treeColor : '',
     bowColor: config.requiresBowColor ? draft.bowColor : '',
     familyName: draft.familyName,
@@ -1936,7 +2002,7 @@ function saveOrderItems(items) {
 
 function isTreeDraftBlank() {
   const config = getProductConfig();
-  return !draft.size
+  return (!config.requiresSize || !draft.size)
     && (!config.requiresTreeColor || !draft.treeColor)
     && (!config.requiresBowColor || !draft.bowColor)
     && !sanitizeText(draft.familyName)
@@ -2246,7 +2312,34 @@ function getCurrentOrderStats(items) {
 }
 
 function createCurrentOrderItemMarkup(item) {
-  const engravingNames = item.orderedEntries.map((entry) => escapeHtml(entry.name || 'Unnamed')).join(', ');
+  const engravingEntriesMarkup = item.orderedEntries.length > 0
+    ? `
+      <ol class="review-entry-list current-order-entry-list">
+        ${item.orderedEntries.map((entry, index) => {
+          const detailParts = [];
+          if (entry.kind === 'pet' && entry.icon) {
+            detailParts.push(escapeHtml(getPetIconText(entry)));
+          }
+          if (entry.customIconDescription) {
+            detailParts.push(`Custom icon: ${escapeHtml(entry.customIconDescription)}`);
+          }
+
+          return `
+            <li class="review-entry-item">
+              <span class="review-entry-position">${index + 1}.</span>
+              <div class="review-entry-body">
+                <div class="review-entry-primary">
+                  <span class="review-entry-name">${escapeHtml(entry.name || 'Unnamed')}</span>
+                  <span class="review-entry-badge">${entry.kind === 'pet' ? 'Pet' : 'Person'}</span>
+                </div>
+                ${detailParts.length > 0 ? `<div class="review-entry-detail">${detailParts.join(' • ')}</div>` : ''}
+              </div>
+            </li>
+          `;
+        }).join('')}
+      </ol>
+    `
+    : '';
   const orderedFields = getOrderedItemFields(item);
   const selectionFields = orderedFields.filter((field) => field.key === 'size' || /color/i.test(field.key));
   const otherFields = orderedFields.filter((field) => !['familyName'].includes(field.key) && !/year/i.test(field.key) && !selectionFields.includes(field));
@@ -2314,10 +2407,10 @@ function createCurrentOrderItemMarkup(item) {
             </div>
           ` : ''}
 
-          ${engravingNames ? `
+          ${engravingEntriesMarkup ? `
             <div class="current-order-list-card">
               <h4>Engraving Order</h4>
-              <div class="current-order-names">${engravingNames}</div>
+              ${engravingEntriesMarkup}
             </div>
           ` : ''}
 
@@ -2691,7 +2784,7 @@ function validateTreeForm() {
 
   let isValid = true;
 
-  if (!allowedValues.size.includes(values.size)) {
+  if (config.requiresSize && !allowedValues.size.includes(values.size)) {
     setFieldError('size', 'Please choose an option.');
     isValid = false;
   }
@@ -2716,7 +2809,8 @@ function validateTreeForm() {
     isValid = false;
   }
 
-  if (config.requiresEntries && draft.entries.length === 0) {
+  const minimumEntryCount = Number.isFinite(config.minimumEntryCount) ? config.minimumEntryCount : (config.requiresEntries ? 1 : 0);
+  if (minimumEntryCount > 0 && draft.entries.length < minimumEntryCount) {
     setFieldError('entries', 'Add at least one person or pet.');
     isValid = false;
   }
@@ -2724,6 +2818,9 @@ function validateTreeForm() {
   const { size, limit, count } = getCapacityDetails();
   if (size && count > limit) {
     setFieldError('entries', `${size} ornaments can include up to ${limit} combined people and pets.`);
+    isValid = false;
+  } else if (!config.requiresSize && count > limit) {
+    setFieldError('entries', `This ornament can include up to ${limit} combined people and pets.`);
     isValid = false;
   }
 
