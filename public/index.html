@@ -48,6 +48,61 @@
         </div>
       </section>
 
+      <section class="screen staff-orders-screen" data-screen="staff-orders">
+        <div class="staff-orders-shell">
+          <header class="staff-orders-header">
+            <div class="staff-orders-brand">
+              <img class="staff-orders-logo" src="assets/brand/forge-logo.png" alt="Forge">
+              <div>
+                <p class="eyebrow staff-orders-eyebrow">Development Only</p>
+                <h1>Local Orders Queue</h1>
+                <p class="lead">Read-only access to the durable local orders stored on this device.</p>
+              </div>
+            </div>
+            <div class="staff-orders-header-actions">
+              <button class="secondary-button" type="button" data-action="staff-refresh-orders">Refresh Queue</button>
+              <button class="secondary-button" type="button" data-action="staff-return-welcome">Return to Welcome</button>
+            </div>
+          </header>
+
+          <div class="staff-orders-summary" data-staff-orders-summary></div>
+
+          <section class="staff-orders-controls staff-panel-surface">
+            <div class="staff-orders-search">
+              <label for="staff-orders-search">Search Orders</label>
+              <input id="staff-orders-search" type="search" placeholder="Search customer, phone, order reference, product, or family name" data-staff-orders-search>
+            </div>
+            <div class="staff-orders-filters" data-staff-orders-filters></div>
+            <div class="staff-orders-filter-actions">
+              <button class="secondary-button" type="button" data-action="staff-clear-order-filters">Clear Filters</button>
+            </div>
+          </section>
+
+          <div class="staff-orders-grid">
+            <section class="staff-panel-surface">
+              <div class="staff-section-heading">
+                <div>
+                  <p class="eyebrow staff-orders-eyebrow">Batch Summary</p>
+                  <h2>Production Batch Summary</h2>
+                </div>
+              </div>
+              <div class="staff-batch-groups" data-staff-batch-groups></div>
+            </section>
+
+            <section class="staff-panel-surface">
+              <div class="staff-section-heading">
+                <div>
+                  <p class="eyebrow staff-orders-eyebrow">Saved Orders</p>
+                  <h2>Orders Queue</h2>
+                </div>
+                <p class="staff-orders-status" data-staff-orders-status aria-live="polite"></p>
+              </div>
+              <div class="staff-orders-list" data-staff-orders-list></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
       <section class="screen" data-screen="categories">
         <div class="screen-heading">
           <p class="eyebrow">Step 1</p>
@@ -533,6 +588,7 @@
   <script src="js/forge-order-payload-preview.js"></script>
   <script src="js/forge-order-store.js"></script>
   <script src="js/forge-order-submission.js"></script>
+  <script src="js/forge-local-orders-queue.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

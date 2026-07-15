@@ -1,4 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
+const appShell = document.querySelector('.app-shell');
 const treeForm = document.querySelector('[data-form="tree-ornament"]');
 const treeStatus = document.querySelector('[data-form-status]');
 const entryList = document.querySelector('[data-entry-list]');
@@ -36,6 +37,12 @@ const finalReviewDelivery = document.querySelector('[data-final-review-delivery]
 const finalReviewStatus = document.querySelector('[data-final-review-status]');
 const thankYouCopy = document.querySelector('[data-thank-you-copy]');
 const thankYouReference = document.querySelector('[data-thank-you-reference]');
+const staffOrdersSummary = document.querySelector('[data-staff-orders-summary]');
+const staffOrdersSearchInput = document.querySelector('[data-staff-orders-search]');
+const staffOrdersFilters = document.querySelector('[data-staff-orders-filters]');
+const staffBatchGroups = document.querySelector('[data-staff-batch-groups]');
+const staffOrdersList = document.querySelector('[data-staff-orders-list]');
+const staffOrdersStatus = document.querySelector('[data-staff-orders-status]');
 const addConfirmationBackdrop = document.querySelector('[data-add-confirmation-backdrop]');
 const addConfirmationDialog = document.querySelector('[data-add-confirmation-dialog]');
 const addConfirmationItem = document.querySelector('[data-add-confirmation-item]');
@@ -55,6 +62,7 @@ const forgeProductCatalog = globalThis.ForgeProductCatalog;
 const forgeOrderPayloadPreview = globalThis.ForgeOrderPayloadPreview;
 const forgeOrderStore = globalThis.ForgeOrderStore;
 const forgeOrderSubmission = globalThis.ForgeOrderSubmission;
+const forgeLocalOrdersQueue = globalThis.ForgeLocalOrdersQueue;
 const storageKey = 'forge-tree-ornament-draft';
 const orderItemsStorageKey = 'forge-order-items';
 const appStateStorageKey = 'forge-app-state';
@@ -64,6 +72,19 @@ const savedOrderInspectorState = {
   records: [],
   error: '',
   loading: false
+};
+const staffOrdersState = {
+  enabled: false,
+  loading: false,
+  records: [],
+  searchTerm: '',
+  filters: {},
+  error: '',
+  detailOpen: false,
+  detailOrderUuid: '',
+  detailRecord: null,
+  detailLoading: false,
+  detailError: ''
 };
 
 if (!forgeProductCatalog) {
@@ -80,6 +101,10 @@ if (!forgeOrderStore) {
 
 if (!forgeOrderSubmission) {
   throw new Error('Forge order submission helpers failed to load before app.js.');
+}
+
+if (!forgeLocalOrdersQueue) {
+  throw new Error('Forge local orders queue helpers failed to load before app.js.');
 }
 
 const ornamentProductConfigs = {
@@ -503,6 +528,8 @@ const payloadPreviewState = {
   copyTone: '',
   payload: null
 };
+staffOrdersState.enabled = forgeLocalOrdersQueue.isLocalOrdersQueueEnabled(window.location.search);
+staffOrdersState.filters = forgeLocalOrdersQueue.createEmptyOrderFilters();
 
 const orderUiState = {
   removeConfirmItemId: '',
@@ -525,6 +552,9 @@ let savedOrdersBackdrop = null;
 let savedOrdersDialog = null;
 let savedOrdersList = null;
 let savedOrdersStatus = null;
+let staffOrderDetailBackdrop = null;
+let staffOrderDetailDialog = null;
+let lastStaffOrderDetailFocusTarget = null;
 const payloadPreviewContextStore = forgeOrderPayloadPreview.createPayloadPreviewContextStore();
 const orderStore = forgeOrderStore.createOrderStore();
 const submissionContextManager = forgeOrderSubmission.createSubmissionContextManager({
@@ -569,6 +599,9 @@ function showScreen(name) {
   screens.forEach((screen) => {
     screen.classList.toggle('active', screen.dataset.screen === name);
   });
+  const isStaffScreen = name === 'staff-orders';
+  document.body.classList.toggle('is-staff-screen', isStaffScreen);
+  appShell?.classList.toggle('is-staff-screen', isStaffScreen);
   appState.currentScreen = name;
   saveAppState();
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -2971,21 +3004,23 @@ function renderPlaceOrderButton() {
 }
 
 function ensurePayloadPreviewUi() {
-  if (!forgeOrderPayloadPreview.shouldCreatePayloadPreviewUi(payloadPreviewState.enabled) || payloadPreviewDialog) {
+  const shouldCreateJsonViewer = forgeOrderPayloadPreview.shouldCreatePayloadPreviewUi(payloadPreviewState.enabled)
+    || forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled);
+  if (!shouldCreateJsonViewer || payloadPreviewDialog) {
     return;
   }
 
-  const finalReviewActionsCard = document.querySelector('.final-review-actions-card');
-  if (!finalReviewActionsCard) {
-    return;
+  if (forgeOrderPayloadPreview.shouldCreatePayloadPreviewUi(payloadPreviewState.enabled)) {
+    const finalReviewActionsCard = document.querySelector('.final-review-actions-card');
+    if (finalReviewActionsCard && !document.querySelector('[data-action="preview-order-payload"]')) {
+      finalReviewActionsCard.insertAdjacentHTML('beforeend', `
+        <div class="payload-preview-controls">
+          <p class="eyebrow payload-preview-eyebrow">Development Only</p>
+          <button class="secondary-button payload-preview-trigger" type="button" data-action="preview-order-payload">Preview Order Payload</button>
+        </div>
+      `);
+    }
   }
-
-  finalReviewActionsCard.insertAdjacentHTML('beforeend', `
-    <div class="payload-preview-controls">
-      <p class="eyebrow payload-preview-eyebrow">Development Only</p>
-      <button class="secondary-button payload-preview-trigger" type="button" data-action="preview-order-payload">Preview Order Payload</button>
-    </div>
-  `);
 
   document.body.insertAdjacentHTML('beforeend', `
     <div class="payload-preview-backdrop" data-payload-preview-backdrop hidden>
@@ -3144,6 +3179,429 @@ function renderSavedOrdersDialog() {
   }).join('');
 }
 
+function ensureStaffOrderDetailUi() {
+  if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled) || staffOrderDetailDialog) {
+    return;
+  }
+
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="staff-order-detail-backdrop" data-staff-order-detail-backdrop hidden>
+      <div class="staff-order-detail-dialog" data-staff-order-detail-dialog role="dialog" aria-modal="true" aria-labelledby="staff-order-detail-title" tabindex="-1" hidden></div>
+    </div>
+  `);
+
+  staffOrderDetailBackdrop = document.querySelector('[data-staff-order-detail-backdrop]');
+  staffOrderDetailDialog = document.querySelector('[data-staff-order-detail-dialog]');
+}
+
+function renderStaffOrdersQueue() {
+  if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled) || !staffOrdersSummary || !staffOrdersFilters || !staffBatchGroups || !staffOrdersList || !staffOrdersStatus) {
+    return;
+  }
+
+  const filteredRecords = forgeLocalOrdersQueue.filterLocalOrders(
+    staffOrdersState.records,
+    staffOrdersState.filters,
+    staffOrdersState.searchTerm
+  );
+  const summary = forgeLocalOrdersQueue.summarizeLocalOrders(filteredRecords, staffOrdersState.filters);
+  const availableFilters = forgeLocalOrdersQueue.getAvailableOrderFilters(staffOrdersState.records, {
+    activeFilters: staffOrdersState.filters,
+    searchTerm: staffOrdersState.searchTerm
+  });
+  const batchSummary = forgeLocalOrdersQueue.buildProductionBatchGroups(filteredRecords, staffOrdersState.filters);
+
+  staffOrdersSummary.innerHTML = [
+    { label: 'Total Saved Orders', value: summary.totalOrders },
+    { label: 'Pending Future Sync', value: summary.pendingFutureSync },
+    { label: 'Orders With Open Flags', value: summary.ordersWithOpenFlags },
+    { label: 'Total Items', value: summary.totalItems }
+  ].map((card) => `
+    <article class="staff-summary-card">
+      <span>${escapeHtml(card.label)}</span>
+      <strong>${escapeHtml(String(card.value))}</strong>
+    </article>
+  `).join('');
+
+  staffOrdersFilters.innerHTML = [
+    { key: 'product', label: 'Product', options: availableFilters.product },
+    { key: 'size', label: 'Size', options: availableFilters.size },
+    { key: 'treeColor', label: 'Tree Color', options: availableFilters.treeColor },
+    { key: 'bowColor', label: 'Bow Color', options: availableFilters.bowColor },
+    { key: 'year', label: 'Year', options: availableFilters.year },
+    { key: 'fulfillment', label: 'Fulfillment', options: availableFilters.fulfillment },
+    { key: 'openFlags', label: 'Open Flags', options: availableFilters.openFlags },
+    { key: 'syncStatus', label: 'Sync Status', options: availableFilters.syncStatus }
+  ].map((field) => `
+    <div class="staff-filter-field">
+      <label for="staff-filter-${escapeHtml(field.key)}">${escapeHtml(field.label)}</label>
+      <select id="staff-filter-${escapeHtml(field.key)}" data-staff-filter="${escapeHtml(field.key)}">
+        <option value="all">All</option>
+        ${field.options.map((option) => `
+          <option value="${escapeHtml(option.value)}"${staffOrdersState.filters[field.key] === option.value.toLowerCase() ? ' selected' : ''}>
+            ${escapeHtml(option.label)} (${escapeHtml(String(option.count))})
+          </option>
+        `).join('')}
+      </select>
+    </div>
+  `).join('');
+
+  if (staffOrdersSearchInput && staffOrdersSearchInput.value !== staffOrdersState.searchTerm) {
+    staffOrdersSearchInput.value = staffOrdersState.searchTerm;
+  }
+
+  if (staffOrdersState.loading) {
+    staffOrdersStatus.textContent = 'Loading durable local orders...';
+    staffOrdersList.innerHTML = '';
+    staffBatchGroups.innerHTML = '';
+    return;
+  }
+
+  staffOrdersStatus.textContent = staffOrdersState.error || `${filteredRecords.length} order${filteredRecords.length === 1 ? '' : 's'} shown`;
+
+  staffBatchGroups.innerHTML = buildStaffBatchMarkup(batchSummary);
+  staffOrdersList.innerHTML = filteredRecords.length
+    ? filteredRecords.map((record) => buildStaffOrderCardMarkup(record, staffOrdersState.filters)).join('')
+    : `
+      <div class="staff-empty-state">
+        <h3>No orders match these filters</h3>
+        <p>Adjust the search or clear filters to see the saved local orders on this device.</p>
+      </div>
+    `;
+}
+
+function buildStaffBatchMarkup(batchSummary) {
+  const cards = batchSummary.groups.map((group) => `
+    <article class="staff-batch-card">
+      <strong>${escapeHtml(group.label)}</strong>
+      <span>${escapeHtml(`${group.quantity} item${group.quantity === 1 ? '' : 's'}`)}</span>
+    </article>
+  `);
+
+  if (batchSummary.customIconRequiredCount > 0) {
+    cards.push(`
+      <article class="staff-batch-card">
+        <strong>Custom Icon Required</strong>
+        <span>${escapeHtml(`${batchSummary.customIconRequiredCount} item${batchSummary.customIconRequiredCount === 1 ? '' : 's'}`)}</span>
+      </article>
+    `);
+  }
+
+  return cards.length ? cards.join('') : `
+    <div class="staff-empty-state">
+      <h3>No batch data</h3>
+      <p>Saved orders will appear here as soon as a filter matches at least one production line item.</p>
+    </div>
+  `;
+}
+
+function buildStaffOrderCardMarkup(record, filters) {
+  const payload = record.payload || {};
+  const matchingItems = forgeLocalOrdersQueue.getMatchingOrderItems(record, filters);
+  const productSummary = buildStaffProductSummary(matchingItems);
+  const estimatedTotalCents = payload.pricing?.estimated_total_cents;
+  const fulfillmentMethod = payload.fulfillment?.method === 'pickup' ? 'Pickup' : 'Shipping';
+  const itemCount = matchingItems.reduce((sum, item) => sum + (Number.isInteger(item.quantity) ? item.quantity : 1), 0);
+  const hasFlags = Array.isArray(payload.open_flags) && payload.open_flags.length > 0;
+  const syncStatus = sanitizeText(record.sync_status || 'pending');
+
+  return `
+    <article class="staff-order-card">
+      <div class="staff-order-card-header">
+        <div>
+          <div class="staff-order-ref">${escapeHtml(forgeLocalOrdersQueue.getShortOrderReference(record) || 'No Ref')}</div>
+          <p>${escapeHtml(formatReadableDateTime(record.submitted_at || record.local_saved_at || ''))}</p>
+        </div>
+        <div class="staff-order-card-actions">
+          <span class="staff-status-badge staff-status-badge--${escapeHtml(syncStatus.toLowerCase())}">${escapeHtml(syncStatus.replace(/_/g, ' '))}</span>
+          ${hasFlags ? '<span class="staff-flag-badge">Open Flags</span>' : ''}
+        </div>
+      </div>
+      <div class="staff-order-card-meta">
+        <div><span>Customer</span><strong>${escapeHtml(payload.customer?.full_name || 'Unknown customer')}</strong></div>
+        <div><span>Items</span><strong>${escapeHtml(String(itemCount))}</strong></div>
+        <div><span>Estimated Total</span><strong>${Number.isInteger(estimatedTotalCents) ? escapeHtml(formatPrice(estimatedTotalCents / 100)) : 'Quote Required'}</strong></div>
+        <div><span>Fulfillment</span><strong>${escapeHtml(fulfillmentMethod)}</strong></div>
+      </div>
+      <div class="staff-order-products">
+        <span>Products</span>
+        <ul>${productSummary.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}</ul>
+      </div>
+      <div class="staff-order-card-actions">
+        <button class="secondary-button" type="button" data-action="staff-view-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">View Order</button>
+      </div>
+    </article>
+  `;
+}
+
+function buildStaffProductSummary(items) {
+  const grouped = new Map();
+  items.forEach((item) => {
+    const key = sanitizeText(item.product_display_name || 'Custom Item');
+    grouped.set(key, (grouped.get(key) || 0) + (Number.isInteger(item.quantity) ? item.quantity : 1));
+  });
+  return [...grouped.entries()].map(([name, quantity]) => `${quantity} × ${name}`);
+}
+
+async function loadStaffOrdersQueue() {
+  if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled)) {
+    return;
+  }
+
+  staffOrdersState.loading = true;
+  staffOrdersState.error = '';
+  renderStaffOrdersQueue();
+
+  try {
+    const records = await orderStore.listOrders();
+    staffOrdersState.records = forgeLocalOrdersQueue.sortLocalOrdersNewestFirst(records);
+  } catch (error) {
+    console.error('Forge staff local orders queue failed to load', error);
+    staffOrdersState.records = [];
+    staffOrdersState.error = 'Saved local orders could not be loaded on this device.';
+  } finally {
+    staffOrdersState.loading = false;
+    renderStaffOrdersQueue();
+  }
+}
+
+async function openStaffOrderDetail(forgeOrderUuid) {
+  ensureStaffOrderDetailUi();
+  if (!staffOrderDetailDialog) {
+    return;
+  }
+
+  staffOrdersState.detailOpen = true;
+  staffOrdersState.detailLoading = true;
+  staffOrdersState.detailError = '';
+  staffOrdersState.detailOrderUuid = forgeOrderUuid;
+  staffOrdersState.detailRecord = null;
+  lastStaffOrderDetailFocusTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  renderStaffOrderDetail();
+
+  try {
+    const record = await orderStore.getOrder(forgeOrderUuid);
+    if (!record) {
+      staffOrdersState.detailError = 'That saved order could not be found.';
+    } else {
+      staffOrdersState.detailRecord = record;
+    }
+  } catch (error) {
+    console.error('Forge staff order detail failed to load', error);
+    staffOrdersState.detailError = 'Order details could not be loaded on this device.';
+  } finally {
+    staffOrdersState.detailLoading = false;
+    renderStaffOrderDetail();
+    window.setTimeout(() => {
+      (getStaffOrderDetailFocusableElements()[0] || staffOrderDetailDialog)?.focus();
+    }, 0);
+  }
+}
+
+function closeStaffOrderDetail() {
+  staffOrdersState.detailOpen = false;
+  staffOrdersState.detailLoading = false;
+  staffOrdersState.detailOrderUuid = '';
+  staffOrdersState.detailRecord = null;
+  staffOrdersState.detailError = '';
+  renderStaffOrderDetail();
+  if (lastStaffOrderDetailFocusTarget) {
+    lastStaffOrderDetailFocusTarget.focus();
+  }
+  lastStaffOrderDetailFocusTarget = null;
+}
+
+function renderStaffOrderDetail() {
+  ensureStaffOrderDetailUi();
+  if (!staffOrderDetailBackdrop || !staffOrderDetailDialog) {
+    return;
+  }
+
+  staffOrderDetailBackdrop.hidden = !staffOrdersState.detailOpen;
+  staffOrderDetailDialog.hidden = !staffOrdersState.detailOpen;
+
+  if (!staffOrdersState.detailOpen) {
+    staffOrderDetailDialog.innerHTML = '';
+    return;
+  }
+
+  if (staffOrdersState.detailLoading) {
+    staffOrderDetailDialog.innerHTML = `
+      <div class="staff-order-detail-header">
+        <div>
+          <p class="eyebrow staff-orders-eyebrow">Development Only</p>
+          <h2 id="staff-order-detail-title">Loading Order</h2>
+        </div>
+        <button class="text-button" type="button" data-action="close-staff-order-detail">Close</button>
+      </div>
+      <p class="staff-orders-status">Loading the durable local order record...</p>
+    `;
+    return;
+  }
+
+  if (staffOrdersState.detailError || !staffOrdersState.detailRecord) {
+    staffOrderDetailDialog.innerHTML = `
+      <div class="staff-order-detail-header">
+        <div>
+          <p class="eyebrow staff-orders-eyebrow">Development Only</p>
+          <h2 id="staff-order-detail-title">Order Unavailable</h2>
+        </div>
+        <button class="text-button" type="button" data-action="close-staff-order-detail">Close</button>
+      </div>
+      <div class="staff-empty-state">
+        <h3>Unable to open this order</h3>
+        <p>${escapeHtml(staffOrdersState.detailError || 'Saved order details are unavailable.')}</p>
+      </div>
+    `;
+    return;
+  }
+
+  const record = staffOrdersState.detailRecord;
+  const payload = record.payload || {};
+  const customer = payload.customer || {};
+  const fulfillment = payload.fulfillment || {};
+  const openFlags = Array.isArray(payload.open_flags) ? payload.open_flags : [];
+  const shippingAddress = fulfillment.shipping_address || null;
+
+  staffOrderDetailDialog.innerHTML = `
+    <div class="staff-order-detail-header">
+      <div>
+        <p class="eyebrow staff-orders-eyebrow">Development Only</p>
+        <h2 id="staff-order-detail-title">Order ${escapeHtml(forgeLocalOrdersQueue.getShortOrderReference(record) || 'Detail')}</h2>
+      </div>
+      <div class="staff-order-card-actions">
+        <button class="secondary-button" type="button" data-action="staff-view-order-json" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">View Raw JSON</button>
+        <button class="text-button" type="button" data-action="close-staff-order-detail">Close</button>
+      </div>
+    </div>
+
+    <div class="staff-order-detail-meta">
+      <div><span>UUID</span><strong>${escapeHtml(record.forge_order_uuid)}</strong></div>
+      <div><span>Submitted</span><strong>${escapeHtml(formatReadableDateTime(record.submitted_at || ''))}</strong></div>
+      <div><span>Local Saved</span><strong>${escapeHtml(formatReadableDateTime(record.local_saved_at || ''))}</strong></div>
+      <div><span>Sync Status</span><strong>${escapeHtml(sanitizeText(record.sync_status || 'pending').replace(/_/g, ' '))}</strong></div>
+    </div>
+
+    <section class="staff-order-detail-section">
+      <h3>Order</h3>
+      <div class="staff-order-detail-grid">
+        <div><span>Status</span><strong>${escapeHtml(record.status || 'submitted')}</strong></div>
+        <div><span>Sync Attempts</span><strong>${escapeHtml(String(record.sync_attempt_count ?? 0))}</strong></div>
+      </div>
+      <div class="staff-order-detail-flags">
+        <span>Open Flags</span>
+        ${openFlags.length ? `<ul>${openFlags.map((flag) => `<li>${escapeHtml(flag.message || flag.code || 'Open flag')}</li>`).join('')}</ul>` : '<p>No order-level open flags.</p>'}
+      </div>
+    </section>
+
+    <section class="staff-order-detail-section">
+      <h3>Customer</h3>
+      <div class="staff-order-detail-grid">
+        <div><span>Name</span><strong>${escapeHtml(customer.full_name || 'Not provided')}</strong></div>
+        <div><span>Email</span><strong>${escapeHtml(customer.email || 'Not provided')}</strong></div>
+        <div><span>Phone</span><strong>${escapeHtml(formatCustomerPhone(customer.phone || 'Not provided'))}</strong></div>
+        <div><span>Preferred Contact</span><strong>${escapeHtml(customer.preferred_contact || 'Not provided')}</strong></div>
+      </div>
+    </section>
+
+    <section class="staff-order-detail-section">
+      <h3>Fulfillment</h3>
+      <div class="staff-order-detail-grid">
+        <div><span>Method</span><strong>${escapeHtml(fulfillment.method === 'pickup' ? 'Pickup' : 'Shipping')}</strong></div>
+        <div><span>Needed By</span><strong>${escapeHtml(fulfillment.needed_by ? formatReadableDate(fulfillment.needed_by) : 'Not provided')}</strong></div>
+      </div>
+      ${shippingAddress ? `
+        <div class="staff-order-detail-row">
+          <span>Shipping Address</span>
+          <strong>${escapeHtml([shippingAddress.address_1, shippingAddress.address_2, [shippingAddress.city, shippingAddress.state, shippingAddress.postal_code].filter(Boolean).join(', '), shippingAddress.country].filter(Boolean).join(' • '))}</strong>
+        </div>
+      ` : '<p>Local pickup order.</p>'}
+    </section>
+
+    <section class="staff-order-detail-section staff-order-detail-items">
+      <h3>Items</h3>
+      ${getStaffOrderItemsMarkup(payload.items || [])}
+    </section>
+  `;
+}
+
+function getStaffOrderItemsMarkup(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return '<div class="staff-empty-state"><h3>No items</h3><p>No normalized line items were stored for this record.</p></div>';
+  }
+
+  return items.map((item) => {
+    const flags = Array.isArray(item.open_flags) ? item.open_flags : [];
+    const attributes = item.structured_attributes || {};
+    const pricing = item.pricing || {};
+    return `
+      <article>
+        <div class="staff-order-card-header">
+          <div>
+            <h4>${escapeHtml(item.product_display_name || item.product_definition_id || 'Custom Item')}</h4>
+            <p>${escapeHtml(`${Number.isInteger(item.quantity) ? item.quantity : 1} × ${Number.isInteger(pricing.final_unit_price_cents) ? formatPrice(pricing.final_unit_price_cents / 100) : 'Quote Required'}`)}</p>
+          </div>
+          ${flags.length ? '<span class="staff-flag-badge">Item Flags</span>' : ''}
+        </div>
+        <div class="staff-order-detail-grid">
+          <div><span>Configuration</span><strong>${escapeHtml(formatStaffConfigurationSummary(attributes))}</strong></div>
+          <div><span>Prices</span><strong>${Number.isInteger(pricing.line_total_cents) ? escapeHtml(formatPrice(pricing.line_total_cents / 100)) : 'Quote Required'}</strong></div>
+          <div><span>Structured Attributes</span><strong>${escapeHtml(formatStaffStructuredAttributes(attributes))}</strong></div>
+          <div><span>Customer Note</span><strong>${escapeHtml(item.customer_note || 'None')}</strong></div>
+          <div><span>Production Note</span><strong>${escapeHtml(item.production_note || 'None')}</strong></div>
+        </div>
+        <div class="staff-order-detail-row">
+          <span>Personalization Order</span>
+          ${Array.isArray(item.personalization_order) && item.personalization_order.length
+            ? `<ul class="staff-order-detail-list">${item.personalization_order.map((entry) => `<li>${escapeHtml(formatStaffPersonalizationEntry(entry))}</li>`).join('')}</ul>`
+            : '<p>No personalization order saved.</p>'}
+        </div>
+        <div class="staff-order-detail-row">
+          <span>Item Open Flags</span>
+          ${flags.length ? `<ul class="staff-order-detail-list">${flags.map((flag) => `<li>${escapeHtml(flag.message || flag.code || 'Open flag')}</li>`).join('')}</ul>` : '<p>No item open flags.</p>'}
+        </div>
+      </article>
+    `;
+  }).join('');
+}
+
+function formatStaffConfigurationSummary(attributes) {
+  const parts = [];
+  if (attributes.size) {
+    parts.push(attributes.size);
+  }
+  if (attributes.tree_color) {
+    parts.push(attributes.tree_color);
+  }
+  if (attributes.bow_color) {
+    parts.push(`${attributes.bow_color} Bow`);
+  }
+  if (attributes.year) {
+    parts.push(`Year ${attributes.year}`);
+  }
+  return parts.join(' / ') || 'No additional production attributes';
+}
+
+function formatStaffStructuredAttributes(attributes) {
+  return [
+    attributes.product_definition_id,
+    attributes.fulfillment_method,
+    attributes.family_name,
+    attributes.year
+  ].filter(Boolean).join(' / ') || 'No structured attributes';
+}
+
+function formatStaffPersonalizationEntry(entry) {
+  const parts = [entry.name || 'Unnamed', entry.type === 'pet' ? 'Pet' : 'Person'];
+  if (entry.icon) {
+    parts.push(entry.icon.replace(/_/g, ' '));
+  }
+  if (entry.custom_icon_description) {
+    parts.push(`Custom icon: ${entry.custom_icon_description}`);
+  }
+  return parts.join(' / ');
+}
+
 function getPayloadPreviewFocusableElements() {
   if (!payloadPreviewDialog) {
     return [];
@@ -3159,6 +3617,15 @@ function getSavedOrdersFocusableElements() {
   }
 
   return [...savedOrdersDialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter((element) => !element.hasAttribute('disabled'));
+}
+
+function getStaffOrderDetailFocusableElements() {
+  if (!staffOrderDetailDialog) {
+    return [];
+  }
+
+  return [...staffOrderDetailDialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
     .filter((element) => !element.hasAttribute('disabled'));
 }
 
@@ -3900,10 +4367,15 @@ if (treeForm) {
   renderTreeSubmitButton();
   ensurePayloadPreviewUi();
   ensureSavedOrdersUi();
+  ensureStaffOrderDetailUi();
   renderDebugOrderTools();
   renderPlaceOrderButton();
+  renderStaffOrdersQueue();
 
-  if (appState.currentScreen === 'tree-customization') {
+  if (staffOrdersState.enabled) {
+    loadStaffOrdersQueue();
+    showScreen('staff-orders');
+  } else if (appState.currentScreen === 'tree-customization') {
     showScreen('tree-customization');
   } else if (appState.currentScreen === 'tree-review') {
     if (appState.editingItemId || !isTreeDraftBlank()) {
@@ -3969,6 +4441,33 @@ if (treeForm) {
   });
 
   document.addEventListener('keydown', (event) => {
+    if (staffOrdersState.detailOpen && event.key === 'Tab') {
+      const focusable = getStaffOrderDetailFocusableElements();
+      if (focusable.length === 0) {
+        event.preventDefault();
+        staffOrderDetailDialog?.focus();
+        return;
+      }
+
+      const currentIndex = focusable.indexOf(document.activeElement);
+      if (event.shiftKey) {
+        if (currentIndex <= 0) {
+          event.preventDefault();
+          focusable[focusable.length - 1].focus();
+        }
+      } else if (currentIndex === focusable.length - 1 || currentIndex === -1) {
+        event.preventDefault();
+        focusable[0].focus();
+      }
+      return;
+    }
+
+    if (staffOrdersState.detailOpen && event.key === 'Escape') {
+      event.preventDefault();
+      closeStaffOrderDetail();
+      return;
+    }
+
     if (savedOrderInspectorState.open && event.key === 'Tab') {
       const focusable = getSavedOrdersFocusableElements();
       if (focusable.length === 0) {
@@ -4450,6 +4949,30 @@ if (treeForm) {
     }
   });
 
+  staffOrderDetailDialog?.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    const orderUuid = event.target.closest('[data-order-uuid]')?.dataset.orderUuid;
+    if (!action) {
+      return;
+    }
+
+    if (action === 'close-staff-order-detail') {
+      closeStaffOrderDetail();
+      return;
+    }
+
+    if (action === 'staff-view-order-json' && orderUuid) {
+      closeStaffOrderDetail();
+      inspectSavedOrderRecord(orderUuid);
+    }
+  });
+
+  staffOrderDetailBackdrop?.addEventListener('click', (event) => {
+    if (event.target === staffOrderDetailBackdrop) {
+      closeStaffOrderDetail();
+    }
+  });
+
   debugOrderToolContainers.forEach((container) => {
     container.addEventListener('click', (event) => {
       const action = event.target.closest('[data-action]')?.dataset.action;
@@ -4466,6 +4989,60 @@ if (treeForm) {
         inspectSavedOrderRecord(appState.lastSubmittedOrderUuid);
       }
     });
+  });
+
+  document.querySelector('[data-screen="staff-orders"]')?.addEventListener('input', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) {
+      return;
+    }
+    if (target.matches('[data-staff-orders-search]')) {
+      staffOrdersState.searchTerm = target.value;
+      renderStaffOrdersQueue();
+    }
+  });
+
+  document.querySelector('[data-screen="staff-orders"]')?.addEventListener('change', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement)) {
+      return;
+    }
+    const filterKey = target.dataset.staffFilter;
+    if (!filterKey) {
+      return;
+    }
+    staffOrdersState.filters[filterKey] = String(target.value || 'all').trim().toLowerCase();
+    renderStaffOrdersQueue();
+  });
+
+  document.querySelector('[data-screen="staff-orders"]')?.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    const orderUuid = event.target.closest('[data-order-uuid]')?.dataset.orderUuid;
+    if (!action) {
+      return;
+    }
+
+    if (action === 'staff-refresh-orders') {
+      loadStaffOrdersQueue();
+      return;
+    }
+
+    if (action === 'staff-return-welcome') {
+      closeStaffOrderDetail();
+      showScreen('welcome');
+      return;
+    }
+
+    if (action === 'staff-clear-order-filters') {
+      staffOrdersState.searchTerm = '';
+      staffOrdersState.filters = forgeLocalOrdersQueue.createEmptyOrderFilters();
+      renderStaffOrdersQueue();
+      return;
+    }
+
+    if (action === 'staff-view-order' && orderUuid) {
+      openStaffOrderDetail(orderUuid);
+    }
   });
 
   discardPanels.forEach((panel) => {
