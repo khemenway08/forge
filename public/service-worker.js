@@ -1,4 +1,4 @@
-const CACHE_NAME = 'forge-starter-v6';
+const CACHE_NAME = 'forge-starter-v9';
 const ASSETS = [
   './',
   './index.html',
@@ -7,12 +7,19 @@ const ASSETS = [
   './manifest.webmanifest',
   './assets/brand/hilltop-logo.png',
   './assets/brand/forge-mark.png',
-  './assets/products/tree-ornament.jpg',
-  './assets/products/tree-gallery.jpg',
-  './assets/products/present-stack.jpg',
-  './assets/products/grinch-tree.jpg',
-  './assets/products/veteran-flag.jpg',
-  './assets/products/baby-first-christmas.jpg'
+  '/assets/images/categories/welcome-category-ornaments.png',
+  '/assets/images/categories/welcome-category-signs.png',
+  '/assets/images/categories/welcome-category-custom.png',
+  '/assets/products/family-tree-ornament-small.jpeg',
+  '/assets/products/family-tree-ornament-large.jpeg',
+  '/assets/products/antler-family-ornament-small.jpeg',
+  '/assets/products/antler-family-ornament-large.jpeg',
+  '/assets/products/babys-first-christmas-pink.jpeg',
+  '/assets/products/mr-and-mrs-first-christmas.jpeg',
+  '/assets/products/reindeer-initial-ornament.jpeg',
+  '/assets/products/present-stack-ornament.jpeg',
+  '/assets/products/grinch-family-tree.jpg',
+  '/assets/products/veteran-flag-ornament.jpg'
 ];
 
 self.addEventListener('install', (event) => {

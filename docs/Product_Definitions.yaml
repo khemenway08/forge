@@ -60,7 +60,11 @@ products:
     display_name: Tree Ornament
     category: ornament
     active: true
-    image: {primary: "assets/ornaments/tree-ornament.jpg"}
+    image:
+      primary: "assets/products/family-tree-ornament-small.jpeg"
+      by_size:
+        small: "assets/products/family-tree-ornament-small.jpeg"
+        large: "assets/products/family-tree-ornament-large.jpeg"
     pricing: {small: 26.00, large: 30.00}
     customization_order: [size, tree_color, bow_color, family_name, people, pets, year]
     options:
@@ -89,7 +93,11 @@ products:
     display_name: Antler Ornament
     category: ornament
     active: true
-    image: {primary: "assets/ornaments/antler-ornament.jpg"}
+    image:
+      primary: "assets/products/antler-family-ornament-small.jpeg"
+      by_size:
+        small: "assets/products/antler-family-ornament-small.jpeg"
+        large: "assets/products/antler-family-ornament-large.jpeg"
     pricing: {small: 26.00, large: 30.00}
     customization_order: [size, family_name, people, pets, year]
     options:
@@ -116,7 +124,7 @@ products:
     display_name: "Baby's First Christmas"
     category: ornament
     active: true
-    image: {primary: "assets/ornaments/babys-first-christmas.jpg"}
+    image: {primary: "assets/products/babys-first-christmas-pink.jpeg"}
     pricing: {base: 28.00}
     customization_order: [bow_and_stocking_color, baby_name, year]
     options:
@@ -129,7 +137,7 @@ products:
     display_name: "Mr. & Mrs. Christmas"
     category: ornament
     active: true
-    image: {primary: "assets/ornaments/mr-and-mrs-christmas.jpg"}
+    image: {primary: "assets/products/mr-and-mrs-first-christmas.jpeg"}
     pricing: {base: 28.00}
     customization_order: [last_name, wedding_year]
     fields:
@@ -140,7 +148,7 @@ products:
     display_name: Little Reindeer Letter Ornament
     category: ornament
     active: true
-    image: {primary: "assets/ornaments/little-reindeer-letter.jpg"}
+    image: {primary: "assets/products/reindeer-initial-ornament.jpeg"}
     pricing:
       base: 15.00
       quantity_discount:
@@ -160,7 +168,7 @@ products:
     display_name: Present Stack Ornament
     category: ornament
     active: true
-    image: {primary: "assets/ornaments/present-stack.jpg"}
+    image: {primary: "assets/products/present-stack-ornament.jpeg"}
     pricing: {base: 30.00}
     customization_order: [bow_color, family_name, people, pets, year]
     options:
@@ -183,7 +191,7 @@ products:
     display_name: Grinch Tree Ornament
     category: ornament
     active: true
-    image: {primary: "assets/ornaments/grinch-tree.jpg"}
+    image: {primary: "assets/products/grinch-family-tree.jpg"}
     pricing: {base: 30.00}
     customization_order: [family_name, people, pets, year]
     fields:
@@ -206,7 +214,7 @@ products:
     display_name: Veteran Flag Ornament
     category: ornament
     active: true
-    image: {primary: "assets/ornaments/veteran-flag.jpg"}
+    image: {primary: "assets/products/veteran-flag-ornament.jpg"}
     pricing:
       base: 25.00
       customized_edge_text: 25.00

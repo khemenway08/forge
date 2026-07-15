@@ -5,10 +5,28 @@ const entryList = document.querySelector('[data-entry-list]');
 const capacityMessage = document.querySelector('[data-capacity-message]');
 const addPersonButton = document.querySelector('[data-action="add-person"]');
 const addPetButton = document.querySelector('[data-action="add-pet"]');
+const treeSubmitButton = document.querySelector('[data-tree-submit-button]');
+const treeCustomizationImage = document.querySelector('[data-tree-customization-image]');
+const customizationEyebrow = document.querySelector('[data-customization-eyebrow]');
+const customizationTitle = document.querySelector('[data-customization-title]');
+const customizationCopy = document.querySelector('[data-customization-copy]');
+const reviewEyebrow = document.querySelector('[data-review-eyebrow]');
+const reviewTitle = document.querySelector('[data-review-title]');
+const reviewCopy = document.querySelector('[data-review-copy]');
+const treeColorGroup = document.querySelector('[data-product-field-group="treeColor"]');
+const bowColorGroup = document.querySelector('[data-product-field-group="bowColor"]');
 const treeReviewCard = document.querySelector('[data-tree-review-card]');
 const currentOrderItems = document.querySelector('[data-current-order-items]');
 const currentOrderSummary = document.querySelector('[data-current-order-summary]');
 const customerForm = document.querySelector('[data-form="customer-information"]');
+const finalReviewItems = document.querySelector('[data-final-review-items]');
+const finalReviewSummary = document.querySelector('[data-final-review-summary]');
+const finalReviewCustomer = document.querySelector('[data-final-review-customer]');
+const finalReviewDelivery = document.querySelector('[data-final-review-delivery]');
+const finalReviewStatus = document.querySelector('[data-final-review-status]');
+const addConfirmationBackdrop = document.querySelector('[data-add-confirmation-backdrop]');
+const addConfirmationDialog = document.querySelector('[data-add-confirmation-dialog]');
+const addConfirmationItem = document.querySelector('[data-add-confirmation-item]');
 const staffButton = document.querySelector('[data-action="staff"]');
 const staffPanel = document.querySelector('[data-staff-panel]');
 const staffDefaultActions = document.querySelector('[data-staff-actions="default"]');
@@ -29,6 +47,31 @@ const reviewPriceBySize = {
   Large: 30
 };
 
+const ornamentProductConfigs = {
+  tree_ornament: {
+    displayName: 'Tree Ornament',
+    galleryProductKey: 'tree',
+    sizeLimits: { Small: 5, Large: 12 },
+    preSizeLimit: 12,
+    requiresTreeColor: true,
+    requiresBowColor: true,
+    requiresEntries: true,
+    customizationCopy: 'Choose colors and personalization details before continuing.',
+    updateNote: 'Tree Ornament updated.'
+  },
+  antler_ornament: {
+    displayName: 'Antler Ornament',
+    galleryProductKey: 'antler',
+    sizeLimits: { Small: 5, Large: 10 },
+    preSizeLimit: 10,
+    requiresTreeColor: false,
+    requiresBowColor: false,
+    requiresEntries: false,
+    customizationCopy: 'Choose personalization details before continuing.',
+    updateNote: 'Antler Ornament updated.'
+  }
+};
+
 const treeFields = {
   size: document.querySelector('[name="size"]'),
   treeColor: document.querySelector('[name="treeColor"]'),
@@ -36,6 +79,8 @@ const treeFields = {
   familyName: document.querySelector('[name="familyName"]'),
   year: document.querySelector('[name="year"]')
 };
+
+const optionChoiceButtons = [...document.querySelectorAll('[data-choice-field]')];
 
 const customerFields = {
   fullName: document.querySelector('[data-customer-field="fullName"]'),
@@ -59,7 +104,103 @@ const allowedValues = {
   fulfillmentMethod: ['Shipping', 'Local Pickup']
 };
 
+const productReviewConfig = {
+  tree_ornament: {
+    galleryImage: {
+      src: '/assets/products/family-tree-ornament-small.jpeg',
+      alt: 'Tree Ornament — Small',
+      width: 1536,
+      height: 2048
+    },
+    imageBySize: {
+      Small: {
+        src: '/assets/products/family-tree-ornament-small.jpeg',
+        alt: 'Tree Ornament — Small',
+        width: 1536,
+        height: 2048
+      },
+      Large: {
+        src: '/assets/products/family-tree-ornament-large.jpeg',
+        alt: 'Tree Ornament — Large',
+        width: 1536,
+        height: 2048
+      }
+    },
+    fieldLabels: {
+      size: 'Size',
+      treeColor: 'Tree Color',
+      bowColor: 'Bow Color',
+      familyName: 'Engraved Text',
+      year: 'Year'
+    }
+  },
+  antler_ornament: {
+    galleryImage: {
+      src: '/assets/products/antler-family-ornament-small.jpeg',
+      alt: 'Antler Ornament — Small',
+      width: 1536,
+      height: 2048
+    },
+    imageBySize: {
+      Small: {
+        src: '/assets/products/antler-family-ornament-small.jpeg',
+        alt: 'Antler Ornament — Small',
+        width: 1536,
+        height: 2048
+      },
+      Large: {
+        src: '/assets/products/antler-family-ornament-large.jpeg',
+        alt: 'Antler Ornament — Large',
+        width: 1516,
+        height: 2048
+      }
+    },
+    fieldLabels: {
+      size: 'Size',
+      familyName: 'Engraved Text',
+      year: 'Year'
+    }
+  },
+  present_stack: {
+    image: '/assets/products/present-stack-ornament.jpeg',
+    imageAlt: 'Present Stack Ornament',
+    imageWidth: 1536,
+    imageHeight: 2048
+  },
+  grinch_tree: {
+    image: '/assets/products/grinch-family-tree.jpg',
+    imageAlt: 'Grinch Tree Ornament',
+    imageWidth: 1536,
+    imageHeight: 2048
+  },
+  veteran_flag: {
+    image: '/assets/products/veteran-flag-ornament.jpg',
+    imageAlt: 'Veteran Flag Ornament',
+    imageWidth: 1536,
+    imageHeight: 2048
+  },
+  babys_first_christmas: {
+    image: '/assets/products/babys-first-christmas-pink.jpeg',
+    imageAlt: "Baby's First Christmas ornament",
+    imageWidth: 1536,
+    imageHeight: 2048
+  },
+  mr_and_mrs_christmas: {
+    image: '/assets/products/mr-and-mrs-first-christmas.jpeg',
+    imageAlt: 'Mr. & Mrs. Christmas ornament',
+    imageWidth: 1536,
+    imageHeight: 2048
+  },
+  little_reindeer_letter: {
+    image: '/assets/products/reindeer-initial-ornament.jpeg',
+    imageAlt: 'Little Reindeer Letter Ornament',
+    imageWidth: 2048,
+    imageHeight: 1536
+  }
+};
+
 const draft = {
+  productDefinitionId: 'tree_ornament',
   size: '',
   treeColor: '',
   bowColor: '',
@@ -97,6 +238,18 @@ const reviewState = {
   error: ''
 };
 
+const addConfirmationState = {
+  open: false,
+  itemId: '',
+  title: 'Added to Your Order',
+  message: 'This ornament has been saved to the current order.'
+};
+
+const finalReviewState = {
+  message: '',
+  tone: ''
+};
+
 const orderUiState = {
   removeConfirmItemId: '',
   note: '',
@@ -105,6 +258,28 @@ const orderUiState = {
 
 let orderUiNoteTimer = 0;
 let lastStaffFocusTarget = null;
+let lastConfirmationFocusTarget = null;
+
+function getProductConfig(productDefinitionId = draft.productDefinitionId) {
+  return ornamentProductConfigs[productDefinitionId] || ornamentProductConfigs.tree_ornament;
+}
+
+function getActiveProductDefinitionId() {
+  return draft.productDefinitionId && ornamentProductConfigs[draft.productDefinitionId]
+    ? draft.productDefinitionId
+    : 'tree_ornament';
+}
+
+function isColorFieldRequired(fieldName) {
+  const config = getProductConfig();
+  if (fieldName === 'treeColor') {
+    return config.requiresTreeColor;
+  }
+  if (fieldName === 'bowColor') {
+    return config.requiresBowColor;
+  }
+  return true;
+}
 
 function showScreen(name) {
   screens.forEach((screen) => {
@@ -113,6 +288,70 @@ function showScreen(name) {
   appState.currentScreen = name;
   saveAppState();
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function renderCustomizationScreenContent() {
+  const config = getProductConfig();
+  const showTreeColor = config.requiresTreeColor;
+  const showBowColor = config.requiresBowColor;
+
+  if (customizationEyebrow) {
+    customizationEyebrow.textContent = config.displayName;
+  }
+  if (customizationTitle) {
+    customizationTitle.textContent = 'Customize your ornament';
+  }
+  if (customizationCopy) {
+    customizationCopy.textContent = config.customizationCopy;
+  }
+  if (reviewEyebrow) {
+    reviewEyebrow.textContent = config.displayName;
+  }
+  if (reviewTitle) {
+    reviewTitle.textContent = 'Review this item';
+  }
+  if (reviewCopy) {
+    reviewCopy.textContent = 'Double-check the ornament details before adding it to the order.';
+  }
+
+  if (treeColorGroup) {
+    treeColorGroup.hidden = !showTreeColor;
+  }
+  if (bowColorGroup) {
+    bowColorGroup.hidden = !showBowColor;
+  }
+}
+
+function resetDraftState(productDefinitionId = 'tree_ornament') {
+  draft.productDefinitionId = ornamentProductConfigs[productDefinitionId] ? productDefinitionId : 'tree_ornament';
+  draft.size = '';
+  draft.treeColor = '';
+  draft.bowColor = '';
+  draft.familyName = '';
+  draft.year = '2026';
+  draft.entries = [];
+  appState.editingItemId = '';
+  appState.reviewedItemId = '';
+  reviewState.saving = false;
+  reviewState.lastAddedItemId = '';
+  reviewState.error = '';
+  addConfirmationState.open = false;
+  addConfirmationState.itemId = '';
+  addConfirmationState.title = 'Added to Your Order';
+  addConfirmationState.message = 'This ornament has been saved to the current order.';
+  clearOrderUiNote();
+  clearDiscardPrompt();
+  clearTreeFormErrors();
+}
+
+function resetDraftForProduct(productDefinitionId) {
+  resetDraftState(productDefinitionId);
+
+  hydrateFormFromDraft();
+  renderEntries();
+  renderTreeReview();
+  renderTreeSubmitButton();
+  saveDraft();
 }
 
 document.querySelector('[data-action="start"]').addEventListener('click', () => {
@@ -155,10 +394,15 @@ document.querySelectorAll('[data-action="back-tree-review"]').forEach((button) =
 
 document.querySelectorAll('[data-product]').forEach((button) => {
   button.addEventListener('click', () => {
-    if (button.dataset.product === 'tree') {
+    if (button.dataset.product === 'tree' || button.dataset.product === 'antler') {
+      appState.editingItemId = '';
+      appState.reviewedItemId = '';
+      saveAppState();
+      closeAddConfirmation(false);
+      clearOrderUiNote();
+      clearDiscardPrompt();
       clearTreeFormErrors();
-      hydrateFormFromDraft();
-      renderEntries();
+      resetDraftForProduct(button.dataset.product === 'antler' ? 'antler_ornament' : 'tree_ornament');
       showScreen('tree-customization');
       return;
     }
@@ -177,6 +421,46 @@ function setFieldError(name, message) {
   const error = document.querySelector(`[data-error-for="${name}"]`);
   if (error) {
     error.textContent = message;
+  }
+}
+
+function renderOptionChoiceButtons() {
+  ['size', 'treeColor', 'bowColor'].forEach((fieldName) => {
+    const selectedValue = treeFields[fieldName]?.value || '';
+    const buttons = optionChoiceButtons.filter((button) => button.dataset.choiceField === fieldName);
+    const activeButton = buttons.find((button) => button.dataset.choiceValue === selectedValue);
+
+    buttons.forEach((button, index) => {
+      const isSelected = button.dataset.choiceValue === selectedValue;
+      button.classList.toggle('is-selected', isSelected);
+      button.setAttribute('aria-checked', isSelected ? 'true' : 'false');
+      button.tabIndex = isSelected || (!activeButton && index === 0) ? 0 : -1;
+    });
+  });
+}
+
+function setOptionChoiceValue(fieldName, value, focusButton = false) {
+  const field = treeFields[fieldName];
+  if (!field) {
+    return;
+  }
+
+  field.value = value;
+  setFieldError(fieldName, '');
+  if (fieldName === 'size') {
+    setFieldError('entries', '');
+  }
+  treeStatus.textContent = '';
+  saveDraft();
+  renderOptionChoiceButtons();
+  if (fieldName === 'size') {
+    renderCapacityMessage();
+    renderTreeCustomizationImage();
+  }
+
+  if (focusButton) {
+    const selectedButton = optionChoiceButtons.find((button) => button.dataset.choiceField === fieldName && button.dataset.choiceValue === value);
+    selectedButton?.focus();
   }
 }
 
@@ -248,10 +532,11 @@ function ensureActiveOrderSession() {
 }
 
 function getMaxEntries(size) {
-  if (size === 'Small') {
-    return 5;
+  const config = getProductConfig();
+  if (!size) {
+    return config.preSizeLimit;
   }
-  return 12;
+  return config.sizeLimits[size] || config.preSizeLimit;
 }
 
 function getCapacityDetails() {
@@ -265,19 +550,23 @@ function getCapacityDetails() {
 }
 
 function syncDraftFromFields() {
+  draft.productDefinitionId = getActiveProductDefinitionId();
   draft.size = treeFields.size.value;
-  draft.treeColor = treeFields.treeColor.value;
-  draft.bowColor = treeFields.bowColor.value;
-  draft.familyName = sanitizeText(treeFields.familyName.value);
+  draft.treeColor = getProductConfig().requiresTreeColor ? treeFields.treeColor.value : '';
+  draft.bowColor = getProductConfig().requiresBowColor ? treeFields.bowColor.value : '';
+  draft.familyName = treeFields.familyName.value;
   draft.year = treeFields.year.value.trim();
 }
 
 function hydrateFormFromDraft() {
+  renderCustomizationScreenContent();
   treeFields.size.value = draft.size;
   treeFields.treeColor.value = draft.treeColor;
   treeFields.bowColor.value = draft.bowColor;
   treeFields.familyName.value = draft.familyName;
   treeFields.year.value = draft.year || '2026';
+  renderOptionChoiceButtons();
+  renderTreeCustomizationImage();
 }
 
 function saveDraft() {
@@ -321,13 +610,15 @@ function loadDraft() {
     }
 
     const parsed = JSON.parse(raw);
+    draft.productDefinitionId = ornamentProductConfigs[parsed.productDefinitionId] ? parsed.productDefinitionId : 'tree_ornament';
     draft.size = allowedValues.size.includes(parsed.size) ? parsed.size : '';
     draft.treeColor = allowedValues.treeColor.includes(parsed.treeColor) ? parsed.treeColor : '';
     draft.bowColor = allowedValues.bowColor.includes(parsed.bowColor) ? parsed.bowColor : '';
-    draft.familyName = typeof parsed.familyName === 'string' ? sanitizeText(parsed.familyName) : '';
+    draft.familyName = typeof parsed.familyName === 'string' ? parsed.familyName : '';
     draft.year = typeof parsed.year === 'string' && parsed.year ? parsed.year : '2026';
     draft.entries = Array.isArray(parsed.entries) ? parsed.entries.map(normalizeEntry).filter(Boolean) : [];
   } catch {
+    draft.productDefinitionId = 'tree_ornament';
     draft.entries = [];
   }
 
@@ -519,6 +810,7 @@ function resetActiveOrderSession({ clearCart = true, goToWelcome = true } = {}) 
     saveOrderItems([]);
   }
 
+  draft.productDefinitionId = 'tree_ornament';
   draft.size = '';
   draft.treeColor = '';
   draft.bowColor = '';
@@ -533,6 +825,7 @@ function resetActiveOrderSession({ clearCart = true, goToWelcome = true } = {}) 
   clearOrderUiNote();
   clearDiscardPrompt();
   orderUiState.removeConfirmItemId = '';
+  closeAddConfirmation(false);
 
   appState.editingItemId = '';
   appState.reviewedItemId = '';
@@ -640,16 +933,6 @@ function validateCustomerForm() {
   syncCustomerDraftFromFields();
   renderShippingFieldsState();
 
-  let isValid = true;
-  let firstInvalidField = '';
-  const setInvalid = (name, message) => {
-    if (!firstInvalidField) {
-      firstInvalidField = name;
-    }
-    setCustomerFieldError(name, message);
-    isValid = false;
-  };
-
   if (!hasOrderItems()) {
     if (customerStatus) {
       customerStatus.textContent = 'Add at least one item before continuing.';
@@ -657,64 +940,15 @@ function validateCustomerForm() {
     return false;
   }
 
-  if (!customerDraft.fullName) {
-    setInvalid('fullName', 'Please enter your full name.');
-  }
+  const issues = getCustomerValidationIssues();
 
-  const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerDraft.email);
-  if (!customerDraft.email) {
-    setInvalid('email', 'Please enter an email address.');
-  } else if (!emailLooksValid) {
-    setInvalid('email', 'Enter a valid email address.');
-  }
-
-  const phoneDigits = customerDraft.phone.replace(/\D/g, '');
-  if (!customerDraft.phone) {
-    setInvalid('phone', 'Please enter a phone number.');
-  } else if (phoneDigits.length < 10) {
-    setInvalid('phone', 'Enter a valid phone number.');
-  }
-
-  if (!allowedValues.preferredContact.includes(customerDraft.preferredContact)) {
-    setInvalid('preferredContact', 'Choose how you would like us to contact you.');
-  }
-
-  if (!allowedValues.fulfillmentMethod.includes(customerDraft.fulfillmentMethod)) {
-    setInvalid('fulfillmentMethod', 'Choose shipping or local pickup.');
-  }
-
-  if (customerDraft.fulfillmentMethod === 'Shipping') {
-    if (!customerDraft.addressLine1) {
-      setInvalid('addressLine1', 'Please enter address line 1.');
-    }
-    if (!customerDraft.city) {
-      setInvalid('city', 'Please enter a city.');
-    }
-    if (!customerDraft.state) {
-      setInvalid('state', 'Please enter a state.');
-    }
-    if (!customerDraft.postalCode) {
-      setInvalid('postalCode', 'Please enter a postal code.');
-    } else if (isUnitedStatesCountry(customerDraft.country) && !/^\d{5}(-\d{4})?$/.test(customerDraft.postalCode)) {
-      setInvalid('postalCode', 'Enter a 5-digit ZIP code or ZIP+4.');
-    }
-    if (!customerDraft.country) {
-      setInvalid('country', 'Please enter a country.');
-    }
-  }
-
-  if (customerDraft.neededBy) {
-    const today = getTodayIsoDate();
-    if (customerDraft.neededBy < today) {
-      setInvalid('neededBy', 'Needed-by date cannot be earlier than today.');
-    }
-  }
-
-  if (!isValid) {
+  if (issues.length > 0) {
+    const firstIssue = issues[0];
+    issues.forEach((issue) => setCustomerFieldError(issue.field, issue.message));
     if (customerStatus) {
       customerStatus.textContent = 'Please complete the required customer information.';
     }
-    const target = getCustomerFieldTarget(firstInvalidField);
+    const target = getCustomerFieldTarget(firstIssue.field);
     target?.focus();
     return false;
   }
@@ -750,12 +984,13 @@ function normalizeEntry(entry) {
 }
 
 function renderCapacityMessage() {
+  const config = getProductConfig();
   const { size, limit, count, reachedLimit, overLimit } = getCapacityDetails();
 
   if (!size) {
-    capacityMessage.textContent = `Choose a size to lock the limit. Up to 12 combined people and pets can be drafted before size is selected.`;
+    capacityMessage.textContent = `Choose a size to lock the limit. Up to ${config.preSizeLimit} combined people and pets can be drafted before size is selected.`;
   } else if (overLimit) {
-    capacityMessage.textContent = `Small supports up to 5 combined people and pets. Remove ${count - limit} entr${count - limit === 1 ? 'y' : 'ies'} before continuing.`;
+    capacityMessage.textContent = `${size} supports up to ${limit} combined people and pets. Remove ${count - limit} entr${count - limit === 1 ? 'y' : 'ies'} before continuing.`;
   } else if (reachedLimit) {
     capacityMessage.textContent = `${size} is full at ${limit} combined people and pets. Remove one to add another.`;
   } else {
@@ -774,7 +1009,12 @@ function renderEntries(focusId) {
   const { count } = getCapacityDetails();
 
   if (draft.entries.length === 0) {
-    entryList.innerHTML = '<li class="entry-empty">Add a person or pet to start the ornament list.</li>';
+    entryList.innerHTML = `
+      <li class="entry-empty-state">
+        <strong>No people or pets added yet.</strong>
+        <span>Use Add Person or Add Pet below. Names will appear in engraving order.</span>
+      </li>
+    `;
     renderCapacityMessage();
     renderCurrentOrderUtilityButtons();
     renderDiscardPanels();
@@ -879,6 +1119,606 @@ function escapeHtml(value) {
   return escapeAttribute(value);
 }
 
+function capitalizeWords(value) {
+  return value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatFieldLabel(key, item) {
+  const productConfig = productReviewConfig[item.productDefinitionId] || {};
+  const productLabels = productConfig.fieldLabels || {};
+  const sharedLabels = {
+    familyName: 'Engraved Text',
+    lastName: 'Last Name',
+    babyName: 'Baby Name',
+    year: 'Year',
+    weddingYear: 'Wedding Year',
+    establishedYear: 'Established Year',
+    treeColor: 'Tree Color',
+    bowColor: 'Bow Color',
+    edgeText: 'Edge Text',
+    personalizationMode: 'Personalization',
+    neededBy: 'Needed By',
+    icon: 'Icon',
+    letter: 'Letter',
+    name: 'Name'
+  };
+
+  return productLabels[key] || sharedLabels[key] || capitalizeWords(key);
+}
+
+function formatDisplayValue(value) {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'Yes' : 'No';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  return '';
+}
+
+function formatCustomerPhone(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (digits.length === 10) {
+    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+  }
+  if (digits.length === 11 && digits.startsWith('1')) {
+    return `+1 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
+  }
+  return sanitizeText(String(value || ''));
+}
+
+function formatReadableDate(value) {
+  if (!value) {
+    return '';
+  }
+
+  const parsed = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric'
+  }).format(parsed);
+}
+
+function getColorSwatchTone(value) {
+  const normalized = sanitizeText(String(value || '')).toLowerCase();
+  if (normalized === 'green') {
+    return 'green';
+  }
+  if (normalized === 'brown') {
+    return 'brown';
+  }
+  if (normalized === 'red') {
+    return 'red';
+  }
+  if (normalized === 'white') {
+    return 'white';
+  }
+  return '';
+}
+
+function getColorDisplayMarkup(value) {
+  const label = formatDisplayValue(value);
+  const tone = getColorSwatchTone(label);
+  return `
+    <span class="color-display">
+      ${tone ? `<span class="color-swatch color-swatch--${tone}" aria-hidden="true"></span>` : ''}
+      <span>${escapeHtml(label || 'Not selected')}</span>
+    </span>
+  `;
+}
+
+function getCompactColorDisplayMarkup(value, noun) {
+  const label = formatDisplayValue(value);
+  const tone = getColorSwatchTone(label);
+  return `
+    <span class="color-display">
+      ${tone ? `<span class="color-swatch color-swatch--${tone}" aria-hidden="true"></span>` : ''}
+      <span>${escapeHtml(label || 'Not selected')} ${escapeHtml(noun)}</span>
+    </span>
+  `;
+}
+
+function isNonEmptyDisplayValue(value) {
+  return typeof value === 'string' ? Boolean(sanitizeText(value)) : value !== null && value !== undefined && value !== '';
+}
+
+function getProductReviewConfig(itemOrProductDefinitionId) {
+  const productDefinitionId = typeof itemOrProductDefinitionId === 'string'
+    ? itemOrProductDefinitionId
+    : itemOrProductDefinitionId?.productDefinitionId;
+
+  if (productDefinitionId && productReviewConfig[productDefinitionId]) {
+    return productReviewConfig[productDefinitionId];
+  }
+  return null;
+}
+
+function getProductImageSize(configuration) {
+  if (!configuration || typeof configuration !== 'object') {
+    return '';
+  }
+
+  if (typeof configuration.size === 'string' && allowedValues.size.includes(configuration.size)) {
+    return configuration.size;
+  }
+
+  if (configuration.configurationSnapshot && typeof configuration.configurationSnapshot === 'object') {
+    const nestedSize = configuration.configurationSnapshot.size;
+    if (typeof nestedSize === 'string' && allowedValues.size.includes(nestedSize)) {
+      return nestedSize;
+    }
+  }
+
+  return '';
+}
+
+function getResolvedProductImage(productDefinitionId, configuration = {}, context = 'default') {
+  const config = getProductReviewConfig(productDefinitionId);
+  if (!config) {
+    return null;
+  }
+
+  const size = getProductImageSize(configuration);
+  const galleryImage = config.galleryImage || config.imageBySize?.Small || null;
+  const sizeImage = size && config.imageBySize ? config.imageBySize[size] || null : null;
+  const image = (
+    (context === 'gallery' && galleryImage)
+    || sizeImage
+    || config.imageBySize?.Small
+    || (config.image ? {
+      src: config.image,
+      alt: config.imageAlt,
+      width: config.imageWidth,
+      height: config.imageHeight
+    } : null)
+  );
+
+  if (!image?.src) {
+    return null;
+  }
+
+  return {
+    src: image.src,
+    alt: image.alt || `${sanitizeText(configuration?.displayName || '') || 'Custom item'} product photo`,
+    width: image.width || 360,
+    height: image.height || 480
+  };
+}
+
+function getResolvedItemImageData(item) {
+  const config = getProductReviewConfig(item);
+  const fallbackResolvedImage = getResolvedProductImage(item?.productDefinitionId || '', item || {}, 'default');
+  const snapshotPath = typeof item?.imagePath === 'string' && sanitizeText(item.imagePath)
+    ? sanitizeText(item.imagePath)
+    : (typeof item?.image === 'string' && sanitizeText(item.image)
+      ? sanitizeText(item.image)
+      : '');
+  const resolvedImage = snapshotPath
+    ? {
+        src: snapshotPath,
+        alt: fallbackResolvedImage?.alt || config?.imageAlt || `${sanitizeText(item?.displayName) || 'Custom item'} product photo`,
+        width: fallbackResolvedImage?.width || config?.imageWidth || 360,
+        height: fallbackResolvedImage?.height || config?.imageHeight || 480
+      }
+    : fallbackResolvedImage;
+
+  if (!resolvedImage?.src) {
+    return null;
+  }
+
+  return resolvedImage;
+}
+
+function renderTreeCustomizationImage() {
+  if (!treeCustomizationImage) {
+    return;
+  }
+
+  const productDefinitionId = getActiveProductDefinitionId();
+  const imageData = getResolvedProductImage(productDefinitionId, { size: treeFields.size.value || draft.size }, 'default')
+    || getResolvedProductImage(productDefinitionId, {}, 'gallery');
+
+  if (!imageData) {
+    return;
+  }
+
+  treeCustomizationImage.src = imageData.src;
+  treeCustomizationImage.alt = imageData.alt;
+  treeCustomizationImage.width = imageData.width;
+  treeCustomizationImage.height = imageData.height;
+}
+
+function getItemImageMarkup(item, imageClass = 'current-order-photo', options = {}) {
+  const imageData = getResolvedItemImageData(item);
+  const className = imageClass ? ` class="${escapeAttribute(imageClass)}"` : '';
+  const loading = options.loading ? ` loading="${escapeAttribute(options.loading)}"` : '';
+  const decoding = options.decoding === 'sync' ? 'sync' : 'async';
+
+  if (imageData) {
+    return `<img${className} src="${escapeAttribute(imageData.src)}" alt="${escapeAttribute(imageData.alt)}" width="${imageData.width}" height="${imageData.height}" decoding="${decoding}"${loading}>`;
+  }
+
+  return `
+    <div class="review-image-fallback" role="img" aria-label="${escapeAttribute(`${item.displayName || 'Custom Item'} product photo unavailable`)}">
+      <span>${escapeHtml(item.displayName || 'Custom Item')}</span>
+      <span>Product photo unavailable</span>
+    </div>
+  `;
+}
+
+function getScalarItemFields(item) {
+  const fields = [];
+  const snapshot = item.configurationSnapshot && typeof item.configurationSnapshot === 'object'
+    ? item.configurationSnapshot
+    : {};
+  const excludedKeys = new Set(['entries', 'orderedEntries', 'itemId', 'displayName', 'productDefinitionId', 'category', 'quantity', 'unitPrice', 'peopleCount', 'petCount', 'hasCustomIcon']);
+
+  Object.entries(snapshot).forEach(([key, value]) => {
+    if (excludedKeys.has(key)) {
+      return;
+    }
+    if (Array.isArray(value) || (value && typeof value === 'object')) {
+      return;
+    }
+    const displayValue = formatDisplayValue(value);
+    if (!isNonEmptyDisplayValue(displayValue)) {
+      return;
+    }
+    fields.push({
+      key,
+      label: formatFieldLabel(key, item),
+      value: displayValue
+    });
+  });
+
+  return fields;
+}
+
+function getFieldPriority(key) {
+  if (key === 'size') {
+    return 0;
+  }
+  if (/color/i.test(key)) {
+    return 1;
+  }
+  if (['familyName', 'lastName', 'babyName', 'name', 'letter', 'edgeText', 'personalizationMode'].includes(key)) {
+    return 2;
+  }
+  if (/year/i.test(key)) {
+    return 3;
+  }
+  return 4;
+}
+
+function getOrderedItemFields(item) {
+  return getScalarItemFields(item)
+    .map((field, index) => ({ ...field, index }))
+    .sort((left, right) => {
+      const priorityDiff = getFieldPriority(left.key) - getFieldPriority(right.key);
+      if (priorityDiff !== 0) {
+        return priorityDiff;
+      }
+      return left.index - right.index;
+    });
+}
+
+function getReviewOrderedEntriesMarkup(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return '';
+  }
+
+  return `
+    <div class="review-list-card">
+      <h4>Engraving Order</h4>
+      <p class="review-list-subtitle">People &amp; Pets</p>
+      <ol class="review-entry-list">
+        ${entries.map((entry, index) => {
+          const detailParts = [];
+          if (entry.kind === 'pet' && entry.petType) {
+            detailParts.push(escapeHtml(formatDisplayValue(entry.petType)));
+          }
+          if (entry.kind === 'pet' && entry.icon) {
+            detailParts.push(escapeHtml(formatDisplayValue(entry.icon)));
+          }
+          if (entry.customIconDescription) {
+            detailParts.push(`Custom icon: ${escapeHtml(formatDisplayValue(entry.customIconDescription))}`);
+          }
+
+          return `
+            <li class="review-entry-item">
+              <span class="review-entry-position">${index + 1}.</span>
+              <div class="review-entry-body">
+                <div class="review-entry-primary">
+                  <span class="review-entry-name">${escapeHtml(formatDisplayValue(entry.name) || 'Unnamed')}</span>
+                  <span class="review-entry-badge">${entry.kind === 'pet' ? 'Pet' : 'Person'}</span>
+                </div>
+                ${detailParts.length > 0 ? `<div class="review-entry-detail">${detailParts.join(' • ')}</div>` : ''}
+              </div>
+            </li>
+          `;
+        }).join('')}
+      </ol>
+    </div>
+  `;
+}
+
+function getDetailedItemMarkup(item, options = {}) {
+  const orderedFields = getOrderedItemFields(item);
+  const sizeField = orderedFields.find((field) => field.key === 'size');
+  const colorFields = orderedFields.filter((field) => /color/i.test(field.key));
+  const primaryFields = orderedFields.filter((field) => ['familyName', 'lastName', 'babyName', 'name', 'letter', 'edgeText', 'personalizationMode'].includes(field.key));
+  const yearFields = orderedFields.filter((field) => /year/i.test(field.key));
+  const secondaryFields = orderedFields.filter((field) => (
+    field !== sizeField
+    && !colorFields.includes(field)
+    && !primaryFields.includes(field)
+    && !yearFields.includes(field)
+  ));
+  const subtitleMarkup = options.subtitle
+    ? `<p class="review-subtitle">${escapeHtml(options.subtitle)}</p>`
+    : '';
+  const actionsMarkup = options.actionsMarkup || '';
+  const statusMarkup = options.statusMarkup || '';
+  const wrapperClass = options.wrapperClass || '';
+  const wrapperClassAttribute = wrapperClass ? ` class="${escapeAttribute(wrapperClass)}"` : '';
+  const imageMarkup = options.imageMarkup || getItemImageMarkup(item, 'review-product-photo');
+  const primaryContent = [
+    ...primaryFields.map((field) => `
+      <div class="${field.key === 'familyName' ? 'review-highlight' : 'summary-item'}">
+        <span class="summary-label">${escapeHtml(field.label)}</span>
+        <div class="summary-value">${escapeHtml(field.value)}</div>
+      </div>
+    `),
+    ...yearFields.map((field) => `
+      <div class="summary-item">
+        <span class="summary-label">${escapeHtml(field.label)}</span>
+        <div class="summary-value">${escapeHtml(field.value)}</div>
+      </div>
+    `)
+  ].join('');
+  const selectionRows = [
+    ...(sizeField ? [`
+      <div class="review-selection-row">
+        <span class="summary-label">${escapeHtml(sizeField.label)}</span>
+        <div class="summary-value">${escapeHtml(sizeField.value)}</div>
+      </div>
+    `] : []),
+    ...colorFields.map((field) => `
+      <div class="review-selection-row">
+        <span class="summary-label">${escapeHtml(field.label)}</span>
+        <div class="summary-value">${getColorDisplayMarkup(field.value)}</div>
+      </div>
+    `),
+    ...secondaryFields.map((field) => `
+      <div class="review-selection-row">
+        <span class="summary-label">${escapeHtml(field.label)}</span>
+        <div class="summary-value">${escapeHtml(field.value)}</div>
+      </div>
+    `)
+  ].join('');
+
+  return `
+    <article${wrapperClassAttribute}>
+      <div class="review-card-layout">
+        <div class="review-media">
+          ${imageMarkup}
+        </div>
+        <div class="review-copy">
+          <div class="review-header">
+            <div>
+              <h3>${escapeHtml(item.displayName)}</h3>
+              ${subtitleMarkup}
+            </div>
+            <div class="review-price">
+              <strong>${formatPrice(item.unitPrice * item.quantity)}</strong>
+              <span>${item.quantity} × ${formatPrice(item.unitPrice)}</span>
+            </div>
+          </div>
+
+          <div class="review-detail-group">
+            ${primaryContent ? `
+              <div class="review-primary-card">
+                <h4>Primary Personalization</h4>
+                <div class="review-primary-grid">
+                  ${primaryContent}
+                </div>
+              </div>
+            ` : ''}
+
+            ${selectionRows ? `
+              <div class="review-selections-card">
+                <h4>Product Selections</h4>
+                ${selectionRows}
+              </div>
+            ` : ''}
+
+            ${getReviewOrderedEntriesMarkup(item.orderedEntries)}
+          </div>
+
+          ${statusMarkup}
+          ${actionsMarkup}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function createFinalReviewItemMarkup(item) {
+  return getDetailedItemMarkup(item, {
+    wrapperClass: 'order-summary-card final-review-item-card'
+  });
+}
+
+function getCustomerValidationIssues() {
+  const issues = [];
+
+  if (!customerDraft.fullName) {
+    issues.push({ field: 'fullName', message: 'Please enter your full name.' });
+  }
+
+  const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerDraft.email);
+  if (!customerDraft.email) {
+    issues.push({ field: 'email', message: 'Please enter an email address.' });
+  } else if (!emailLooksValid) {
+    issues.push({ field: 'email', message: 'Enter a valid email address.' });
+  }
+
+  const phoneDigits = customerDraft.phone.replace(/\D/g, '');
+  if (!customerDraft.phone) {
+    issues.push({ field: 'phone', message: 'Please enter a phone number.' });
+  } else if (phoneDigits.length < 10) {
+    issues.push({ field: 'phone', message: 'Enter a valid phone number.' });
+  }
+
+  if (!allowedValues.preferredContact.includes(customerDraft.preferredContact)) {
+    issues.push({ field: 'preferredContact', message: 'Choose how you would like us to contact you.' });
+  }
+
+  if (!allowedValues.fulfillmentMethod.includes(customerDraft.fulfillmentMethod)) {
+    issues.push({ field: 'fulfillmentMethod', message: 'Choose shipping or local pickup.' });
+  }
+
+  if (customerDraft.fulfillmentMethod === 'Shipping') {
+    if (!customerDraft.addressLine1) {
+      issues.push({ field: 'addressLine1', message: 'Please enter address line 1.' });
+    }
+    if (!customerDraft.city) {
+      issues.push({ field: 'city', message: 'Please enter a city.' });
+    }
+    if (!customerDraft.state) {
+      issues.push({ field: 'state', message: 'Please enter a state.' });
+    }
+    if (!customerDraft.postalCode) {
+      issues.push({ field: 'postalCode', message: 'Please enter a postal code.' });
+    } else if (isUnitedStatesCountry(customerDraft.country) && !/^\d{5}(-\d{4})?$/.test(customerDraft.postalCode)) {
+      issues.push({ field: 'postalCode', message: 'Enter a 5-digit ZIP code or ZIP+4.' });
+    }
+    if (!customerDraft.country) {
+      issues.push({ field: 'country', message: 'Please enter a country.' });
+    }
+  }
+
+  if (customerDraft.neededBy) {
+    const today = getTodayIsoDate();
+    if (customerDraft.neededBy < today) {
+      issues.push({ field: 'neededBy', message: 'Needed-by date cannot be earlier than today.' });
+    }
+  }
+
+  return issues;
+}
+
+function getOrnamentOrderItemValidationIssues(item) {
+  const issues = [];
+  const config = getProductConfig(item.productDefinitionId);
+  const size = item.size;
+  const limit = config.sizeLimits[size] || 0;
+  const entries = Array.isArray(item.orderedEntries) ? item.orderedEntries : [];
+
+  if (!allowedValues.size.includes(size)) {
+    issues.push('Choose a valid size.');
+  }
+  if (config.requiresTreeColor && !allowedValues.treeColor.includes(item.treeColor)) {
+    issues.push('Choose a valid tree color.');
+  }
+  if (config.requiresBowColor && !allowedValues.bowColor.includes(item.bowColor)) {
+    issues.push('Choose a valid bow color.');
+  }
+  if (!sanitizeText(item.familyName || '')) {
+    issues.push('Enter the engraved text.');
+  }
+  if (!/^\d{4}$/.test(item.year || '')) {
+    issues.push('Enter a valid year.');
+  }
+  if (config.requiresEntries && entries.length === 0) {
+    issues.push('Add at least one person or pet.');
+  }
+  if (limit && entries.length > limit) {
+    issues.push(`${size} ornaments support up to ${limit} combined people and pets.`);
+  }
+
+  entries.forEach((entry) => {
+    if (!entry || (entry.kind !== 'person' && entry.kind !== 'pet')) {
+      issues.push('Each ornament entry must be a person or pet.');
+      return;
+    }
+    if (!sanitizeText(entry.name || '')) {
+      issues.push(`${entry.kind === 'pet' ? 'Pet' : 'Person'} names are required.`);
+    }
+    if (entry.kind === 'pet') {
+      if (!allowedValues.petIcon.includes(entry.icon)) {
+        issues.push('Each pet needs an icon choice.');
+      }
+      if (entry.icon === 'Custom Icon' && !sanitizeText(entry.customIconDescription || '')) {
+        issues.push('Each custom icon needs a description.');
+      }
+    }
+  });
+
+  return issues;
+}
+
+function getOrderItemValidationIssues(item) {
+  const issues = [];
+  const hasKnownDefinition = Boolean(item.productDefinitionId);
+  const hasValidSnapshot = Boolean(item.configurationSnapshot && typeof item.configurationSnapshot === 'object');
+
+  if (!hasKnownDefinition && !hasValidSnapshot) {
+    issues.push('This item is missing its saved configuration.');
+  }
+  if (!item.displayName) {
+    issues.push('This item is missing its product name.');
+  }
+  if (!Number.isFinite(item.unitPrice) || item.unitPrice < 0) {
+    issues.push('This item has invalid pricing.');
+  }
+  if (!Number.isFinite(item.quantity) || item.quantity < 1) {
+    issues.push('This item has an invalid quantity.');
+  }
+
+  if (item.productDefinitionId === 'tree_ornament' || item.productDefinitionId === 'antler_ornament') {
+    issues.push(...getOrnamentOrderItemValidationIssues(item));
+  }
+
+  return issues;
+}
+
+function validateFinalReviewDraft() {
+  const items = getOrderItems();
+  const issues = [];
+
+  if (!appState.activeOrderSessionId) {
+    issues.push('Start a new order before continuing.');
+  }
+  if (items.length === 0) {
+    issues.push('Your order is empty. Use Edit Items to add an item before placing your order.');
+  }
+
+  items.forEach((item) => {
+    getOrderItemValidationIssues(item).forEach((message) => {
+      issues.push(`Review "${item.displayName || 'this item'}": ${message}`);
+    });
+  });
+
+  getCustomerValidationIssues().forEach((issue) => {
+    issues.push(`Use Edit Customer Information: ${issue.message}`);
+  });
+
+  return {
+    isValid: issues.length === 0,
+    issues
+  };
+}
+
 function formatPrice(amount) {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -934,73 +1774,50 @@ function getReviewEntriesMarkup(entries) {
 }
 
 function createTreeReviewMarkup() {
-  const unitPrice = getTreeUnitPrice(draft.size);
-  const actionLabel = appState.editingItemId ? 'Save Changes' : 'Add to Order';
+  const productDefinitionId = getActiveProductDefinitionId();
+  const config = getProductConfig(productDefinitionId);
+  const item = {
+    displayName: config.displayName,
+    productDefinitionId,
+    quantity: 1,
+    unitPrice: getTreeUnitPrice(draft.size),
+    configurationSnapshot: {
+      size: draft.size,
+      familyName: draft.familyName,
+      year: draft.year,
+      ...(config.requiresTreeColor ? { treeColor: draft.treeColor } : {}),
+      ...(config.requiresBowColor ? { bowColor: draft.bowColor } : {})
+    },
+    orderedEntries: draft.entries.map((entry) => ({
+      position: 0,
+      kind: entry.kind,
+      name: entry.name,
+      icon: entry.kind === 'pet' ? entry.icon : '',
+      customIconDescription: entry.kind === 'pet' ? entry.iconOther || '' : ''
+    }))
+  };
   const statusMessage = reviewState.error || '';
   const statusClass = reviewState.error ? 'inline-confirmation is-error' : 'inline-confirmation';
+  const actionLabel = 'Add to Order';
 
-  return `
-    <div class="review-card-layout">
-      <div>
-        <img class="review-product-photo" src="assets/products/tree-ornament.jpg" alt="Tree Ornament">
+  return getDetailedItemMarkup(item, {
+    subtitle: 'Item-level review before adding this ornament to the order.',
+    imageMarkup: getItemImageMarkup(item, 'review-product-photo'),
+    statusMarkup: `<p class="${statusClass}" data-review-confirmation aria-live="polite">${statusMessage}</p>`,
+    actionsMarkup: `
+      <div class="review-actions">
+        <button class="secondary-button" type="button" data-action="edit-tree-review">Back to Edit</button>
+        <button class="primary-button" type="button" data-action="add-tree-to-order" ${reviewState.saving ? 'disabled' : ''}>
+          ${reviewState.saving ? 'Saving...' : actionLabel}
+        </button>
       </div>
-      <div class="review-copy">
-        <div class="review-header">
-          <div>
-            <h3>Tree Ornament</h3>
-            <p class="review-subtitle">Item-level review before adding this ornament to the order.</p>
-          </div>
-          <div class="review-price">${formatPrice(unitPrice)}</div>
-        </div>
-
-        <div class="summary-grid">
-          <div class="summary-item">
-            <span class="summary-label">Size</span>
-            <div class="summary-value">${escapeHtml(draft.size)}</div>
-          </div>
-          <div class="summary-item">
-            <span class="summary-label">Tree Color</span>
-            <div class="summary-value">${escapeHtml(draft.treeColor)}</div>
-          </div>
-          <div class="summary-item">
-            <span class="summary-label">Bow Color</span>
-            <div class="summary-value">${escapeHtml(draft.bowColor)}</div>
-          </div>
-          <div class="summary-item">
-            <span class="summary-label">Year</span>
-            <div class="summary-value">${escapeHtml(draft.year)}</div>
-          </div>
-          <div class="summary-item">
-            <span class="summary-label">Family Name</span>
-            <div class="summary-value">${escapeHtml(draft.familyName)}</div>
-          </div>
-          <div class="summary-item">
-            <span class="summary-label">Quantity</span>
-            <div class="summary-value">1</div>
-          </div>
-        </div>
-
-        <div class="review-list-card">
-          <h4>People &amp; Pets</h4>
-          <ol class="review-entry-list">
-            ${getReviewEntriesMarkup(draft.entries)}
-          </ol>
-        </div>
-
-        <p class="${statusClass}" data-review-confirmation aria-live="polite">${statusMessage}</p>
-
-        <div class="review-actions">
-          <button class="secondary-button" type="button" data-action="edit-tree-review">Edit Ornament</button>
-          <button class="primary-button" type="button" data-action="add-tree-to-order" ${reviewState.saving ? 'disabled' : ''}>
-            ${reviewState.saving ? 'Saving...' : actionLabel}
-          </button>
-        </div>
-      </div>
-    </div>
-  `;
+    `
+  });
 }
 
 function normalizeTreeOrderItem() {
+  const productDefinitionId = getActiveProductDefinitionId();
+  const config = getProductConfig(productDefinitionId);
   const entries = draft.entries.map((entry, index) => ({
     position: index + 1,
     kind: entry.kind,
@@ -1015,23 +1832,24 @@ function normalizeTreeOrderItem() {
   const unitPrice = getTreeUnitPrice(draft.size);
   const configurationSnapshot = {
     size: draft.size,
-    treeColor: draft.treeColor,
-    bowColor: draft.bowColor,
     familyName: draft.familyName,
     year: draft.year,
-    entries
+    entries,
+    ...(config.requiresTreeColor ? { treeColor: draft.treeColor } : {}),
+    ...(config.requiresBowColor ? { bowColor: draft.bowColor } : {})
   };
 
   return {
-    itemId: appState.editingItemId || `tree-item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    productDefinitionId: 'tree_ornament',
-    displayName: 'Tree Ornament',
+    itemId: appState.editingItemId || `${productDefinitionId}-item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    productDefinitionId,
+    imagePath: getResolvedProductImage(productDefinitionId, { size: draft.size }, 'default')?.src || '',
+    displayName: config.displayName,
     category: 'ornament',
     quantity: 1,
     unitPrice,
     size: draft.size,
-    treeColor: draft.treeColor,
-    bowColor: draft.bowColor,
+    treeColor: config.requiresTreeColor ? draft.treeColor : '',
+    bowColor: config.requiresBowColor ? draft.bowColor : '',
     familyName: draft.familyName,
     year: draft.year,
     orderedEntries: entries,
@@ -1076,6 +1894,9 @@ function normalizeOrderItemRecord(record) {
   return {
     itemId,
     productDefinitionId: typeof record.productDefinitionId === 'string' ? record.productDefinitionId : '',
+    imagePath: typeof record.imagePath === 'string'
+      ? sanitizeText(record.imagePath)
+      : (typeof record.image === 'string' ? sanitizeText(record.image) : ''),
     displayName,
     category,
     quantity,
@@ -1083,7 +1904,7 @@ function normalizeOrderItemRecord(record) {
     size: typeof record.size === 'string' ? record.size : '',
     treeColor: typeof record.treeColor === 'string' ? record.treeColor : '',
     bowColor: typeof record.bowColor === 'string' ? record.bowColor : '',
-    familyName: typeof record.familyName === 'string' ? sanitizeText(record.familyName) : '',
+    familyName: typeof record.familyName === 'string' ? record.familyName : '',
     year: typeof record.year === 'string' ? record.year : '',
     orderedEntries,
     peopleCount: Number.isFinite(record.peopleCount) ? record.peopleCount : orderedEntries.filter((entry) => entry.kind === 'person').length,
@@ -1114,9 +1935,10 @@ function saveOrderItems(items) {
 }
 
 function isTreeDraftBlank() {
+  const config = getProductConfig();
   return !draft.size
-    && !draft.treeColor
-    && !draft.bowColor
+    && (!config.requiresTreeColor || !draft.treeColor)
+    && (!config.requiresBowColor || !draft.bowColor)
     && !sanitizeText(draft.familyName)
     && draft.entries.length === 0
     && (!draft.year || draft.year === '2026');
@@ -1227,8 +2049,142 @@ function setOrderUiNote(message, autoDismissMs = 5000) {
   }
 }
 
+function renderTreeSubmitButton() {
+  if (!treeSubmitButton) {
+    return;
+  }
+
+  if (reviewState.saving) {
+    treeSubmitButton.textContent = 'Saving...';
+    treeSubmitButton.disabled = true;
+    return;
+  }
+
+  treeSubmitButton.disabled = false;
+  treeSubmitButton.textContent = appState.editingItemId
+    ? 'Save Changes'
+    : 'Review This Item';
+}
+
+function getConfirmationDialogFocusableElements() {
+  if (!addConfirmationDialog) {
+    return [];
+  }
+
+  return [...addConfirmationDialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter((element) => !element.hasAttribute('disabled'));
+}
+
+function renderAddConfirmation() {
+  if (!addConfirmationBackdrop || !addConfirmationDialog || !addConfirmationItem) {
+    return;
+  }
+
+  const item = addConfirmationState.itemId
+    ? getOrderItems().find((entry) => entry.itemId === addConfirmationState.itemId)
+    : null;
+  const safeTitle = addConfirmationState.title || 'Added to Your Order';
+  const safeMessage = addConfirmationState.message || 'This ornament has been saved to the current order.';
+  const titleNode = addConfirmationDialog.querySelector('#add-confirmation-title');
+  const copyNode = addConfirmationDialog.querySelector('#add-confirmation-copy');
+  const eyebrowNode = addConfirmationDialog.querySelector('.confirmation-dialog-copy .eyebrow');
+  const primaryButton = addConfirmationDialog.querySelector('[data-action="confirmation-continue-customer"]');
+
+  if (addConfirmationState.open && !item) {
+    addConfirmationState.open = false;
+    addConfirmationState.itemId = '';
+  }
+
+  addConfirmationBackdrop.hidden = !addConfirmationState.open;
+  addConfirmationDialog.hidden = !addConfirmationState.open;
+
+  if (titleNode) {
+    titleNode.textContent = safeTitle;
+  }
+  if (copyNode) {
+    copyNode.textContent = safeMessage;
+  }
+  if (eyebrowNode) {
+    eyebrowNode.textContent = addConfirmationState.title === 'Updated in Your Order' ? 'Order Updated' : 'Order Saved';
+  }
+  if (primaryButton) {
+    primaryButton.textContent = 'Continue to Customer Information';
+  }
+
+  if (!item) {
+    addConfirmationItem.innerHTML = '';
+    return;
+  }
+
+  const selectionFields = getOrderedItemFields(item).filter((field) => (
+    !['familyName', 'lastName', 'babyName', 'name', 'letter', 'edgeText', 'personalizationMode'].includes(field.key)
+    && !/year/i.test(field.key)
+  ));
+
+  addConfirmationItem.innerHTML = `
+    ${getItemImageMarkup(item, 'confirmation-dialog-photo')}
+    <div class="confirmation-dialog-item-copy">
+      <div class="confirmation-dialog-item-header">
+        <div>
+          <h3>${escapeHtml(item.displayName)}</h3>
+        </div>
+        <div class="confirmation-dialog-item-price">${formatPrice(item.unitPrice * item.quantity)}</div>
+      </div>
+      <div class="confirmation-dialog-item-meta">
+        <div class="summary-item">
+          <span class="summary-label">Engraved Text</span>
+          <div class="summary-value">${escapeHtml(item.familyName)}</div>
+        </div>
+        ${item.year ? `
+          <div class="final-review-detail-row">
+            <span class="summary-label">Year</span>
+            <div class="final-review-detail-value">${escapeHtml(item.year)}</div>
+          </div>
+        ` : ''}
+        ${selectionFields.map((field) => `
+          <div class="final-review-detail-row">
+            <span class="summary-label">${escapeHtml(field.label)}</span>
+            <div class="final-review-detail-value">${/color/i.test(field.key) ? getColorDisplayMarkup(field.value) : escapeHtml(field.value)}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function openAddConfirmation(itemId, title, message) {
+  const item = itemId ? getOrderItems().find((entry) => entry.itemId === itemId) : null;
+  if (!item) {
+    closeAddConfirmation(false);
+    return;
+  }
+
+  addConfirmationState.open = true;
+  addConfirmationState.itemId = itemId;
+  addConfirmationState.title = title;
+  addConfirmationState.message = message;
+  lastConfirmationFocusTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  renderAddConfirmation();
+
+  window.setTimeout(() => {
+    const focusTarget = getConfirmationDialogFocusableElements()[0] || addConfirmationDialog;
+    focusTarget?.focus();
+  }, 0);
+}
+
+function closeAddConfirmation(restoreFocus = true) {
+  addConfirmationState.open = false;
+  addConfirmationState.itemId = '';
+  renderAddConfirmation();
+  if (restoreFocus && lastConfirmationFocusTarget) {
+    lastConfirmationFocusTarget.focus();
+  }
+  lastConfirmationFocusTarget = null;
+}
+
 function buildDraftFromOrderItem(item) {
   return {
+    productDefinitionId: item.productDefinitionId || 'tree_ornament',
     size: item.size,
     treeColor: item.treeColor,
     bowColor: item.bowColor,
@@ -1249,9 +2205,36 @@ function renderTreeReview() {
     return;
   }
 
+  treeReviewCard.className = 'review-card order-summary-card';
+  treeReviewCard.removeAttribute('style');
   treeReviewCard.innerHTML = createTreeReviewMarkup();
+  const reviewMedia = treeReviewCard.querySelector('.review-media');
+  if (reviewMedia) {
+    reviewMedia.className = 'review-media';
+    reviewMedia.removeAttribute('style');
+    reviewMedia.style.removeProperty('height');
+    reviewMedia.style.removeProperty('min-height');
+    reviewMedia.style.removeProperty('max-height');
+    reviewMedia.style.removeProperty('grid-row');
+    reviewMedia.style.removeProperty('align-self');
+    reviewMedia.style.removeProperty('justify-self');
+    reviewMedia.style.removeProperty('object-fit');
+  }
+  const reviewPhoto = treeReviewCard.querySelector('.review-product-photo');
+  if (reviewPhoto) {
+    reviewPhoto.className = 'review-product-photo';
+    reviewPhoto.removeAttribute('style');
+    reviewPhoto.style.removeProperty('height');
+    reviewPhoto.style.removeProperty('min-height');
+    reviewPhoto.style.removeProperty('max-height');
+    reviewPhoto.style.removeProperty('grid-row');
+    reviewPhoto.style.removeProperty('align-self');
+    reviewPhoto.style.removeProperty('justify-self');
+    reviewPhoto.style.removeProperty('object-fit');
+  }
   renderCurrentOrderUtilityButtons();
   renderDiscardPanels();
+  renderTreeSubmitButton();
 }
 
 function getCurrentOrderStats(items) {
@@ -1263,23 +2246,24 @@ function getCurrentOrderStats(items) {
 }
 
 function createCurrentOrderItemMarkup(item) {
-  const entriesMarkup = item.orderedEntries.map((entry) => `
-    <li class="review-entry-item">
-      <span class="review-entry-position">${entry.position}.</span>
-      <div class="review-entry-body">
-        <div class="review-entry-primary">
-          <span class="review-entry-name">${escapeHtml(entry.name || 'Unnamed')}</span>
-          <span class="review-entry-badge">${entry.kind === 'pet' ? 'Pet' : 'Person'}</span>
-        </div>
-        ${entry.kind === 'pet' ? `
-          <div class="review-entry-detail">
-            Icon: ${escapeHtml(getPetIconText(entry))}
-            ${entry.customIconDescription ? ` • Custom icon: ${escapeHtml(entry.customIconDescription)}` : ''}
-          </div>
-        ` : ''}
+  const engravingNames = item.orderedEntries.map((entry) => escapeHtml(entry.name || 'Unnamed')).join(', ');
+  const orderedFields = getOrderedItemFields(item);
+  const selectionFields = orderedFields.filter((field) => field.key === 'size' || /color/i.test(field.key));
+  const otherFields = orderedFields.filter((field) => !['familyName'].includes(field.key) && !/year/i.test(field.key) && !selectionFields.includes(field));
+  const selectionRows = [
+    ...selectionFields.map((field) => `
+      <div class="current-order-selection-row">
+        <span class="summary-label">${escapeHtml(field.label)}</span>
+        <div class="current-order-selection-value">${/color/i.test(field.key) ? getColorDisplayMarkup(field.value) : escapeHtml(field.value)}</div>
       </div>
-    </li>
-  `).join('');
+    `),
+    ...otherFields.map((field) => `
+      <div class="current-order-selection-row">
+        <span class="summary-label">${escapeHtml(field.label)}</span>
+        <div class="current-order-selection-value">${escapeHtml(field.value)}</div>
+      </div>
+    `)
+  ].join('');
 
   const removeMarkup = orderUiState.removeConfirmItemId === item.itemId
     ? `
@@ -1296,7 +2280,7 @@ function createCurrentOrderItemMarkup(item) {
     <article class="current-order-item" data-item-id="${item.itemId}">
       <div class="current-order-item-layout">
         <div>
-          <img class="current-order-photo" src="assets/products/tree-ornament.jpg" alt="Tree Ornament order item">
+          ${getItemImageMarkup(item, 'current-order-photo')}
         </div>
         <div class="current-order-copy">
           <div class="current-order-header">
@@ -1309,39 +2293,33 @@ function createCurrentOrderItemMarkup(item) {
             </div>
           </div>
 
-          <div class="current-order-meta">
-            <div class="summary-item">
-              <span class="summary-label">Quantity</span>
-              <div class="summary-value">${item.quantity}</div>
-            </div>
-            <div class="summary-item">
-              <span class="summary-label">Size</span>
-              <div class="summary-value">${escapeHtml(item.size)}</div>
-            </div>
-            <div class="summary-item">
-              <span class="summary-label">Tree Color</span>
-              <div class="summary-value">${escapeHtml(item.treeColor)}</div>
-            </div>
-            <div class="summary-item">
-              <span class="summary-label">Bow Color</span>
-              <div class="summary-value">${escapeHtml(item.bowColor)}</div>
-            </div>
-            <div class="summary-item">
-              <span class="summary-label">Family Name</span>
+          <div class="current-order-body">
+            <div class="current-order-highlight">
+              <span class="summary-label">Engraved Text</span>
               <div class="summary-value">${escapeHtml(item.familyName)}</div>
             </div>
-            <div class="summary-item">
-              <span class="summary-label">Year</span>
-              <div class="summary-value">${escapeHtml(item.year)}</div>
-            </div>
+
+            ${item.year ? `
+              <div class="current-order-selection-row">
+                <span class="summary-label">Year</span>
+                <div class="current-order-selection-value">${escapeHtml(item.year)}</div>
+              </div>
+            ` : ''}
           </div>
 
-          <div class="current-order-list-card">
-            <h4>People &amp; Pets</h4>
-            <ol class="review-entry-list">
-              ${entriesMarkup}
-            </ol>
-          </div>
+          ${selectionRows ? `
+            <div class="current-order-list-card current-order-selections-card">
+              <h4>Product Selections</h4>
+              <div class="current-order-selection-list">${selectionRows}</div>
+            </div>
+          ` : ''}
+
+          ${engravingNames ? `
+            <div class="current-order-list-card">
+              <h4>Engraving Order</h4>
+              <div class="current-order-names">${engravingNames}</div>
+            </div>
+          ` : ''}
 
           <div class="current-order-actions">
             <button class="secondary-button" type="button" data-action="edit-order-item" data-item-id="${item.itemId}">Edit Item</button>
@@ -1393,24 +2371,130 @@ function renderCurrentOrder() {
   renderCurrentOrderUtilityButtons();
 }
 
+function renderFinalReviewStatus() {
+  if (!finalReviewStatus) {
+    return;
+  }
+
+  finalReviewStatus.textContent = finalReviewState.message;
+  finalReviewStatus.className = `form-status final-review-status${finalReviewState.tone === 'success' ? ' is-success' : ''}`;
+}
+
+function renderFinalReviewCustomer() {
+  if (!finalReviewCustomer) {
+    return;
+  }
+
+  const customerRows = [
+    customerDraft.fullName ? { label: 'Full Name', value: customerDraft.fullName } : null,
+    customerDraft.email ? { label: 'Email', value: customerDraft.email } : null,
+    customerDraft.phone ? { label: 'Phone', value: formatCustomerPhone(customerDraft.phone) } : null,
+    customerDraft.preferredContact ? { label: 'Preferred Contact', value: customerDraft.preferredContact } : null
+  ].filter(Boolean);
+
+  finalReviewCustomer.innerHTML = `
+    <div class="final-review-card-header">
+      <h3>Customer Information</h3>
+      <button class="secondary-button" type="button" data-action="edit-customer-from-final">Edit Customer Information</button>
+    </div>
+    <div class="final-review-details">
+      ${customerRows.map((row) => `
+        <div class="stat-row"><span>${escapeHtml(row.label)}</span><strong>${escapeHtml(row.value)}</strong></div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderFinalReviewDelivery() {
+  if (!finalReviewDelivery) {
+    return;
+  }
+
+  const addressLines = customerDraft.fulfillmentMethod === 'Shipping'
+    ? [
+        customerDraft.addressLine1,
+        customerDraft.addressLine2,
+        [customerDraft.city, customerDraft.state, customerDraft.postalCode].filter(Boolean).join(', '),
+        customerDraft.country
+      ].filter((value) => sanitizeText(value || ''))
+    : [];
+
+  finalReviewDelivery.innerHTML = `
+    <h3>Delivery</h3>
+    <div class="final-review-details">
+      <div class="stat-row"><span>Method</span><strong>${escapeHtml(customerDraft.fulfillmentMethod || 'Shipping')}</strong></div>
+      ${customerDraft.fulfillmentMethod === 'Shipping' ? `
+        <div class="final-review-address">
+          <strong>Shipping</strong>
+          ${addressLines.map((line) => `<div>${escapeHtml(line)}</div>`).join('')}
+        </div>
+      ` : '<p class="final-review-copy">Local Pickup</p>'}
+      ${customerDraft.neededBy ? `<div class="stat-row"><span>Needed By</span><strong>${escapeHtml(formatReadableDate(customerDraft.neededBy))}</strong></div>` : ''}
+    </div>
+  `;
+}
+
+function renderFinalReview() {
+  const items = getOrderItems();
+  const { itemCount, subtotal } = getCurrentOrderStats(items);
+
+  if (finalReviewItems) {
+    finalReviewItems.innerHTML = items.length > 0
+      ? `
+        <section class="final-review-items-shell">
+          <div class="final-review-section-header">
+            <h3>Order Items</h3>
+            <button class="secondary-button" type="button" data-action="edit-items-from-final">Edit Items</button>
+          </div>
+          <div class="final-review-item-list">
+            ${items.map(createFinalReviewItemMarkup).join('')}
+          </div>
+        </section>
+      `
+      : `
+        <div class="empty-order-card">
+          <h3>Your order is empty</h3>
+          <p>Use Edit Items to add an item before placing your order.</p>
+        </div>
+      `;
+  }
+
+  if (finalReviewSummary) {
+    finalReviewSummary.innerHTML = `
+      <h3>Order Summary</h3>
+      <div class="current-order-stats" aria-live="polite">
+        <div class="stat-row">
+          <span>Total Items</span>
+          <strong>${itemCount}</strong>
+        </div>
+        <div class="stat-row">
+          <span>Item Subtotal</span>
+          <strong>${formatPrice(subtotal)}</strong>
+        </div>
+      </div>
+    `;
+  }
+
+  renderFinalReviewCustomer();
+  renderFinalReviewDelivery();
+  renderFinalReviewStatus();
+}
+
+function openFinalReview() {
+  finalReviewState.message = '';
+  finalReviewState.tone = '';
+  renderFinalReview();
+  showScreen('final-review');
+}
+
 function resetTreeDraftForNewItem() {
-  draft.size = '';
-  draft.treeColor = '';
-  draft.bowColor = '';
-  draft.familyName = '';
-  draft.year = '2026';
-  draft.entries = [];
-  appState.editingItemId = '';
-  appState.reviewedItemId = '';
-  reviewState.saving = false;
-  reviewState.lastAddedItemId = '';
-  reviewState.error = '';
-  clearOrderUiNote();
-  clearDiscardPrompt();
+  resetDraftState('tree_ornament');
+  renderAddConfirmation();
   saveDraft();
   saveAppState();
   renderEntries();
   renderTreeReview();
+  renderTreeSubmitButton();
 }
 
 function loadCartItemIntoDraft(itemId) {
@@ -1426,6 +2510,7 @@ function loadCartItemIntoDraft(itemId) {
   draft.familyName = draftSource.familyName;
   draft.year = draftSource.year;
   draft.entries = draftSource.entries;
+  draft.productDefinitionId = draftSource.productDefinitionId;
   appState.editingItemId = item.itemId;
   appState.reviewedItemId = item.itemId;
   clearOrderUiNote();
@@ -1433,10 +2518,12 @@ function loadCartItemIntoDraft(itemId) {
   reviewState.lastAddedItemId = '';
   reviewState.error = '';
   clearDiscardPrompt();
+  hydrateFormFromDraft();
   saveDraft();
   saveAppState();
   renderEntries();
   renderTreeReview();
+  renderTreeSubmitButton();
   showScreen('tree-customization');
 }
 
@@ -1462,6 +2549,7 @@ function removeOrderItem(itemId) {
 
 function openCurrentOrder() {
   clearDiscardPrompt();
+  closeAddConfirmation(false);
   renderCurrentOrder();
   showScreen('current-order');
 }
@@ -1481,10 +2569,11 @@ function addTreeItemToOrder() {
     return;
   }
 
+  const config = getProductConfig();
   const wasEditing = Boolean(appState.editingItemId);
   reviewState.saving = true;
   reviewState.error = '';
-  renderTreeReview();
+  renderTreeSubmitButton();
 
   try {
     const item = normalizeTreeOrderItem();
@@ -1509,12 +2598,19 @@ function addTreeItemToOrder() {
     appState.reviewedItemId = item.itemId;
     appState.editingItemId = '';
     saveAppState();
-    setOrderUiNote(wasEditing ? 'Tree Ornament updated.' : 'Tree Ornament added to your order.');
-    openCurrentOrder();
+    renderTreeSubmitButton();
+    if (wasEditing) {
+      setOrderUiNote(config.updateNote);
+      openCurrentOrder();
+      return;
+    }
+    clearOrderUiNote();
+    openAddConfirmation(savedItem.itemId, 'Added to Your Order', 'This ornament has been saved to the current order.');
   } catch {
     reviewState.saving = false;
     reviewState.error = 'We could not save this item. Please try again.';
-    renderTreeReview();
+    renderTreeSubmitButton();
+    treeStatus.textContent = reviewState.error;
   }
 }
 
@@ -1583,6 +2679,7 @@ function updateEntryField(entryId, field, value) {
 
 function validateTreeForm() {
   clearTreeFormErrors();
+  const config = getProductConfig();
 
   const values = {
     size: treeFields.size.value,
@@ -1594,18 +2691,21 @@ function validateTreeForm() {
 
   let isValid = true;
 
-  Object.entries(allowedValues).forEach(([name, options]) => {
-    if (!(name in values)) {
-      return;
-    }
-    if (!options.includes(values[name])) {
-      setFieldError(name, 'Please choose an option.');
-      isValid = false;
-    }
-  });
+  if (!allowedValues.size.includes(values.size)) {
+    setFieldError('size', 'Please choose an option.');
+    isValid = false;
+  }
+  if (config.requiresTreeColor && !allowedValues.treeColor.includes(values.treeColor)) {
+    setFieldError('treeColor', 'Please choose an option.');
+    isValid = false;
+  }
+  if (config.requiresBowColor && !allowedValues.bowColor.includes(values.bowColor)) {
+    setFieldError('bowColor', 'Please choose an option.');
+    isValid = false;
+  }
 
   if (!values.familyName) {
-    setFieldError('familyName', 'Please enter a family name.');
+    setFieldError('familyName', 'Please enter engraved text.');
     isValid = false;
   }
 
@@ -1616,14 +2716,14 @@ function validateTreeForm() {
     isValid = false;
   }
 
-  if (draft.entries.length === 0) {
+  if (config.requiresEntries && draft.entries.length === 0) {
     setFieldError('entries', 'Add at least one person or pet.');
     isValid = false;
   }
 
   const { size, limit, count } = getCapacityDetails();
-  if (size === 'Small' && count > limit) {
-    setFieldError('entries', 'Small ornaments can include up to 5 combined people and pets.');
+  if (size && count > limit) {
+    setFieldError('entries', `${size} ornaments can include up to ${limit} combined people and pets.`);
     isValid = false;
   }
 
@@ -1676,16 +2776,25 @@ if (treeForm) {
   renderEntries();
   renderTreeReview();
   renderCurrentOrder();
+  renderFinalReview();
   renderCustomerOrderContext();
   renderCurrentOrderUtilityButtons();
   renderDiscardPanels();
+  renderAddConfirmation();
+  renderTreeSubmitButton();
 
   if (appState.currentScreen === 'tree-customization') {
     showScreen('tree-customization');
-  } else if (appState.currentScreen === 'tree-review' && draft.entries.length > 0) {
-    showScreen('tree-review');
+  } else if (appState.currentScreen === 'tree-review') {
+    if (appState.editingItemId || !isTreeDraftBlank()) {
+      showScreen('tree-customization');
+    } else if (hasOrderItems()) {
+      showScreen('current-order');
+    }
   } else if (appState.currentScreen === 'customer-information' && hasOrderItems()) {
     showScreen('customer-information');
+  } else if (appState.currentScreen === 'final-review') {
+    showScreen('final-review');
   } else if (appState.currentScreen === 'current-order') {
     showScreen('current-order');
   }
@@ -1737,11 +2846,56 @@ if (treeForm) {
   });
 
   document.addEventListener('keydown', (event) => {
+    if (addConfirmationState.open && event.key === 'Tab') {
+      const focusable = getConfirmationDialogFocusableElements();
+      if (focusable.length === 0) {
+        event.preventDefault();
+        addConfirmationDialog?.focus();
+        return;
+      }
+
+      const currentIndex = focusable.indexOf(document.activeElement);
+      if (event.shiftKey) {
+        if (currentIndex <= 0) {
+          event.preventDefault();
+          focusable[focusable.length - 1].focus();
+        }
+      } else if (currentIndex === focusable.length - 1 || currentIndex === -1) {
+        event.preventDefault();
+        focusable[0].focus();
+      }
+      return;
+    }
+
     if (event.key !== 'Escape' || staffPanel?.hidden) {
       return;
     }
     event.preventDefault();
     closeStaffPanel();
+  });
+
+  addConfirmationDialog?.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    if (!action) {
+      return;
+    }
+
+    if (action === 'confirmation-continue-customer') {
+      closeAddConfirmation(false);
+      openCustomerInformation();
+      return;
+    }
+
+    if (action === 'confirmation-view-current-order') {
+      openCurrentOrder();
+      return;
+    }
+
+    if (action === 'confirmation-add-another') {
+      closeAddConfirmation(false);
+      resetTreeDraftForNewItem();
+      showScreen('ornaments');
+    }
   });
 
   addPersonButton.addEventListener('click', () => addEntry('person'));
@@ -1750,6 +2904,37 @@ if (treeForm) {
   utilityOrderButtons.forEach((button) => {
     button.addEventListener('click', () => {
       openCurrentOrderUtilityFromContext(button.dataset.utilityContext || '');
+    });
+  });
+
+  optionChoiceButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      setOptionChoiceValue(button.dataset.choiceField || '', button.dataset.choiceValue || '', true);
+    });
+
+    button.addEventListener('keydown', (event) => {
+      const fieldName = button.dataset.choiceField || '';
+      const buttons = optionChoiceButtons.filter((candidate) => candidate.dataset.choiceField === fieldName);
+      const currentIndex = buttons.indexOf(button);
+
+      if (event.key === ' ' || event.key === 'Enter') {
+        event.preventDefault();
+        setOptionChoiceValue(fieldName, button.dataset.choiceValue || '', true);
+        return;
+      }
+
+      if (!['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'].includes(event.key)) {
+        return;
+      }
+
+      event.preventDefault();
+      const direction = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1;
+      const nextIndex = (currentIndex + direction + buttons.length) % buttons.length;
+      const nextButton = buttons[nextIndex];
+      if (!nextButton) {
+        return;
+      }
+      setOptionChoiceValue(fieldName, nextButton.dataset.choiceValue || '', true);
     });
   });
 
@@ -1763,14 +2948,15 @@ if (treeForm) {
     }
 
     treeStatus.textContent = '';
-    openTreeReview();
+    if (!appState.editingItemId) {
+      openTreeReview();
+      return;
+    }
+    addTreeItemToOrder();
   });
 
   Object.entries(treeFields).forEach(([name, field]) => {
     field.addEventListener('input', () => {
-      if (name === 'familyName') {
-        field.value = field.value.replace(/\s{2,}/g, ' ');
-      }
       setFieldError(name, '');
       if (name === 'size') {
         setFieldError('entries', '');
@@ -1784,14 +2970,12 @@ if (treeForm) {
 
     field.addEventListener('change', () => {
       setFieldError(name, '');
-      if (name === 'familyName') {
-        field.value = sanitizeText(field.value);
-      }
       treeStatus.textContent = '';
       saveDraft();
       if (name === 'size') {
         setFieldError('entries', '');
         renderCapacityMessage();
+        renderTreeCustomizationImage();
       }
     });
   });
@@ -1940,6 +3124,13 @@ if (treeForm) {
     });
   });
 
+  document.querySelectorAll('[data-action="back-ornaments-from-order"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      clearOrderUiNote();
+      showScreen('ornaments');
+    });
+  });
+
   contactChoiceButtons.forEach((button) => {
     button.addEventListener('click', () => {
       setPreferredContact(button.dataset.contactChoice || '');
@@ -1999,7 +3190,49 @@ if (treeForm) {
   customerForm?.addEventListener('submit', (event) => {
     event.preventDefault();
     saveCustomerDraft();
-    validateCustomerForm();
+    if (!validateCustomerForm()) {
+      return;
+    }
+    openFinalReview();
+  });
+
+  document.querySelector('[data-screen="final-review"]')?.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    if (!action) {
+      return;
+    }
+
+    if (action === 'edit-items-from-final') {
+      finalReviewState.message = '';
+      finalReviewState.tone = '';
+      renderFinalReviewStatus();
+      openCurrentOrder();
+      return;
+    }
+
+    if (action === 'edit-customer-from-final') {
+      finalReviewState.message = '';
+      finalReviewState.tone = '';
+      renderFinalReviewStatus();
+      showScreen('customer-information');
+      return;
+    }
+
+    if (action === 'place-order-development') {
+      const result = validateFinalReviewDraft();
+      if (!result.isValid) {
+        finalReviewState.message = `${result.issues[0]} Use Edit Items or Edit Customer Information to finish your order.`;
+        finalReviewState.tone = 'error';
+        renderFinalReviewStatus();
+        finalReviewStatus?.focus();
+        return;
+      }
+
+      finalReviewState.message = 'Development mode: Your order information is complete. Order submission is not connected yet.';
+      finalReviewState.tone = 'success';
+      renderFinalReviewStatus();
+      finalReviewStatus?.focus();
+    }
   });
 
   discardPanels.forEach((panel) => {
