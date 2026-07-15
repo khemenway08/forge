@@ -848,7 +848,7 @@ function loadDraft() {
     draft.productDefinitionId = ornamentProductConfigs[parsed.productDefinitionId] ? parsed.productDefinitionId : 'tree_ornament';
     draft.size = allowedValues.size.includes(parsed.size) ? parsed.size : '';
     draft.treeColor = allowedValues.treeColor.includes(parsed.treeColor) ? parsed.treeColor : '';
-    draft.bowColor = allowedValues.bowColor.includes(parsed.bowColor) ? parsed.bowColor : '';
+    draft.bowColor = getAllowedBowColors(draft.productDefinitionId).includes(parsed.bowColor) ? parsed.bowColor : '';
     draft.familyName = typeof parsed.familyName === 'string' ? parsed.familyName : '';
     draft.personalizationMode = allowedValues.personalizationMode.includes(parsed.personalizationMode) ? parsed.personalizationMode : '';
     draft.edgeText = typeof parsed.edgeText === 'string' ? parsed.edgeText : '';
