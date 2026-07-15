@@ -16,6 +16,12 @@ const reviewCopy = document.querySelector('[data-review-copy]');
 const sizeGroup = document.querySelector('[data-product-field-group="size"]');
 const treeColorGroup = document.querySelector('[data-product-field-group="treeColor"]');
 const bowColorGroup = document.querySelector('[data-product-field-group="bowColor"]');
+const personalizationModeGroup = document.querySelector('[data-product-field-group="personalizationMode"]');
+const edgeTextGroup = document.querySelector('[data-product-field-group="edgeText"]');
+const familyNameGroup = document.querySelector('[data-product-field-group="familyName"]');
+const entriesGroup = document.querySelector('[data-product-field-group="entries"]');
+const yearGroup = document.querySelector('[data-product-field-group="year"]');
+const familyNameLabel = document.querySelector('[data-field-label="familyName"]');
 const treeReviewCard = document.querySelector('[data-tree-review-card]');
 const currentOrderItems = document.querySelector('[data-current-order-items]');
 const currentOrderSummary = document.querySelector('[data-current-order-summary]');
@@ -90,13 +96,31 @@ const ornamentProductConfigs = {
     unitPrice: 30,
     customizationCopy: 'Choose personalization details before continuing.',
     updateNote: 'Present Stack Ornament updated.'
+  },
+  veteran_flag: {
+    displayName: 'Veteran Flag Ornament',
+    galleryProductKey: 'veteran',
+    requiresSize: false,
+    sizeLimits: {},
+    preSizeLimit: 0,
+    requiresTreeColor: false,
+    requiresBowColor: false,
+    requiresEntries: false,
+    minimumEntryCount: 0,
+    requiresFamilyName: false,
+    requiresYear: false,
+    requiresPersonalizationMode: true,
+    unitPrice: 25,
+    customizationCopy: 'Choose whether to keep the design as shown or personalize the edge text.',
+    updateNote: 'Veteran Flag Ornament updated.'
   }
 };
 
 const galleryProductDefinitionMap = {
   tree: 'tree_ornament',
   antler: 'antler_ornament',
-  'present-stack': 'present_stack'
+  'present-stack': 'present_stack',
+  veteran: 'veteran_flag'
 };
 
 const treeFields = {
@@ -104,6 +128,8 @@ const treeFields = {
   treeColor: document.querySelector('[name="treeColor"]'),
   bowColor: document.querySelector('[name="bowColor"]'),
   familyName: document.querySelector('[name="familyName"]'),
+  personalizationMode: document.querySelector('[name="personalizationMode"]'),
+  edgeText: document.querySelector('[name="edgeText"]'),
   year: document.querySelector('[name="year"]')
 };
 
@@ -126,6 +152,7 @@ const allowedValues = {
   size: ['Small', 'Large'],
   treeColor: ['Green', 'Brown'],
   bowColor: ['Red', 'White'],
+  personalizationMode: ['As Shown', 'Change Edge Text'],
   petIcon: ['Paw', 'Fish', 'No Icon', 'Custom Icon'],
   preferredContact: ['Text', 'Email'],
   fulfillmentMethod: ['Shipping', 'Local Pickup']
@@ -212,10 +239,20 @@ const productReviewConfig = {
     imageHeight: 2048
   },
   veteran_flag: {
+    galleryImage: {
+      src: '/assets/products/veteran-flag-ornament.jpg',
+      alt: 'Veteran Flag Ornament',
+      width: 1536,
+      height: 2048
+    },
     image: '/assets/products/veteran-flag-ornament.jpg',
     imageAlt: 'Veteran Flag Ornament',
     imageWidth: 1536,
-    imageHeight: 2048
+    imageHeight: 2048,
+    fieldLabels: {
+      personalizationMode: 'Personalization',
+      edgeText: 'Edge Text'
+    }
   },
   babys_first_christmas: {
     image: '/assets/products/babys-first-christmas-pink.jpeg',
@@ -243,6 +280,8 @@ const draft = {
   treeColor: '',
   bowColor: '',
   familyName: '',
+  personalizationMode: '',
+  edgeText: '',
   year: '2026',
   entries: []
 };
@@ -333,6 +372,12 @@ function renderCustomizationScreenContent() {
   const showSize = config.requiresSize;
   const showTreeColor = config.requiresTreeColor;
   const showBowColor = config.requiresBowColor;
+  const showPersonalizationMode = Boolean(config.requiresPersonalizationMode);
+  const currentPersonalizationMode = treeFields.personalizationMode?.value || draft.personalizationMode;
+  const showEdgeText = showPersonalizationMode && currentPersonalizationMode === 'Change Edge Text';
+  const showFamilyName = config.requiresFamilyName !== false;
+  const showEntries = Boolean(config.requiresEntries || config.minimumEntryCount > 0 || config.preSizeLimit > 0);
+  const showYear = config.requiresYear !== false;
 
   if (customizationEyebrow) {
     customizationEyebrow.textContent = config.displayName;
@@ -362,6 +407,21 @@ function renderCustomizationScreenContent() {
   if (bowColorGroup) {
     bowColorGroup.hidden = !showBowColor;
   }
+  if (personalizationModeGroup) {
+    personalizationModeGroup.hidden = !showPersonalizationMode;
+  }
+  if (edgeTextGroup) {
+    edgeTextGroup.hidden = !showEdgeText;
+  }
+  if (familyNameGroup) {
+    familyNameGroup.hidden = !showFamilyName;
+  }
+  if (entriesGroup) {
+    entriesGroup.hidden = !showEntries;
+  }
+  if (yearGroup) {
+    yearGroup.hidden = !showYear;
+  }
 }
 
 function resetDraftState(productDefinitionId = 'tree_ornament') {
@@ -370,6 +430,8 @@ function resetDraftState(productDefinitionId = 'tree_ornament') {
   draft.treeColor = '';
   draft.bowColor = '';
   draft.familyName = '';
+  draft.personalizationMode = '';
+  draft.edgeText = '';
   draft.year = '2026';
   draft.entries = [];
   appState.editingItemId = '';
@@ -468,7 +530,7 @@ function setFieldError(name, message) {
 }
 
 function renderOptionChoiceButtons() {
-  ['size', 'treeColor', 'bowColor'].forEach((fieldName) => {
+  ['size', 'treeColor', 'bowColor', 'personalizationMode'].forEach((fieldName) => {
     const selectedValue = treeFields[fieldName]?.value || '';
     const buttons = optionChoiceButtons.filter((button) => button.dataset.choiceField === fieldName);
     const activeButton = buttons.find((button) => button.dataset.choiceValue === selectedValue);
@@ -492,6 +554,12 @@ function setOptionChoiceValue(fieldName, value, focusButton = false) {
   setFieldError(fieldName, '');
   if (fieldName === 'size') {
     setFieldError('entries', '');
+  } else if (fieldName === 'personalizationMode') {
+    setFieldError('edgeText', '');
+    if (value !== 'Change Edge Text') {
+      treeFields.edgeText.value = '';
+      draft.edgeText = '';
+    }
   }
   treeStatus.textContent = '';
   saveDraft();
@@ -499,6 +567,9 @@ function setOptionChoiceValue(fieldName, value, focusButton = false) {
   if (fieldName === 'size') {
     renderCapacityMessage();
     renderTreeCustomizationImage();
+  }
+  if (fieldName === 'personalizationMode') {
+    renderCustomizationScreenContent();
   }
 
   if (focusButton) {
@@ -597,12 +668,17 @@ function getCapacityDetails() {
 }
 
 function syncDraftFromFields() {
+  const config = getProductConfig();
   draft.productDefinitionId = getActiveProductDefinitionId();
-  draft.size = getProductConfig().requiresSize ? treeFields.size.value : '';
-  draft.treeColor = getProductConfig().requiresTreeColor ? treeFields.treeColor.value : '';
-  draft.bowColor = getProductConfig().requiresBowColor ? treeFields.bowColor.value : '';
-  draft.familyName = treeFields.familyName.value;
-  draft.year = treeFields.year.value.trim();
+  draft.size = config.requiresSize ? treeFields.size.value : '';
+  draft.treeColor = config.requiresTreeColor ? treeFields.treeColor.value : '';
+  draft.bowColor = config.requiresBowColor ? treeFields.bowColor.value : '';
+  draft.familyName = config.requiresFamilyName === false ? '' : treeFields.familyName.value;
+  draft.personalizationMode = config.requiresPersonalizationMode ? treeFields.personalizationMode.value : '';
+  draft.edgeText = config.requiresPersonalizationMode && draft.personalizationMode === 'Change Edge Text'
+    ? treeFields.edgeText.value
+    : '';
+  draft.year = config.requiresYear === false ? '' : treeFields.year.value.trim();
 }
 
 function hydrateFormFromDraft() {
@@ -611,8 +687,11 @@ function hydrateFormFromDraft() {
   treeFields.treeColor.value = draft.treeColor;
   treeFields.bowColor.value = draft.bowColor;
   treeFields.familyName.value = draft.familyName;
+  treeFields.personalizationMode.value = draft.personalizationMode;
+  treeFields.edgeText.value = draft.edgeText;
   treeFields.year.value = draft.year || '2026';
   renderOptionChoiceButtons();
+  renderCustomizationScreenContent();
   renderTreeCustomizationImage();
 }
 
@@ -662,10 +741,14 @@ function loadDraft() {
     draft.treeColor = allowedValues.treeColor.includes(parsed.treeColor) ? parsed.treeColor : '';
     draft.bowColor = allowedValues.bowColor.includes(parsed.bowColor) ? parsed.bowColor : '';
     draft.familyName = typeof parsed.familyName === 'string' ? parsed.familyName : '';
+    draft.personalizationMode = allowedValues.personalizationMode.includes(parsed.personalizationMode) ? parsed.personalizationMode : '';
+    draft.edgeText = typeof parsed.edgeText === 'string' ? parsed.edgeText : '';
     draft.year = typeof parsed.year === 'string' && parsed.year ? parsed.year : '2026';
     draft.entries = Array.isArray(parsed.entries) ? parsed.entries.map(normalizeEntry).filter(Boolean) : [];
   } catch {
     draft.productDefinitionId = 'tree_ornament';
+    draft.personalizationMode = '';
+    draft.edgeText = '';
     draft.entries = [];
   }
 
@@ -862,6 +945,8 @@ function resetActiveOrderSession({ clearCart = true, goToWelcome = true } = {}) 
   draft.treeColor = '';
   draft.bowColor = '';
   draft.familyName = '';
+  draft.personalizationMode = '';
+  draft.edgeText = '';
   draft.year = '2026';
   draft.entries = [];
   localStorage.removeItem(storageKey);
@@ -1698,10 +1783,16 @@ function getOrnamentOrderItemValidationIssues(item) {
   if (config.requiresBowColor && !allowedValues.bowColor.includes(item.bowColor)) {
     issues.push('Choose a valid bow color.');
   }
-  if (!sanitizeText(item.familyName || '')) {
+  if (config.requiresPersonalizationMode && !allowedValues.personalizationMode.includes(item.personalizationMode)) {
+    issues.push('Choose a personalization option.');
+  }
+  if (config.requiresFamilyName !== false && !sanitizeText(item.familyName || '')) {
     issues.push('Enter the engraved text.');
   }
-  if (!/^\d{4}$/.test(item.year || '')) {
+  if (config.requiresPersonalizationMode && item.personalizationMode === 'Change Edge Text' && !sanitizeText(item.edgeText || '')) {
+    issues.push('Enter the edge text.');
+  }
+  if (config.requiresYear !== false && !/^\d{4}$/.test(item.year || '')) {
     issues.push('Enter a valid year.');
   }
   if (minimumEntryCount > 0 && entries.length < minimumEntryCount) {
@@ -1849,8 +1940,10 @@ function createTreeReviewMarkup() {
     unitPrice: getProductUnitPrice(productDefinitionId, draft.size),
     configurationSnapshot: {
       ...(config.requiresSize ? { size: draft.size } : {}),
-      familyName: draft.familyName,
-      year: draft.year,
+      ...(config.requiresFamilyName === false ? {} : { familyName: draft.familyName }),
+      ...(config.requiresPersonalizationMode ? { personalizationMode: draft.personalizationMode } : {}),
+      ...(config.requiresPersonalizationMode && draft.personalizationMode === 'Change Edge Text' && draft.edgeText ? { edgeText: draft.edgeText } : {}),
+      ...(config.requiresYear === false ? {} : { year: draft.year }),
       ...(config.requiresTreeColor ? { treeColor: draft.treeColor } : {}),
       ...(config.requiresBowColor ? { bowColor: draft.bowColor } : {})
     },
@@ -1898,9 +1991,11 @@ function normalizeTreeOrderItem() {
   const unitPrice = getProductUnitPrice(productDefinitionId, draft.size);
   const configurationSnapshot = {
     ...(config.requiresSize ? { size: draft.size } : {}),
-    familyName: draft.familyName,
-    year: draft.year,
-    entries,
+    ...(config.requiresFamilyName === false ? {} : { familyName: draft.familyName }),
+    ...(config.requiresPersonalizationMode ? { personalizationMode: draft.personalizationMode } : {}),
+    ...(config.requiresPersonalizationMode && draft.personalizationMode === 'Change Edge Text' && draft.edgeText ? { edgeText: draft.edgeText } : {}),
+    ...(config.requiresYear === false ? {} : { year: draft.year }),
+    ...(config.requiresEntries || entries.length > 0 ? { entries } : {}),
     ...(config.requiresTreeColor ? { treeColor: draft.treeColor } : {}),
     ...(config.requiresBowColor ? { bowColor: draft.bowColor } : {})
   };
@@ -1916,8 +2011,10 @@ function normalizeTreeOrderItem() {
     size: config.requiresSize ? draft.size : '',
     treeColor: config.requiresTreeColor ? draft.treeColor : '',
     bowColor: config.requiresBowColor ? draft.bowColor : '',
-    familyName: draft.familyName,
-    year: draft.year,
+    familyName: config.requiresFamilyName === false ? '' : draft.familyName,
+    personalizationMode: config.requiresPersonalizationMode ? draft.personalizationMode : '',
+    edgeText: config.requiresPersonalizationMode && draft.personalizationMode === 'Change Edge Text' ? draft.edgeText : '',
+    year: config.requiresYear === false ? '' : draft.year,
     orderedEntries: entries,
     peopleCount,
     petCount,
@@ -1971,6 +2068,8 @@ function normalizeOrderItemRecord(record) {
     treeColor: typeof record.treeColor === 'string' ? record.treeColor : '',
     bowColor: typeof record.bowColor === 'string' ? record.bowColor : '',
     familyName: typeof record.familyName === 'string' ? record.familyName : '',
+    personalizationMode: typeof record.personalizationMode === 'string' ? record.personalizationMode : '',
+    edgeText: typeof record.edgeText === 'string' ? record.edgeText : '',
     year: typeof record.year === 'string' ? record.year : '',
     orderedEntries,
     peopleCount: Number.isFinite(record.peopleCount) ? record.peopleCount : orderedEntries.filter((entry) => entry.kind === 'person').length,
@@ -2005,9 +2104,11 @@ function isTreeDraftBlank() {
   return (!config.requiresSize || !draft.size)
     && (!config.requiresTreeColor || !draft.treeColor)
     && (!config.requiresBowColor || !draft.bowColor)
-    && !sanitizeText(draft.familyName)
+    && (config.requiresFamilyName === false || !sanitizeText(draft.familyName))
+    && (!config.requiresPersonalizationMode || !sanitizeText(draft.personalizationMode))
+    && !sanitizeText(draft.edgeText)
     && draft.entries.length === 0
-    && (!draft.year || draft.year === '2026');
+    && (config.requiresYear === false || !draft.year || draft.year === '2026');
 }
 
 function shouldShowCurrentOrderUtility(context) {
@@ -2182,6 +2283,9 @@ function renderAddConfirmation() {
     return;
   }
 
+  const orderedFields = getOrderedItemFields(item);
+  const primaryFields = orderedFields.filter((field) => ['familyName', 'lastName', 'babyName', 'name', 'letter', 'edgeText', 'personalizationMode'].includes(field.key));
+  const yearFields = orderedFields.filter((field) => /year/i.test(field.key));
   const selectionFields = getOrderedItemFields(item).filter((field) => (
     !['familyName', 'lastName', 'babyName', 'name', 'letter', 'edgeText', 'personalizationMode'].includes(field.key)
     && !/year/i.test(field.key)
@@ -2197,16 +2301,18 @@ function renderAddConfirmation() {
         <div class="confirmation-dialog-item-price">${formatPrice(item.unitPrice * item.quantity)}</div>
       </div>
       <div class="confirmation-dialog-item-meta">
-        <div class="summary-item">
-          <span class="summary-label">Engraved Text</span>
-          <div class="summary-value">${escapeHtml(item.familyName)}</div>
-        </div>
-        ${item.year ? `
-          <div class="final-review-detail-row">
-            <span class="summary-label">Year</span>
-            <div class="final-review-detail-value">${escapeHtml(item.year)}</div>
+        ${primaryFields.map((field) => `
+          <div class="summary-item">
+            <span class="summary-label">${escapeHtml(field.label)}</span>
+            <div class="summary-value">${escapeHtml(field.value)}</div>
           </div>
-        ` : ''}
+        `).join('')}
+        ${yearFields.map((field) => `
+          <div class="final-review-detail-row">
+            <span class="summary-label">${escapeHtml(field.label)}</span>
+            <div class="final-review-detail-value">${escapeHtml(field.value)}</div>
+          </div>
+        `).join('')}
         ${selectionFields.map((field) => `
           <div class="final-review-detail-row">
             <span class="summary-label">${escapeHtml(field.label)}</span>
@@ -2255,6 +2361,8 @@ function buildDraftFromOrderItem(item) {
     treeColor: item.treeColor,
     bowColor: item.bowColor,
     familyName: item.familyName,
+    personalizationMode: item.personalizationMode || '',
+    edgeText: item.edgeText || '',
     year: item.year,
     entries: item.orderedEntries.map((entry) => ({
       id: createId(),
@@ -2312,6 +2420,9 @@ function getCurrentOrderStats(items) {
 }
 
 function createCurrentOrderItemMarkup(item) {
+  const orderedFields = getOrderedItemFields(item);
+  const primaryFields = orderedFields.filter((field) => ['familyName', 'lastName', 'babyName', 'name', 'letter', 'edgeText', 'personalizationMode'].includes(field.key));
+  const yearFields = orderedFields.filter((field) => /year/i.test(field.key));
   const engravingEntriesMarkup = item.orderedEntries.length > 0
     ? `
       <ol class="review-entry-list current-order-entry-list">
@@ -2340,9 +2451,8 @@ function createCurrentOrderItemMarkup(item) {
       </ol>
     `
     : '';
-  const orderedFields = getOrderedItemFields(item);
   const selectionFields = orderedFields.filter((field) => field.key === 'size' || /color/i.test(field.key));
-  const otherFields = orderedFields.filter((field) => !['familyName'].includes(field.key) && !/year/i.test(field.key) && !selectionFields.includes(field));
+  const otherFields = orderedFields.filter((field) => !primaryFields.includes(field) && !/year/i.test(field.key) && !selectionFields.includes(field));
   const selectionRows = [
     ...selectionFields.map((field) => `
       <div class="current-order-selection-row">
@@ -2386,19 +2496,22 @@ function createCurrentOrderItemMarkup(item) {
             </div>
           </div>
 
-          <div class="current-order-body">
-            <div class="current-order-highlight">
-              <span class="summary-label">Engraved Text</span>
-              <div class="summary-value">${escapeHtml(item.familyName)}</div>
+          ${(primaryFields.length > 0 || yearFields.length > 0) ? `
+            <div class="current-order-body">
+              ${primaryFields.map((field, index) => `
+                <div class="${index === 0 ? 'current-order-highlight' : 'current-order-selection-row'}">
+                  <span class="summary-label">${escapeHtml(field.label)}</span>
+                  <div class="${index === 0 ? 'summary-value' : 'current-order-selection-value'}">${escapeHtml(field.value)}</div>
+                </div>
+              `).join('')}
+              ${yearFields.map((field) => `
+                <div class="current-order-selection-row">
+                  <span class="summary-label">${escapeHtml(field.label)}</span>
+                  <div class="current-order-selection-value">${escapeHtml(field.value)}</div>
+                </div>
+              `).join('')}
             </div>
-
-            ${item.year ? `
-              <div class="current-order-selection-row">
-                <span class="summary-label">Year</span>
-                <div class="current-order-selection-value">${escapeHtml(item.year)}</div>
-              </div>
-            ` : ''}
-          </div>
+          ` : ''}
 
           ${selectionRows ? `
             <div class="current-order-list-card current-order-selections-card">
@@ -2601,6 +2714,8 @@ function loadCartItemIntoDraft(itemId) {
   draft.treeColor = draftSource.treeColor;
   draft.bowColor = draftSource.bowColor;
   draft.familyName = draftSource.familyName;
+  draft.personalizationMode = draftSource.personalizationMode;
+  draft.edgeText = draftSource.edgeText;
   draft.year = draftSource.year;
   draft.entries = draftSource.entries;
   draft.productDefinitionId = draftSource.productDefinitionId;
@@ -2779,6 +2894,8 @@ function validateTreeForm() {
     treeColor: treeFields.treeColor.value,
     bowColor: treeFields.bowColor.value,
     familyName: sanitizeText(treeFields.familyName.value),
+    personalizationMode: treeFields.personalizationMode.value,
+    edgeText: treeFields.edgeText.value,
     year: treeFields.year.value.trim()
   };
 
@@ -2797,14 +2914,24 @@ function validateTreeForm() {
     isValid = false;
   }
 
-  if (!values.familyName) {
+  if (config.requiresPersonalizationMode && !allowedValues.personalizationMode.includes(values.personalizationMode)) {
+    setFieldError('personalizationMode', 'Please choose an option.');
+    isValid = false;
+  }
+
+  if (config.requiresFamilyName !== false && !values.familyName) {
     setFieldError('familyName', 'Please enter engraved text.');
+    isValid = false;
+  }
+
+  if (config.requiresPersonalizationMode && values.personalizationMode === 'Change Edge Text' && !values.edgeText) {
+    setFieldError('edgeText', 'Please enter edge text.');
     isValid = false;
   }
 
   const yearNumber = Number.parseInt(values.year, 10);
   const yearLooksValid = /^\d{4}$/.test(values.year) && yearNumber >= 1900 && yearNumber <= 2100;
-  if (!yearLooksValid) {
+  if (config.requiresYear !== false && !yearLooksValid) {
     setFieldError('year', 'Enter a valid 4-digit year.');
     isValid = false;
   }

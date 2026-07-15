@@ -249,13 +249,33 @@
               <p class="field-error" data-error-for="bowColor" aria-live="polite"></p>
             </div>
 
-            <div class="form-group">
-              <label for="family-name">Family Name or Message</label>
+            <div class="form-group" data-product-field-group="personalizationMode" hidden>
+              <span class="field-legend" id="personalization-mode-label">Personalization</span>
+              <input id="personalization-mode" name="personalizationMode" type="hidden" value="">
+              <div class="option-choice-group" role="radiogroup" aria-labelledby="personalization-mode-label" data-choice-group="personalizationMode">
+                <button class="option-choice" type="button" role="radio" data-choice-field="personalizationMode" data-choice-value="As Shown" aria-checked="false">
+                  <span class="option-choice-label">As Shown</span>
+                </button>
+                <button class="option-choice" type="button" role="radio" data-choice-field="personalizationMode" data-choice-value="Change Edge Text" aria-checked="false">
+                  <span class="option-choice-label">Change Edge Text</span>
+                </button>
+              </div>
+              <p class="field-error" data-error-for="personalizationMode" aria-live="polite"></p>
+            </div>
+
+            <div class="form-group" data-product-field-group="edgeText" hidden>
+              <label for="edge-text">Edge Text</label>
+              <input id="edge-text" name="edgeText" type="text" maxlength="80" spellcheck="false" autocorrect="off" autocomplete="off" autocapitalize="off">
+              <p class="field-error" data-error-for="edgeText" aria-live="polite"></p>
+            </div>
+
+            <div class="form-group" data-product-field-group="familyName">
+              <label for="family-name" data-field-label="familyName">Family Name or Message</label>
               <input id="family-name" name="familyName" type="text" maxlength="40" placeholder="Enter family name or message" spellcheck="false" autocorrect="off" autocomplete="off" autocapitalize="off" required>
               <p class="field-error" data-error-for="familyName" aria-live="polite"></p>
             </div>
 
-            <div class="form-group people-pets-group">
+            <div class="form-group people-pets-group" data-product-field-group="entries">
               <div class="section-heading">
                 <div>
                   <label class="section-label" for="people-pets-list">People and Pets</label>
@@ -276,7 +296,7 @@
               <p class="field-error" data-error-for="entries" aria-live="polite"></p>
             </div>
 
-            <div class="form-group">
+            <div class="form-group" data-product-field-group="year">
               <label for="ornament-year">Year</label>
               <input id="ornament-year" name="year" type="number" inputmode="numeric" value="2026" min="1900" max="2100" required>
               <p class="field-error" data-error-for="year" aria-live="polite"></p>
