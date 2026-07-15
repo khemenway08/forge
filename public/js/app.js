@@ -49,6 +49,7 @@ const shippingFieldsContainer = document.querySelector('[data-shipping-fields]')
 const utilityOrderButtons = [...document.querySelectorAll('[data-action="view-current-order-utility"]')];
 const discardPanels = [...document.querySelectorAll('[data-discard-panel]')];
 const forgeProductCatalog = globalThis.ForgeProductCatalog;
+const forgeOrderPayloadPreview = globalThis.ForgeOrderPayloadPreview;
 const storageKey = 'forge-tree-ornament-draft';
 const orderItemsStorageKey = 'forge-order-items';
 const appStateStorageKey = 'forge-app-state';
@@ -56,6 +57,10 @@ const customerDraftStorageKey = 'forge-customer-draft';
 
 if (!forgeProductCatalog) {
   throw new Error('Forge product catalog failed to load before app.js.');
+}
+
+if (!forgeOrderPayloadPreview) {
+  throw new Error('Forge order payload preview helpers failed to load before app.js.');
 }
 
 const ornamentProductConfigs = {
@@ -466,6 +471,16 @@ const finalReviewState = {
   tone: ''
 };
 
+const payloadPreviewState = {
+  enabled: forgeOrderPayloadPreview.isPayloadPreviewEnabled(window.location.search),
+  open: false,
+  json: '',
+  error: '',
+  copyStatus: '',
+  copyTone: '',
+  payload: null
+};
+
 const orderUiState = {
   removeConfirmItemId: '',
   note: '',
@@ -475,6 +490,13 @@ const orderUiState = {
 let orderUiNoteTimer = 0;
 let lastStaffFocusTarget = null;
 let lastConfirmationFocusTarget = null;
+let lastPayloadPreviewFocusTarget = null;
+let payloadPreviewBackdrop = null;
+let payloadPreviewDialog = null;
+let payloadPreviewOutput = null;
+let payloadPreviewStatus = null;
+let payloadPreviewTriggerButton = null;
+const payloadPreviewContextStore = forgeOrderPayloadPreview.createPayloadPreviewContextStore();
 
 function getProductConfig(productDefinitionId = draft.productDefinitionId) {
   const resolvedProductDefinitionId = resolveConfiguredProductDefinitionId(productDefinitionId);
@@ -1122,6 +1144,7 @@ function resetActiveOrderSession({ clearCart = true, goToWelcome = true } = {}) 
   clearDiscardPrompt();
   orderUiState.removeConfirmItemId = '';
   closeAddConfirmation(false);
+  closePayloadPreview(false);
 
   appState.editingItemId = '';
   appState.reviewedItemId = '';
@@ -2829,6 +2852,144 @@ function renderFinalReviewStatus() {
   finalReviewStatus.className = `form-status final-review-status${finalReviewState.tone === 'success' ? ' is-success' : ''}`;
 }
 
+function ensurePayloadPreviewUi() {
+  if (!forgeOrderPayloadPreview.shouldCreatePayloadPreviewUi(payloadPreviewState.enabled) || payloadPreviewDialog) {
+    return;
+  }
+
+  const finalReviewActionsCard = document.querySelector('.final-review-actions-card');
+  if (!finalReviewActionsCard) {
+    return;
+  }
+
+  finalReviewActionsCard.insertAdjacentHTML('beforeend', `
+    <div class="payload-preview-controls">
+      <p class="eyebrow payload-preview-eyebrow">Development Only</p>
+      <button class="secondary-button payload-preview-trigger" type="button" data-action="preview-order-payload">Preview Order Payload</button>
+    </div>
+  `);
+
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="payload-preview-backdrop" data-payload-preview-backdrop hidden>
+      <div class="payload-preview-dialog" data-payload-preview-dialog role="dialog" aria-modal="true" aria-labelledby="payload-preview-title" tabindex="-1" hidden>
+        <div class="payload-preview-header">
+          <div class="payload-preview-heading">
+            <p class="eyebrow payload-preview-eyebrow">Development Only</p>
+            <h2 id="payload-preview-title">Normalized Order Payload</h2>
+            <p class="payload-preview-copy">Inspect the current Forge order state as formatted JSON without submitting anything.</p>
+          </div>
+          <button class="text-button" type="button" data-action="close-payload-preview">Close</button>
+        </div>
+        <p class="form-status payload-preview-status" data-payload-preview-status aria-live="polite"></p>
+        <pre class="payload-preview-output" data-payload-preview-output tabindex="0"></pre>
+        <div class="payload-preview-actions">
+          <button class="secondary-button" type="button" data-action="copy-payload-preview">Copy JSON</button>
+          <button class="primary-button" type="button" data-action="close-payload-preview">Close</button>
+        </div>
+      </div>
+    </div>
+  `);
+
+  payloadPreviewTriggerButton = document.querySelector('[data-action="preview-order-payload"]');
+  payloadPreviewBackdrop = document.querySelector('[data-payload-preview-backdrop]');
+  payloadPreviewDialog = document.querySelector('[data-payload-preview-dialog]');
+  payloadPreviewOutput = document.querySelector('[data-payload-preview-output]');
+  payloadPreviewStatus = document.querySelector('[data-payload-preview-status]');
+}
+
+function renderPayloadPreview() {
+  if (!payloadPreviewDialog || !payloadPreviewBackdrop || !payloadPreviewOutput || !payloadPreviewStatus) {
+    return;
+  }
+
+  payloadPreviewBackdrop.hidden = !payloadPreviewState.open;
+  payloadPreviewDialog.hidden = !payloadPreviewState.open;
+  payloadPreviewOutput.textContent = payloadPreviewState.json;
+  payloadPreviewStatus.textContent = payloadPreviewState.copyStatus || payloadPreviewState.error;
+  payloadPreviewStatus.className = `form-status payload-preview-status${payloadPreviewState.copyTone === 'success' ? ' is-success' : ''}`;
+}
+
+function getPayloadPreviewFocusableElements() {
+  if (!payloadPreviewDialog) {
+    return [];
+  }
+
+  return [...payloadPreviewDialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter((element) => !element.hasAttribute('disabled'));
+}
+
+function buildCurrentOrderPayloadPreview() {
+  return forgeOrderPayloadPreview.buildCurrentOrderPayloadPreview({
+    items: getOrderItems(),
+    customerDraft,
+    appState,
+    previewContextStore: payloadPreviewContextStore,
+    preferredForgeOrderUuid: appState.activeOrderSessionId || '',
+    contextOverrides: {
+      source: 'customer_kiosk',
+      orderStatus: 'draft',
+      deviceId: null,
+      event: null,
+      submittedAt: null
+    }
+  });
+}
+
+function openPayloadPreview() {
+  ensurePayloadPreviewUi();
+  if (!payloadPreviewDialog) {
+    return;
+  }
+
+  payloadPreviewState.copyStatus = '';
+  payloadPreviewState.copyTone = '';
+  payloadPreviewState.error = '';
+  lastPayloadPreviewFocusTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+  try {
+    const preview = buildCurrentOrderPayloadPreview();
+    payloadPreviewState.open = true;
+    payloadPreviewState.payload = preview.payload;
+    payloadPreviewState.json = preview.json;
+    console.log('Forge payload preview', preview.payload);
+  } catch (error) {
+    payloadPreviewState.open = true;
+    payloadPreviewState.payload = null;
+    payloadPreviewState.error = 'Payload preview failed. See the browser console for details.';
+    payloadPreviewState.json = error && error.stack ? error.stack : String(error);
+    console.error('Forge payload preview failed', error);
+  }
+
+  renderPayloadPreview();
+  window.setTimeout(() => {
+    (getPayloadPreviewFocusableElements()[0] || payloadPreviewDialog)?.focus();
+  }, 0);
+}
+
+function closePayloadPreview(restoreFocus = true) {
+  payloadPreviewState.open = false;
+  payloadPreviewState.copyStatus = '';
+  payloadPreviewState.copyTone = '';
+  renderPayloadPreview();
+  if (restoreFocus && lastPayloadPreviewFocusTarget) {
+    lastPayloadPreviewFocusTarget.focus();
+  }
+  lastPayloadPreviewFocusTarget = null;
+}
+
+async function copyPayloadPreviewJson() {
+  if (!payloadPreviewState.json) {
+    return;
+  }
+
+  const result = await forgeOrderPayloadPreview.copyPayloadPreviewText(payloadPreviewState.json, {
+    clipboard: navigator.clipboard
+  });
+  payloadPreviewState.copyStatus = result.message;
+  payloadPreviewState.copyTone = result.copied ? 'success' : '';
+  renderPayloadPreview();
+}
+
 function renderFinalReviewCustomer() {
   if (!finalReviewCustomer) {
     return;
@@ -2932,6 +3093,7 @@ function renderFinalReview() {
 function openFinalReview() {
   finalReviewState.message = '';
   finalReviewState.tone = '';
+  ensurePayloadPreviewUi();
   renderFinalReview();
   showScreen('final-review');
 }
@@ -3252,6 +3414,7 @@ if (treeForm) {
   renderDiscardPanels();
   renderAddConfirmation();
   renderTreeSubmitButton();
+  ensurePayloadPreviewUi();
 
   if (appState.currentScreen === 'tree-customization') {
     showScreen('tree-customization');
@@ -3316,6 +3479,33 @@ if (treeForm) {
   });
 
   document.addEventListener('keydown', (event) => {
+    if (payloadPreviewState.open && event.key === 'Tab') {
+      const focusable = getPayloadPreviewFocusableElements();
+      if (focusable.length === 0) {
+        event.preventDefault();
+        payloadPreviewDialog?.focus();
+        return;
+      }
+
+      const currentIndex = focusable.indexOf(document.activeElement);
+      if (event.shiftKey) {
+        if (currentIndex <= 0) {
+          event.preventDefault();
+          focusable[focusable.length - 1].focus();
+        }
+      } else if (currentIndex === focusable.length - 1 || currentIndex === -1) {
+        event.preventDefault();
+        focusable[0].focus();
+      }
+      return;
+    }
+
+    if (payloadPreviewState.open && event.key === 'Escape') {
+      event.preventDefault();
+      closePayloadPreview();
+      return;
+    }
+
     if (addConfirmationState.open && event.key === 'Tab') {
       const focusable = getConfirmationDialogFocusableElements();
       if (focusable.length === 0) {
@@ -3702,6 +3892,33 @@ if (treeForm) {
       finalReviewState.tone = 'success';
       renderFinalReviewStatus();
       finalReviewStatus?.focus();
+      return;
+    }
+
+    if (action === 'preview-order-payload') {
+      openPayloadPreview();
+    }
+  });
+
+  payloadPreviewDialog?.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    if (!action) {
+      return;
+    }
+
+    if (action === 'close-payload-preview') {
+      closePayloadPreview();
+      return;
+    }
+
+    if (action === 'copy-payload-preview') {
+      copyPayloadPreviewJson();
+    }
+  });
+
+  payloadPreviewBackdrop?.addEventListener('click', (event) => {
+    if (event.target === payloadPreviewBackdrop) {
+      closePayloadPreview();
     }
   });
 

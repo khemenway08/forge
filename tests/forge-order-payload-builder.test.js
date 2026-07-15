@@ -96,7 +96,10 @@ test('shared runtime source is authoritative for app and builder pricing', () =>
   assert.match(builderSource, /forge-product-catalog/);
   assert.match(appSource, /forgeProductCatalog/);
   assert.match(appSource, /applyCatalogPricingToItems/);
-  assert.match(indexSource, /<script src="js\/forge-product-catalog\.js"><\/script>\s*<script src="js\/app\.js"><\/script>/);
+  assert.match(
+    indexSource,
+    /<script src="js\/forge-product-catalog\.js"><\/script>\s*<script src="js\/forge-order-payload-builder\.js"><\/script>\s*<script src="js\/forge-order-payload-preview\.js"><\/script>\s*<script src="js\/app\.js"><\/script>/
+  );
 });
 
 test('normalizes a Tree Ornament shipping order with size-based pricing and exact mixed personalization order', () => {
