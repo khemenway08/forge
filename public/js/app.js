@@ -97,6 +97,20 @@ const ornamentProductConfigs = {
     customizationCopy: 'Choose personalization details before continuing.',
     updateNote: 'Present Stack Ornament updated.'
   },
+  grinch_tree: {
+    displayName: 'Grinch Tree Ornament',
+    galleryProductKey: 'grinch',
+    requiresSize: false,
+    sizeLimits: {},
+    preSizeLimit: 10,
+    requiresTreeColor: false,
+    requiresBowColor: false,
+    requiresEntries: true,
+    minimumEntryCount: 1,
+    unitPrice: 30,
+    customizationCopy: 'Choose personalization details before continuing.',
+    updateNote: 'Grinch Tree Ornament updated.'
+  },
   veteran_flag: {
     displayName: 'Veteran Flag Ornament',
     galleryProductKey: 'veteran',
@@ -120,6 +134,7 @@ const galleryProductDefinitionMap = {
   tree: 'tree_ornament',
   antler: 'antler_ornament',
   'present-stack': 'present_stack',
+  grinch: 'grinch_tree',
   veteran: 'veteran_flag'
 };
 
@@ -233,10 +248,20 @@ const productReviewConfig = {
     }
   },
   grinch_tree: {
+    galleryImage: {
+      src: '/assets/products/grinch-family-tree.jpg',
+      alt: 'Grinch Tree Ornament',
+      width: 1536,
+      height: 2048
+    },
     image: '/assets/products/grinch-family-tree.jpg',
     imageAlt: 'Grinch Tree Ornament',
     imageWidth: 1536,
-    imageHeight: 2048
+    imageHeight: 2048,
+    fieldLabels: {
+      familyName: 'Engraved Text',
+      year: 'Year'
+    }
   },
   veteran_flag: {
     galleryImage: {
