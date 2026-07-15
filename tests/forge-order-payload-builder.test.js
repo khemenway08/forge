@@ -98,7 +98,7 @@ test('shared runtime source is authoritative for app and builder pricing', () =>
   assert.match(appSource, /applyCatalogPricingToItems/);
   assert.match(
     indexSource,
-    /<script src="js\/forge-product-catalog\.js"><\/script>\s*<script src="js\/forge-order-payload-builder\.js"><\/script>\s*<script src="js\/forge-order-payload-preview\.js"><\/script>\s*<script src="js\/app\.js"><\/script>/
+    /<script src="js\/forge-product-catalog\.js"><\/script>\s*<script src="js\/forge-order-payload-builder\.js"><\/script>\s*<script src="js\/forge-order-payload-preview\.js"><\/script>\s*<script src="js\/forge-order-store\.js"><\/script>\s*<script src="js\/forge-order-submission\.js"><\/script>\s*<script src="js\/app\.js"><\/script>/
   );
 });
 

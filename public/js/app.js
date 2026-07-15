@@ -34,6 +34,8 @@ const finalReviewSummary = document.querySelector('[data-final-review-summary]')
 const finalReviewCustomer = document.querySelector('[data-final-review-customer]');
 const finalReviewDelivery = document.querySelector('[data-final-review-delivery]');
 const finalReviewStatus = document.querySelector('[data-final-review-status]');
+const thankYouCopy = document.querySelector('[data-thank-you-copy]');
+const thankYouReference = document.querySelector('[data-thank-you-reference]');
 const addConfirmationBackdrop = document.querySelector('[data-add-confirmation-backdrop]');
 const addConfirmationDialog = document.querySelector('[data-add-confirmation-dialog]');
 const addConfirmationItem = document.querySelector('[data-add-confirmation-item]');
@@ -48,12 +50,21 @@ const fulfillmentChoiceButtons = [...document.querySelectorAll('[data-fulfillmen
 const shippingFieldsContainer = document.querySelector('[data-shipping-fields]');
 const utilityOrderButtons = [...document.querySelectorAll('[data-action="view-current-order-utility"]')];
 const discardPanels = [...document.querySelectorAll('[data-discard-panel]')];
+const debugOrderToolContainers = [...document.querySelectorAll('[data-debug-order-tools]')];
 const forgeProductCatalog = globalThis.ForgeProductCatalog;
 const forgeOrderPayloadPreview = globalThis.ForgeOrderPayloadPreview;
+const forgeOrderStore = globalThis.ForgeOrderStore;
+const forgeOrderSubmission = globalThis.ForgeOrderSubmission;
 const storageKey = 'forge-tree-ornament-draft';
 const orderItemsStorageKey = 'forge-order-items';
 const appStateStorageKey = 'forge-app-state';
 const customerDraftStorageKey = 'forge-customer-draft';
+const savedOrderInspectorState = {
+  open: false,
+  records: [],
+  error: '',
+  loading: false
+};
 
 if (!forgeProductCatalog) {
   throw new Error('Forge product catalog failed to load before app.js.');
@@ -61,6 +72,14 @@ if (!forgeProductCatalog) {
 
 if (!forgeOrderPayloadPreview) {
   throw new Error('Forge order payload preview helpers failed to load before app.js.');
+}
+
+if (!forgeOrderStore) {
+  throw new Error('Forge order store helpers failed to load before app.js.');
+}
+
+if (!forgeOrderSubmission) {
+  throw new Error('Forge order submission helpers failed to load before app.js.');
 }
 
 const ornamentProductConfigs = {
@@ -450,7 +469,8 @@ const appState = {
   currentScreen: 'welcome',
   editingItemId: '',
   reviewedItemId: '',
-  activeOrderSessionId: ''
+  activeOrderSessionId: '',
+  lastSubmittedOrderUuid: ''
 };
 
 const reviewState = {
@@ -468,12 +488,15 @@ const addConfirmationState = {
 
 const finalReviewState = {
   message: '',
-  tone: ''
+  tone: '',
+  savingOrder: false
 };
 
 const payloadPreviewState = {
   enabled: forgeOrderPayloadPreview.isPayloadPreviewEnabled(window.location.search),
   open: false,
+  title: 'Normalized Order Payload',
+  copy: 'Inspect the current Forge order state as formatted JSON without submitting anything.',
   json: '',
   error: '',
   copyStatus: '',
@@ -496,7 +519,24 @@ let payloadPreviewDialog = null;
 let payloadPreviewOutput = null;
 let payloadPreviewStatus = null;
 let payloadPreviewTriggerButton = null;
+let payloadPreviewTitleNode = null;
+let payloadPreviewCopyNode = null;
+let savedOrdersBackdrop = null;
+let savedOrdersDialog = null;
+let savedOrdersList = null;
+let savedOrdersStatus = null;
 const payloadPreviewContextStore = forgeOrderPayloadPreview.createPayloadPreviewContextStore();
+const orderStore = forgeOrderStore.createOrderStore();
+const submissionContextManager = forgeOrderSubmission.createSubmissionContextManager({
+  storage: localStorage
+});
+const completionReceiptManager = forgeOrderSubmission.createCompletionReceiptManager({
+  storage: localStorage
+});
+const orderSubmissionService = forgeOrderSubmission.createOrderSubmissionService({
+  orderStore,
+  contextManager: submissionContextManager
+});
 
 function getProductConfig(productDefinitionId = draft.productDefinitionId) {
   const resolvedProductDefinitionId = resolveConfiguredProductDefinitionId(productDefinitionId);
@@ -645,6 +685,11 @@ function resetDraftForProduct(productDefinitionId) {
 
 document.querySelector('[data-action="start"]').addEventListener('click', () => {
   showScreen('categories');
+});
+
+document.querySelector('[data-action="start-next-order"]')?.addEventListener('click', () => {
+  completionReceiptManager.clearReceipt();
+  resetActiveOrderSession();
 });
 
 document.querySelectorAll('[data-category]').forEach((button) => {
@@ -909,7 +954,45 @@ function loadAppState() {
     if (typeof parsed.activeOrderSessionId === 'string') {
       appState.activeOrderSessionId = parsed.activeOrderSessionId;
     }
+    if (typeof parsed.lastSubmittedOrderUuid === 'string') {
+      appState.lastSubmittedOrderUuid = parsed.lastSubmittedOrderUuid;
+    }
   } catch {}
+}
+
+function hasRestorableFinalReviewState() {
+  return hasOrderItems() && customerDraft.orderSessionId === appState.activeOrderSessionId;
+}
+
+function normalizeRestoredScreenState() {
+  const completionReceipt = completionReceiptManager.getReceipt();
+  const normalizedScreen = forgeOrderSubmission.resolveRestoredScreen({
+    currentScreen: appState.currentScreen,
+    hasUsableActiveOrder: hasRestorableFinalReviewState(),
+    hasCompletedReceipt: Boolean(completionReceipt)
+  });
+  let stateChanged = false;
+
+  if (normalizedScreen !== appState.currentScreen) {
+    appState.currentScreen = normalizedScreen;
+    stateChanged = true;
+  }
+
+  if (completionReceipt && appState.lastSubmittedOrderUuid !== completionReceipt.forgeOrderUuid) {
+    appState.lastSubmittedOrderUuid = completionReceipt.forgeOrderUuid;
+    stateChanged = true;
+  }
+
+  if (!completionReceipt && !hasRestorableFinalReviewState() && appState.lastSubmittedOrderUuid) {
+    appState.lastSubmittedOrderUuid = '';
+    stateChanged = true;
+  }
+
+  if (stateChanged) {
+    saveAppState();
+  }
+
+  return completionReceipt;
 }
 
 function loadDraft() {
@@ -1122,6 +1205,7 @@ function closeStaffPanel() {
 }
 
 function resetActiveOrderSession({ clearCart = true, goToWelcome = true } = {}) {
+  const previousOrderSessionId = appState.activeOrderSessionId;
   if (clearCart) {
     saveOrderItems([]);
   }
@@ -1145,11 +1229,15 @@ function resetActiveOrderSession({ clearCart = true, goToWelcome = true } = {}) 
   orderUiState.removeConfirmItemId = '';
   closeAddConfirmation(false);
   closePayloadPreview(false);
+  closeSavedOrdersInspector();
+  completionReceiptManager.clearReceipt();
 
   appState.editingItemId = '';
   appState.reviewedItemId = '';
+  appState.lastSubmittedOrderUuid = '';
   appState.activeOrderSessionId = createSessionId();
   saveAppState();
+  submissionContextManager.clearContext(previousOrderSessionId);
 
   resetCustomerDraftState();
   clearDisplayedCustomerFields();
@@ -1162,6 +1250,7 @@ function resetActiveOrderSession({ clearCart = true, goToWelcome = true } = {}) 
   renderCurrentOrder();
   renderCustomerOrderContext();
   renderCurrentOrderUtilityButtons();
+  renderDebugOrderTools();
   closeStaffPanel();
 
   if (goToWelcome) {
@@ -1547,6 +1636,25 @@ function formatReadableDate(value) {
     month: 'long',
     day: 'numeric',
     year: 'numeric'
+  }).format(parsed);
+}
+
+function formatReadableDateTime(value) {
+  if (!value) {
+    return '';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
   }).format(parsed);
 }
 
@@ -2852,6 +2960,16 @@ function renderFinalReviewStatus() {
   finalReviewStatus.className = `form-status final-review-status${finalReviewState.tone === 'success' ? ' is-success' : ''}`;
 }
 
+function renderPlaceOrderButton() {
+  const button = document.querySelector('[data-action="place-order-development"]');
+  if (!button) {
+    return;
+  }
+
+  button.disabled = finalReviewState.savingOrder;
+  button.textContent = finalReviewState.savingOrder ? 'Saving Order...' : 'Place My Order';
+}
+
 function ensurePayloadPreviewUi() {
   if (!forgeOrderPayloadPreview.shouldCreatePayloadPreviewUi(payloadPreviewState.enabled) || payloadPreviewDialog) {
     return;
@@ -2895,6 +3013,63 @@ function ensurePayloadPreviewUi() {
   payloadPreviewDialog = document.querySelector('[data-payload-preview-dialog]');
   payloadPreviewOutput = document.querySelector('[data-payload-preview-output]');
   payloadPreviewStatus = document.querySelector('[data-payload-preview-status]');
+  payloadPreviewTitleNode = document.querySelector('#payload-preview-title');
+  payloadPreviewCopyNode = document.querySelector('.payload-preview-copy');
+}
+
+function ensureSavedOrdersUi() {
+  if (!forgeOrderPayloadPreview.shouldCreatePayloadPreviewUi(payloadPreviewState.enabled) || savedOrdersDialog) {
+    return;
+  }
+
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="saved-orders-backdrop" data-saved-orders-backdrop hidden>
+      <div class="saved-orders-dialog" data-saved-orders-dialog role="dialog" aria-modal="true" aria-labelledby="saved-orders-title" tabindex="-1" hidden>
+        <div class="saved-orders-header">
+          <div>
+            <p class="eyebrow payload-preview-eyebrow">Development Only</p>
+            <h2 id="saved-orders-title">Saved Local Orders</h2>
+            <p class="payload-preview-copy">Inspect durable local order records saved on this device.</p>
+          </div>
+          <button class="text-button" type="button" data-action="close-saved-orders">Close</button>
+        </div>
+        <p class="form-status saved-orders-status" data-saved-orders-status aria-live="polite"></p>
+        <div class="saved-orders-list" data-saved-orders-list></div>
+        <div class="payload-preview-actions">
+          <button class="primary-button" type="button" data-action="close-saved-orders">Close</button>
+        </div>
+      </div>
+    </div>
+  `);
+
+  savedOrdersBackdrop = document.querySelector('[data-saved-orders-backdrop]');
+  savedOrdersDialog = document.querySelector('[data-saved-orders-dialog]');
+  savedOrdersList = document.querySelector('[data-saved-orders-list]');
+  savedOrdersStatus = document.querySelector('[data-saved-orders-status]');
+}
+
+function renderDebugOrderTools() {
+  const enabled = forgeOrderPayloadPreview.shouldCreatePayloadPreviewUi(payloadPreviewState.enabled);
+  debugOrderToolContainers.forEach((container) => {
+    container.hidden = !enabled;
+    if (!enabled) {
+      container.innerHTML = '';
+      return;
+    }
+
+    const context = container.dataset.debugOrderTools || '';
+    if (context === 'thank-you' && appState.lastSubmittedOrderUuid) {
+      container.innerHTML = `
+        <button class="secondary-button" type="button" data-action="inspect-last-saved-order">Inspect Saved Order</button>
+        <button class="secondary-button" type="button" data-action="view-saved-local-orders">View Saved Local Orders</button>
+      `;
+      return;
+    }
+
+    container.innerHTML = `
+      <button class="secondary-button" type="button" data-action="view-saved-local-orders">View Saved Local Orders</button>
+    `;
+  });
 }
 
 function renderPayloadPreview() {
@@ -2904,9 +3079,69 @@ function renderPayloadPreview() {
 
   payloadPreviewBackdrop.hidden = !payloadPreviewState.open;
   payloadPreviewDialog.hidden = !payloadPreviewState.open;
+  if (payloadPreviewTitleNode) {
+    payloadPreviewTitleNode.textContent = payloadPreviewState.title;
+  }
+  if (payloadPreviewCopyNode) {
+    payloadPreviewCopyNode.textContent = payloadPreviewState.copy;
+  }
   payloadPreviewOutput.textContent = payloadPreviewState.json;
   payloadPreviewStatus.textContent = payloadPreviewState.copyStatus || payloadPreviewState.error;
   payloadPreviewStatus.className = `form-status payload-preview-status${payloadPreviewState.copyTone === 'success' ? ' is-success' : ''}`;
+}
+
+function renderSavedOrdersDialog() {
+  if (!savedOrdersDialog || !savedOrdersBackdrop || !savedOrdersList || !savedOrdersStatus) {
+    return;
+  }
+
+  savedOrdersBackdrop.hidden = !savedOrderInspectorState.open;
+  savedOrdersDialog.hidden = !savedOrderInspectorState.open;
+  savedOrdersStatus.textContent = savedOrderInspectorState.loading
+    ? 'Loading saved local orders...'
+    : savedOrderInspectorState.error;
+
+  if (savedOrderInspectorState.loading) {
+    savedOrdersList.innerHTML = '';
+    return;
+  }
+
+  if (savedOrderInspectorState.records.length === 0) {
+    savedOrdersList.innerHTML = `
+      <div class="saved-order-card saved-order-card--empty">
+        <h3>No saved orders yet</h3>
+        <p>Submit an order in this browser to inspect it here.</p>
+      </div>
+    `;
+    return;
+  }
+
+  savedOrdersList.innerHTML = savedOrderInspectorState.records.map((record) => {
+    const payload = record.payload || {};
+    const customerName = payload.customer?.full_name || 'Unknown customer';
+    const itemCount = Array.isArray(payload.items)
+      ? payload.items.reduce((sum, item) => sum + (Number.isInteger(item.quantity) ? item.quantity : 1), 0)
+      : 0;
+    const estimatedTotalCents = payload.pricing?.estimated_total_cents;
+    const estimatedTotal = Number.isInteger(estimatedTotalCents) ? formatPrice(estimatedTotalCents / 100) : 'Quote Required';
+    return `
+      <article class="saved-order-card">
+        <div class="saved-order-card-header">
+          <div>
+            <h3>${escapeHtml(record.forge_order_uuid)}</h3>
+            <p>${escapeHtml(formatReadableDateTime(record.submitted_at))}</p>
+          </div>
+          <span class="saved-order-badge">${escapeHtml(record.sync_status || 'pending')}</span>
+        </div>
+        <div class="saved-order-meta">
+          <div><span>Customer</span><strong>${escapeHtml(customerName)}</strong></div>
+          <div><span>Items</span><strong>${itemCount}</strong></div>
+          <div><span>Estimated Total</span><strong>${escapeHtml(estimatedTotal)}</strong></div>
+        </div>
+        <button class="secondary-button" type="button" data-action="inspect-saved-order-record" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Inspect Saved JSON</button>
+      </article>
+    `;
+  }).join('');
 }
 
 function getPayloadPreviewFocusableElements() {
@@ -2918,11 +3153,26 @@ function getPayloadPreviewFocusableElements() {
     .filter((element) => !element.hasAttribute('disabled'));
 }
 
-function buildCurrentOrderPayloadPreview() {
-  return forgeOrderPayloadPreview.buildCurrentOrderPayloadPreview({
+function getSavedOrdersFocusableElements() {
+  if (!savedOrdersDialog) {
+    return [];
+  }
+
+  return [...savedOrdersDialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter((element) => !element.hasAttribute('disabled'));
+}
+
+function buildCurrentOrderStateSnapshot() {
+  return forgeOrderPayloadPreview.snapshotCurrentOrderState({
     items: getOrderItems(),
     customerDraft,
-    appState,
+    appState
+  });
+}
+
+function buildCurrentOrderPayloadPreview() {
+  return forgeOrderPayloadPreview.buildCurrentOrderPayloadPreview({
+    ...buildCurrentOrderStateSnapshot(),
     previewContextStore: payloadPreviewContextStore,
     preferredForgeOrderUuid: appState.activeOrderSessionId || '',
     contextOverrides: {
@@ -2935,41 +3185,54 @@ function buildCurrentOrderPayloadPreview() {
   });
 }
 
-function openPayloadPreview() {
+function openJsonViewer({ title, copy, json, error = '', payload = null }) {
   ensurePayloadPreviewUi();
   if (!payloadPreviewDialog) {
     return;
   }
 
+  payloadPreviewState.title = title;
+  payloadPreviewState.copy = copy;
   payloadPreviewState.copyStatus = '';
   payloadPreviewState.copyTone = '';
-  payloadPreviewState.error = '';
+  payloadPreviewState.error = error;
+  payloadPreviewState.payload = payload;
+  payloadPreviewState.json = json;
+  payloadPreviewState.open = true;
   lastPayloadPreviewFocusTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-
-  try {
-    const preview = buildCurrentOrderPayloadPreview();
-    payloadPreviewState.open = true;
-    payloadPreviewState.payload = preview.payload;
-    payloadPreviewState.json = preview.json;
-    console.log('Forge payload preview', preview.payload);
-  } catch (error) {
-    payloadPreviewState.open = true;
-    payloadPreviewState.payload = null;
-    payloadPreviewState.error = 'Payload preview failed. See the browser console for details.';
-    payloadPreviewState.json = error && error.stack ? error.stack : String(error);
-    console.error('Forge payload preview failed', error);
-  }
-
   renderPayloadPreview();
   window.setTimeout(() => {
     (getPayloadPreviewFocusableElements()[0] || payloadPreviewDialog)?.focus();
   }, 0);
 }
 
+function openPayloadPreview() {
+  try {
+    const preview = buildCurrentOrderPayloadPreview();
+    console.log('Forge payload preview', preview.payload);
+    openJsonViewer({
+      title: 'Normalized Order Payload',
+      copy: 'Inspect the current Forge order state as formatted JSON without submitting anything.',
+      json: preview.json,
+      payload: preview.payload
+    });
+  } catch (error) {
+    console.error('Forge payload preview failed', error);
+    openJsonViewer({
+      title: 'Normalized Order Payload',
+      copy: 'Inspect the current Forge order state as formatted JSON without submitting anything.',
+      json: error && error.stack ? error.stack : String(error),
+      error: 'Payload preview failed. See the browser console for details.'
+    });
+  }
+}
+
 function closePayloadPreview(restoreFocus = true) {
   payloadPreviewState.open = false;
   payloadPreviewState.copyStatus = '';
   payloadPreviewState.copyTone = '';
+  payloadPreviewState.title = 'Normalized Order Payload';
+  payloadPreviewState.copy = 'Inspect the current Forge order state as formatted JSON without submitting anything.';
   renderPayloadPreview();
   if (restoreFocus && lastPayloadPreviewFocusTarget) {
     lastPayloadPreviewFocusTarget.focus();
@@ -2988,6 +3251,225 @@ async function copyPayloadPreviewJson() {
   payloadPreviewState.copyStatus = result.message;
   payloadPreviewState.copyTone = result.copied ? 'success' : '';
   renderPayloadPreview();
+}
+
+async function openSavedOrdersInspector() {
+  ensureSavedOrdersUi();
+  if (!savedOrdersDialog) {
+    return;
+  }
+
+  savedOrderInspectorState.open = true;
+  savedOrderInspectorState.loading = true;
+  savedOrderInspectorState.error = '';
+  savedOrderInspectorState.records = [];
+  renderSavedOrdersDialog();
+
+  try {
+    const [records, pendingCount] = await Promise.all([
+      orderStore.listOrders(),
+      orderStore.countOrdersBySyncStatus('pending')
+    ]);
+    savedOrderInspectorState.records = records;
+    savedOrderInspectorState.error = pendingCount > 0 ? `${pendingCount} saved order${pendingCount === 1 ? '' : 's'} pending future sync.` : '';
+  } catch (error) {
+    console.error('Forge saved-order inspector failed', error);
+    savedOrderInspectorState.error = 'Saved local orders could not be loaded on this device.';
+  } finally {
+    savedOrderInspectorState.loading = false;
+    renderSavedOrdersDialog();
+    window.setTimeout(() => {
+      (getSavedOrdersFocusableElements()[0] || savedOrdersDialog)?.focus();
+    }, 0);
+  }
+}
+
+function closeSavedOrdersInspector() {
+  savedOrderInspectorState.open = false;
+  savedOrderInspectorState.loading = false;
+  renderSavedOrdersDialog();
+}
+
+async function inspectSavedOrderRecord(forgeOrderUuid) {
+  try {
+    const record = await orderStore.getOrder(forgeOrderUuid);
+    if (!record) {
+      return;
+    }
+    openJsonViewer({
+      title: 'Saved Local Order Record',
+      copy: 'Inspect the durable local order record exactly as it was saved on this device.',
+      json: JSON.stringify(record, null, 2)
+    });
+  } catch (error) {
+    console.error('Forge saved-order record inspection failed', error);
+    openJsonViewer({
+      title: 'Saved Local Order Record',
+      copy: 'Inspect the durable local order record exactly as it was saved on this device.',
+      json: error && error.stack ? error.stack : String(error),
+      error: 'Saved order inspection failed. See the browser console for details.'
+    });
+  }
+}
+
+async function renderThankYouScreen() {
+  if (!thankYouCopy || !thankYouReference) {
+    return;
+  }
+
+  const completionReceipt = completionReceiptManager.getReceipt();
+  if (completionReceipt && completionReceipt.forgeOrderUuid) {
+    appState.lastSubmittedOrderUuid = completionReceipt.forgeOrderUuid;
+  }
+
+  if (completionReceipt) {
+    const customerName = completionReceipt.customerName || 'Your order';
+    thankYouCopy.textContent = `${customerName} has been safely saved on this device for the Hilltop Shop team.`;
+    thankYouReference.hidden = false;
+    thankYouReference.innerHTML = `
+      <span class="summary-label">Order Reference</span>
+      <strong>${escapeHtml(completionReceipt.shortOrderReference)}</strong>
+    `;
+    renderDebugOrderTools();
+    return;
+  }
+
+  if (!appState.lastSubmittedOrderUuid) {
+    thankYouCopy.textContent = 'We safely saved your order on this device for the Hilltop Shop team.';
+    thankYouReference.hidden = true;
+    renderDebugOrderTools();
+    return;
+  }
+
+  try {
+    const record = await orderStore.getOrder(appState.lastSubmittedOrderUuid);
+    if (!record) {
+      thankYouCopy.textContent = 'Your order was saved earlier on this device.';
+      thankYouReference.hidden = true;
+      renderDebugOrderTools();
+      return;
+    }
+
+    const customerName = record.payload?.customer?.full_name || 'your order';
+    thankYouCopy.textContent = `${customerName} has been safely saved on this device for the Hilltop Shop team.`;
+    thankYouReference.hidden = false;
+    thankYouReference.innerHTML = `
+      <span class="summary-label">Order Reference</span>
+      <strong>${escapeHtml(record.forge_order_uuid.slice(0, 8).toUpperCase())}</strong>
+    `;
+  } catch (error) {
+    console.error('Forge thank-you screen failed to load the saved order', error);
+    thankYouCopy.textContent = 'Your order has been saved on this device.';
+    thankYouReference.hidden = true;
+  }
+
+  renderDebugOrderTools();
+}
+
+async function submitCurrentOrder() {
+  const validationResult = validateFinalReviewDraft();
+  if (!validationResult.isValid) {
+    finalReviewState.message = `${validationResult.issues[0]} Use Edit Items or Edit Customer Information to finish your order.`;
+    finalReviewState.tone = 'error';
+    renderFinalReviewStatus();
+    finalReviewStatus?.focus();
+    return;
+  }
+
+  if (finalReviewState.savingOrder) {
+    return;
+  }
+
+  finalReviewState.savingOrder = true;
+  finalReviewState.message = '';
+  finalReviewState.tone = '';
+  renderFinalReviewStatus();
+  renderPlaceOrderButton();
+
+  const orderStateSnapshot = buildCurrentOrderStateSnapshot();
+
+  try {
+    const result = await orderSubmissionService.submitOrder({
+      activeOrderSessionId: appState.activeOrderSessionId,
+      orderState: orderStateSnapshot,
+      deviceId: null,
+      event: null
+    });
+
+    if (!result.ok) {
+      console.error('Forge local order submission failed', result.error);
+      finalReviewState.savingOrder = false;
+      finalReviewState.message = 'We could not save your order. Please ask a Hilltop Shop team member for help.';
+      finalReviewState.tone = 'error';
+      renderFinalReviewStatus();
+      renderPlaceOrderButton();
+      finalReviewStatus?.focus();
+      return;
+    }
+
+    const completionReceipt = forgeOrderSubmission.buildCompletionReceipt({
+      record: result.record,
+      customerName: orderStateSnapshot.customerDraft?.fullName || ''
+    });
+    if (!completionReceipt) {
+      throw new Error('Forge local order submission did not produce a valid completion receipt.');
+    }
+
+    completionReceiptManager.saveReceipt(completionReceipt);
+    appState.lastSubmittedOrderUuid = result.record.forge_order_uuid;
+    appState.currentScreen = 'thank-you';
+    clearEditableOrderStateAfterSubmit();
+    await renderThankYouScreen();
+    showScreen('thank-you');
+  } catch (error) {
+    console.error('Forge local order submission failed', error);
+    finalReviewState.savingOrder = false;
+    finalReviewState.message = 'We could not save your order. Please ask a Hilltop Shop team member for help.';
+    finalReviewState.tone = 'error';
+    renderFinalReviewStatus();
+    renderPlaceOrderButton();
+    finalReviewStatus?.focus();
+  }
+}
+
+function clearEditableOrderStateAfterSubmit() {
+  const previousOrderSessionId = appState.activeOrderSessionId;
+  draft.productDefinitionId = 'tree_ornament';
+  draft.size = '';
+  draft.treeColor = '';
+  draft.bowColor = '';
+  draft.familyName = '';
+  draft.personalizationMode = '';
+  draft.edgeText = '';
+  draft.year = getDefaultYearValue('tree_ornament');
+  draft.entries = [];
+  localStorage.removeItem(storageKey);
+  localStorage.removeItem(customerDraftStorageKey);
+  localStorage.removeItem(orderItemsStorageKey);
+  saveOrderItems([]);
+  resetCustomerDraftState();
+  clearDisplayedCustomerFields();
+  clearTreeFormErrors();
+  clearCustomerFormErrors();
+  clearOrderUiNote();
+  clearDiscardPrompt();
+  reviewState.saving = false;
+  reviewState.error = '';
+  finalReviewState.savingOrder = false;
+  closeSavedOrdersInspector();
+  closePayloadPreview(false);
+  appState.editingItemId = '';
+  appState.reviewedItemId = '';
+  appState.activeOrderSessionId = createSessionId();
+  saveAppState();
+  submissionContextManager.clearContext(previousOrderSessionId);
+  hydrateFormFromDraft();
+  hydrateCustomerFormFromDraft();
+  renderEntries();
+  renderTreeReview();
+  renderCurrentOrder();
+  renderCustomerOrderContext();
+  renderCurrentOrderUtilityButtons();
 }
 
 function renderFinalReviewCustomer() {
@@ -3088,6 +3570,7 @@ function renderFinalReview() {
   renderFinalReviewCustomer();
   renderFinalReviewDelivery();
   renderFinalReviewStatus();
+  renderPlaceOrderButton();
 }
 
 function openFinalReview() {
@@ -3405,6 +3888,7 @@ if (treeForm) {
   ensureActiveOrderSession();
   loadDraft();
   loadCustomerDraft();
+  normalizeRestoredScreenState();
   renderEntries();
   renderTreeReview();
   renderCurrentOrder();
@@ -3415,6 +3899,9 @@ if (treeForm) {
   renderAddConfirmation();
   renderTreeSubmitButton();
   ensurePayloadPreviewUi();
+  ensureSavedOrdersUi();
+  renderDebugOrderTools();
+  renderPlaceOrderButton();
 
   if (appState.currentScreen === 'tree-customization') {
     showScreen('tree-customization');
@@ -3428,6 +3915,9 @@ if (treeForm) {
     showScreen('customer-information');
   } else if (appState.currentScreen === 'final-review') {
     showScreen('final-review');
+  } else if (appState.currentScreen === 'thank-you' && appState.lastSubmittedOrderUuid) {
+    renderThankYouScreen();
+    showScreen('thank-you');
   } else if (appState.currentScreen === 'current-order') {
     showScreen('current-order');
   }
@@ -3479,6 +3969,33 @@ if (treeForm) {
   });
 
   document.addEventListener('keydown', (event) => {
+    if (savedOrderInspectorState.open && event.key === 'Tab') {
+      const focusable = getSavedOrdersFocusableElements();
+      if (focusable.length === 0) {
+        event.preventDefault();
+        savedOrdersDialog?.focus();
+        return;
+      }
+
+      const currentIndex = focusable.indexOf(document.activeElement);
+      if (event.shiftKey) {
+        if (currentIndex <= 0) {
+          event.preventDefault();
+          focusable[focusable.length - 1].focus();
+        }
+      } else if (currentIndex === focusable.length - 1 || currentIndex === -1) {
+        event.preventDefault();
+        focusable[0].focus();
+      }
+      return;
+    }
+
+    if (savedOrderInspectorState.open && event.key === 'Escape') {
+      event.preventDefault();
+      closeSavedOrdersInspector();
+      return;
+    }
+
     if (payloadPreviewState.open && event.key === 'Tab') {
       const focusable = getPayloadPreviewFocusableElements();
       if (focusable.length === 0) {
@@ -3879,19 +4396,7 @@ if (treeForm) {
     }
 
     if (action === 'place-order-development') {
-      const result = validateFinalReviewDraft();
-      if (!result.isValid) {
-        finalReviewState.message = `${result.issues[0]} Use Edit Items or Edit Customer Information to finish your order.`;
-        finalReviewState.tone = 'error';
-        renderFinalReviewStatus();
-        finalReviewStatus?.focus();
-        return;
-      }
-
-      finalReviewState.message = 'Development mode: Your order information is complete. Order submission is not connected yet.';
-      finalReviewState.tone = 'success';
-      renderFinalReviewStatus();
-      finalReviewStatus?.focus();
+      submitCurrentOrder();
       return;
     }
 
@@ -3920,6 +4425,47 @@ if (treeForm) {
     if (event.target === payloadPreviewBackdrop) {
       closePayloadPreview();
     }
+  });
+
+  savedOrdersDialog?.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    const orderUuid = event.target.closest('[data-order-uuid]')?.dataset.orderUuid;
+    if (!action) {
+      return;
+    }
+
+    if (action === 'close-saved-orders') {
+      closeSavedOrdersInspector();
+      return;
+    }
+
+    if (action === 'inspect-saved-order-record' && orderUuid) {
+      inspectSavedOrderRecord(orderUuid);
+    }
+  });
+
+  savedOrdersBackdrop?.addEventListener('click', (event) => {
+    if (event.target === savedOrdersBackdrop) {
+      closeSavedOrdersInspector();
+    }
+  });
+
+  debugOrderToolContainers.forEach((container) => {
+    container.addEventListener('click', (event) => {
+      const action = event.target.closest('[data-action]')?.dataset.action;
+      if (!action) {
+        return;
+      }
+
+      if (action === 'view-saved-local-orders') {
+        openSavedOrdersInspector();
+        return;
+      }
+
+      if (action === 'inspect-last-saved-order' && appState.lastSubmittedOrderUuid) {
+        inspectSavedOrderRecord(appState.lastSubmittedOrderUuid);
+      }
+    });
   });
 
   discardPanels.forEach((panel) => {

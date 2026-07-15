@@ -43,6 +43,7 @@
             <h1>Let’s create something personal.</h1>
             <p class="lead">Build your custom ornament or sign through a simple guided order.</p>
             <button class="primary-button" type="button" data-action="start">Start Order</button>
+            <div class="debug-order-tools" data-debug-order-tools="welcome" hidden></div>
           </div>
         </div>
       </section>
@@ -494,6 +495,19 @@
           </aside>
         </div>
       </section>
+
+      <section class="screen" data-screen="thank-you">
+        <div class="hero">
+          <div class="hero-card thank-you-card">
+            <p class="eyebrow">Order Saved</p>
+            <h1>Your order has been saved.</h1>
+            <p class="lead" data-thank-you-copy>We safely saved your order on this device for the Hilltop Shop team.</p>
+            <div class="thank-you-reference" data-thank-you-reference hidden></div>
+            <button class="primary-button" type="button" data-action="start-next-order">Start New Order</button>
+            <div class="debug-order-tools" data-debug-order-tools="thank-you" hidden></div>
+          </div>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -517,6 +531,8 @@
   <script src="js/forge-product-catalog.js"></script>
   <script src="js/forge-order-payload-builder.js"></script>
   <script src="js/forge-order-payload-preview.js"></script>
+  <script src="js/forge-order-store.js"></script>
+  <script src="js/forge-order-submission.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
