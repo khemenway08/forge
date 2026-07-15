@@ -132,6 +132,25 @@ const ornamentProductConfigs = {
     bowColorFieldLabel: 'Bow and Stocking Color',
     updateNote: "Baby's First Christmas updated."
   },
+  mr_and_mrs_first_christmas: {
+    displayName: 'Mr. & Mrs. Ornament',
+    galleryProductKey: 'mr-and-mrs',
+    requiresSize: false,
+    sizeLimits: {},
+    preSizeLimit: 0,
+    requiresTreeColor: false,
+    requiresBowColor: false,
+    requiresEntries: false,
+    minimumEntryCount: 0,
+    unitPrice: 28,
+    familyFieldLabel: 'Last Name',
+    familyFieldPlaceholder: 'Enter last name',
+    familyFieldRequiredMessage: 'Please enter the last name.',
+    yearFieldRequiredMessage: 'Please enter the year.',
+    yearDefaultMode: 'current',
+    customizationCopy: 'Choose the last name and year before continuing.',
+    updateNote: 'Mr. & Mrs. Ornament updated.'
+  },
   reindeer: {
     displayName: 'Reindeer Ornament',
     galleryProductKey: 'reindeer',
@@ -173,6 +192,7 @@ const galleryProductDefinitionMap = {
   'present-stack': 'present_stack',
   grinch: 'grinch_tree',
   baby: 'babys_first_christmas',
+  'mr-and-mrs': 'mr_and_mrs_first_christmas',
   reindeer: 'reindeer',
   veteran: 'veteran_flag'
 };
@@ -319,6 +339,22 @@ const productReviewConfig = {
       year: 'Year'
     }
   },
+  mr_and_mrs_first_christmas: {
+    galleryImage: {
+      src: '/assets/products/mr-and-mrs-first-christmas.jpeg',
+      alt: 'Mr. & Mrs. Ornament',
+      width: 1536,
+      height: 2048
+    },
+    image: '/assets/products/mr-and-mrs-first-christmas.jpeg',
+    imageAlt: 'Mr. & Mrs. Ornament',
+    imageWidth: 1536,
+    imageHeight: 2048,
+    fieldLabels: {
+      familyName: 'Last Name',
+      year: 'Year'
+    }
+  },
   reindeer: {
     galleryImage: {
       src: '/assets/products/reindeer-initial-ornament.jpeg',
@@ -376,6 +412,25 @@ const draft = {
   year: '2026',
   entries: []
 };
+
+function getCurrentCalendarYear() {
+  return String(new Date().getFullYear());
+}
+
+function getDefaultYearValue(productDefinitionId = draft.productDefinitionId) {
+  const config = getProductConfig(productDefinitionId);
+  if (config.requiresYear === false) {
+    return '';
+  }
+  if (config.yearDefaultMode === 'current') {
+    return getCurrentCalendarYear();
+  }
+  return '2026';
+}
+
+function isDefaultYearValue(value, productDefinitionId = draft.productDefinitionId) {
+  return String(value || '') === getDefaultYearValue(productDefinitionId);
+}
 
 const customerDraft = {
   orderSessionId: '',
@@ -541,7 +596,7 @@ function resetDraftState(productDefinitionId = 'tree_ornament') {
   draft.familyName = '';
   draft.personalizationMode = '';
   draft.edgeText = '';
-  draft.year = '2026';
+  draft.year = getDefaultYearValue(draft.productDefinitionId);
   draft.entries = [];
   appState.editingItemId = '';
   appState.reviewedItemId = '';
@@ -798,7 +853,7 @@ function hydrateFormFromDraft() {
   treeFields.familyName.value = draft.familyName;
   treeFields.personalizationMode.value = draft.personalizationMode;
   treeFields.edgeText.value = draft.edgeText;
-  treeFields.year.value = draft.year || '2026';
+  treeFields.year.value = draft.year || getDefaultYearValue();
   renderOptionChoiceButtons();
   renderCustomizationScreenContent();
   renderTreeCustomizationImage();
@@ -852,12 +907,13 @@ function loadDraft() {
     draft.familyName = typeof parsed.familyName === 'string' ? parsed.familyName : '';
     draft.personalizationMode = allowedValues.personalizationMode.includes(parsed.personalizationMode) ? parsed.personalizationMode : '';
     draft.edgeText = typeof parsed.edgeText === 'string' ? parsed.edgeText : '';
-    draft.year = typeof parsed.year === 'string' && parsed.year ? parsed.year : '2026';
+    draft.year = typeof parsed.year === 'string' && parsed.year ? parsed.year : getDefaultYearValue(draft.productDefinitionId);
     draft.entries = Array.isArray(parsed.entries) ? parsed.entries.map(normalizeEntry).filter(Boolean) : [];
   } catch {
     draft.productDefinitionId = 'tree_ornament';
     draft.personalizationMode = '';
     draft.edgeText = '';
+    draft.year = getDefaultYearValue('tree_ornament');
     draft.entries = [];
   }
 
@@ -1056,7 +1112,7 @@ function resetActiveOrderSession({ clearCart = true, goToWelcome = true } = {}) 
   draft.familyName = '';
   draft.personalizationMode = '';
   draft.edgeText = '';
-  draft.year = '2026';
+  draft.year = getDefaultYearValue('tree_ornament');
   draft.entries = [];
   localStorage.removeItem(storageKey);
 
@@ -1406,6 +1462,22 @@ function getFamilyFieldLabel(productDefinitionId = getActiveProductDefinitionId(
     return reviewConfig.fieldLabels.familyName;
   }
   return 'Engraved Text';
+}
+
+function getFamilyFieldRequiredMessage(productDefinitionId = getActiveProductDefinitionId()) {
+  const config = getProductConfig(productDefinitionId);
+  if (config.familyFieldRequiredMessage) {
+    return config.familyFieldRequiredMessage;
+  }
+  return `Please enter ${getFamilyFieldLabel(productDefinitionId).toLowerCase()}.`;
+}
+
+function getYearFieldRequiredMessage(productDefinitionId = getActiveProductDefinitionId()) {
+  const config = getProductConfig(productDefinitionId);
+  if (config.yearFieldRequiredMessage) {
+    return config.yearFieldRequiredMessage;
+  }
+  return 'Enter a valid 4-digit year.';
 }
 
 function getAllowedBowColors(productDefinitionId = getActiveProductDefinitionId()) {
@@ -1962,12 +2034,18 @@ function getOrnamentOrderItemValidationIssues(item) {
     issues.push('Choose a personalization option.');
   }
   if (config.requiresFamilyName !== false && !sanitizeText(item.familyName || '')) {
-    issues.push(`Enter the ${getFamilyFieldLabel(item.productDefinitionId).toLowerCase()}.`);
+    issues.push(item.productDefinitionId === 'mr_and_mrs_first_christmas'
+      ? 'Enter the last name.'
+      : `Enter the ${getFamilyFieldLabel(item.productDefinitionId).toLowerCase()}.`);
   }
   if (config.requiresPersonalizationMode && item.personalizationMode === 'Change Edge Text' && !sanitizeText(item.edgeText || '')) {
     issues.push('Enter the edge text.');
   }
-  if (config.requiresYear !== false && !/^\d{4}$/.test(item.year || '')) {
+  if (config.requiresYear !== false && !sanitizeText(item.year || '')) {
+    issues.push(item.productDefinitionId === 'mr_and_mrs_first_christmas'
+      ? 'Enter the year.'
+      : 'Enter a valid year.');
+  } else if (config.requiresYear !== false && !/^\d{4}$/.test(item.year || '')) {
     issues.push('Enter a valid year.');
   }
   if (minimumEntryCount > 0 && entries.length < minimumEntryCount) {
@@ -2292,7 +2370,7 @@ function isTreeDraftBlank() {
     && (!config.requiresPersonalizationMode || !sanitizeText(draft.personalizationMode))
     && !sanitizeText(draft.edgeText)
     && draft.entries.length === 0
-    && (config.requiresYear === false || !draft.year || draft.year === '2026');
+    && (config.requiresYear === false || !draft.year || isDefaultYearValue(draft.year, draft.productDefinitionId));
 }
 
 function shouldShowCurrentOrderUtility(context) {
@@ -3104,7 +3182,7 @@ function validateTreeForm() {
   }
 
   if (config.requiresFamilyName !== false && !values.familyName) {
-    setFieldError('familyName', `Please enter ${getFamilyFieldLabel().toLowerCase()}.`);
+    setFieldError('familyName', getFamilyFieldRequiredMessage());
     isValid = false;
   }
 
@@ -3115,7 +3193,10 @@ function validateTreeForm() {
 
   const yearNumber = Number.parseInt(values.year, 10);
   const yearLooksValid = /^\d{4}$/.test(values.year) && yearNumber >= 1900 && yearNumber <= 2100;
-  if (config.requiresYear !== false && !yearLooksValid) {
+  if (config.requiresYear !== false && !values.year) {
+    setFieldError('year', getYearFieldRequiredMessage());
+    isValid = false;
+  } else if (config.requiresYear !== false && !yearLooksValid) {
     setFieldError('year', 'Enter a valid 4-digit year.');
     isValid = false;
   }
