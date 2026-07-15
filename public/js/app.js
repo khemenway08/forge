@@ -23,6 +23,7 @@ const entriesGroup = document.querySelector('[data-product-field-group="entries"
 const yearGroup = document.querySelector('[data-product-field-group="year"]');
 const familyNameLabel = document.querySelector('[data-field-label="familyName"]');
 const familyNameInput = document.querySelector('[name="familyName"]');
+const yearLabel = document.querySelector('label[for="ornament-year"]');
 const treeReviewCard = document.querySelector('[data-tree-review-card]');
 const currentOrderItems = document.querySelector('[data-current-order-items]');
 const currentOrderSummary = document.querySelector('[data-current-order-summary]');
@@ -112,6 +113,23 @@ const ornamentProductConfigs = {
     customizationCopy: 'Choose personalization details before continuing.',
     updateNote: 'Grinch Tree Ornament updated.'
   },
+  baby_ornament: {
+    displayName: 'Baby Ornament',
+    galleryProductKey: 'baby',
+    requiresSize: false,
+    sizeLimits: {},
+    preSizeLimit: 0,
+    requiresTreeColor: false,
+    requiresBowColor: false,
+    requiresEntries: false,
+    minimumEntryCount: 0,
+    unitPrice: 30,
+    customizationCopy: 'Choose the baby name and birth year before continuing.',
+    familyFieldLabel: 'Baby Name',
+    familyFieldPlaceholder: 'Enter baby name',
+    yearFieldLabel: 'Birth Year',
+    updateNote: 'Baby Ornament updated.'
+  },
   reindeer: {
     displayName: 'Reindeer Ornament',
     galleryProductKey: 'reindeer',
@@ -152,6 +170,7 @@ const galleryProductDefinitionMap = {
   antler: 'antler_ornament',
   'present-stack': 'present_stack',
   grinch: 'grinch_tree',
+  baby: 'baby_ornament',
   reindeer: 'reindeer',
   veteran: 'veteran_flag'
 };
@@ -279,6 +298,22 @@ const productReviewConfig = {
     fieldLabels: {
       familyName: 'Engraved Text',
       year: 'Year'
+    }
+  },
+  baby_ornament: {
+    galleryImage: {
+      src: '/assets/products/babys-first-christmas-pink.jpeg',
+      alt: 'Baby Ornament',
+      width: 1536,
+      height: 2048
+    },
+    image: '/assets/products/babys-first-christmas-pink.jpeg',
+    imageAlt: 'Baby Ornament',
+    imageWidth: 1536,
+    imageHeight: 2048,
+    fieldLabels: {
+      familyName: 'Baby Name',
+      year: 'Birth Year'
     }
   },
   reindeer: {
@@ -480,6 +515,9 @@ function renderCustomizationScreenContent() {
   }
   if (familyNameInput) {
     familyNameInput.placeholder = config.familyFieldPlaceholder || 'Enter family name or message';
+  }
+  if (yearLabel) {
+    yearLabel.textContent = config.yearFieldLabel || 'Year';
   }
   if (entriesGroup) {
     entriesGroup.hidden = !showEntries;
