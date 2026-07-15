@@ -22,6 +22,7 @@ const familyNameGroup = document.querySelector('[data-product-field-group="famil
 const entriesGroup = document.querySelector('[data-product-field-group="entries"]');
 const yearGroup = document.querySelector('[data-product-field-group="year"]');
 const familyNameLabel = document.querySelector('[data-field-label="familyName"]');
+const familyNameInput = document.querySelector('[name="familyName"]');
 const treeReviewCard = document.querySelector('[data-tree-review-card]');
 const currentOrderItems = document.querySelector('[data-current-order-items]');
 const currentOrderSummary = document.querySelector('[data-current-order-summary]');
@@ -111,6 +112,22 @@ const ornamentProductConfigs = {
     customizationCopy: 'Choose personalization details before continuing.',
     updateNote: 'Grinch Tree Ornament updated.'
   },
+  reindeer: {
+    displayName: 'Reindeer Ornament',
+    galleryProductKey: 'reindeer',
+    requiresSize: false,
+    sizeLimits: {},
+    preSizeLimit: 0,
+    requiresTreeColor: false,
+    requiresBowColor: false,
+    requiresEntries: false,
+    minimumEntryCount: 0,
+    unitPrice: 25,
+    customizationCopy: 'Choose the reindeer name and year before continuing.',
+    familyFieldLabel: 'Reindeer Name',
+    familyFieldPlaceholder: 'Enter reindeer name',
+    updateNote: 'Reindeer Ornament updated.'
+  },
   veteran_flag: {
     displayName: 'Veteran Flag Ornament',
     galleryProductKey: 'veteran',
@@ -135,6 +152,7 @@ const galleryProductDefinitionMap = {
   antler: 'antler_ornament',
   'present-stack': 'present_stack',
   grinch: 'grinch_tree',
+  reindeer: 'reindeer',
   veteran: 'veteran_flag'
 };
 
@@ -260,6 +278,22 @@ const productReviewConfig = {
     imageHeight: 2048,
     fieldLabels: {
       familyName: 'Engraved Text',
+      year: 'Year'
+    }
+  },
+  reindeer: {
+    galleryImage: {
+      src: '/assets/products/reindeer-initial-ornament.jpeg',
+      alt: 'Reindeer Ornament',
+      width: 2048,
+      height: 1536
+    },
+    image: '/assets/products/reindeer-initial-ornament.jpeg',
+    imageAlt: 'Reindeer Ornament',
+    imageWidth: 2048,
+    imageHeight: 1536,
+    fieldLabels: {
+      familyName: 'Reindeer Name',
       year: 'Year'
     }
   },
@@ -440,6 +474,12 @@ function renderCustomizationScreenContent() {
   }
   if (familyNameGroup) {
     familyNameGroup.hidden = !showFamilyName;
+  }
+  if (familyNameLabel) {
+    familyNameLabel.textContent = config.familyFieldLabel || 'Family Name or Message';
+  }
+  if (familyNameInput) {
+    familyNameInput.placeholder = config.familyFieldPlaceholder || 'Enter family name or message';
   }
   if (entriesGroup) {
     entriesGroup.hidden = !showEntries;
@@ -1312,6 +1352,18 @@ function formatFieldLabel(key, item) {
   return productLabels[key] || sharedLabels[key] || capitalizeWords(key);
 }
 
+function getFamilyFieldLabel(productDefinitionId = getActiveProductDefinitionId()) {
+  const config = getProductConfig(productDefinitionId);
+  if (config.familyFieldLabel) {
+    return config.familyFieldLabel;
+  }
+  const reviewConfig = productReviewConfig[productDefinitionId] || {};
+  if (reviewConfig.fieldLabels?.familyName) {
+    return reviewConfig.fieldLabels.familyName;
+  }
+  return 'Engraved Text';
+}
+
 function formatDisplayValue(value) {
   if (typeof value === 'number') {
     return Number.isInteger(value) ? String(value) : value.toFixed(2);
@@ -1459,8 +1511,36 @@ function getResolvedProductImage(productDefinitionId, configuration = {}, contex
   };
 }
 
-function getProductUnitPrice(productDefinitionId = getActiveProductDefinitionId(), size = draft.size) {
+function getReindeerUnitPrice(reindeerCount) {
+  return reindeerCount >= 2 ? 20 : 25;
+}
+
+function applyDynamicOrderPricing(items) {
+  const normalizedItems = Array.isArray(items)
+    ? items.map(normalizeOrderItemRecord).filter(Boolean)
+    : [];
+  const reindeerCount = normalizedItems.filter((item) => item.productDefinitionId === 'reindeer').length;
+  const reindeerUnitPrice = getReindeerUnitPrice(reindeerCount);
+
+  return normalizedItems.map((item) => (
+    item.productDefinitionId === 'reindeer'
+      ? { ...item, unitPrice: reindeerUnitPrice }
+      : item
+  ));
+}
+
+function getProductUnitPrice(productDefinitionId = getActiveProductDefinitionId(), size = draft.size, options = {}) {
   const config = getProductConfig(productDefinitionId);
+  if (productDefinitionId === 'reindeer') {
+    const orderItems = Array.isArray(options.orderItems) ? options.orderItems : getOrderItems();
+    const hasExistingEditingReindeer = Boolean(
+      options.editingItemId
+      && orderItems.some((item) => item.itemId === options.editingItemId && item.productDefinitionId === 'reindeer')
+    );
+    const reindeerCount = orderItems.filter((item) => item.productDefinitionId === 'reindeer').length
+      + (options.includeCurrentDraft && !hasExistingEditingReindeer ? 1 : 0);
+    return getReindeerUnitPrice(reindeerCount);
+  }
   if (config.requiresSize) {
     return config.priceBySize?.[size] ?? 0;
   }
@@ -1812,7 +1892,7 @@ function getOrnamentOrderItemValidationIssues(item) {
     issues.push('Choose a personalization option.');
   }
   if (config.requiresFamilyName !== false && !sanitizeText(item.familyName || '')) {
-    issues.push('Enter the engraved text.');
+    issues.push(`Enter the ${getFamilyFieldLabel(item.productDefinitionId).toLowerCase()}.`);
   }
   if (config.requiresPersonalizationMode && item.personalizationMode === 'Change Edge Text' && !sanitizeText(item.edgeText || '')) {
     issues.push('Enter the edge text.');
@@ -1958,11 +2038,16 @@ function getReviewEntriesMarkup(entries) {
 function createTreeReviewMarkup() {
   const productDefinitionId = getActiveProductDefinitionId();
   const config = getProductConfig(productDefinitionId);
+  const unitPrice = getProductUnitPrice(productDefinitionId, draft.size, {
+    orderItems: getOrderItems(),
+    includeCurrentDraft: true,
+    editingItemId: appState.editingItemId
+  });
   const item = {
     displayName: config.displayName,
     productDefinitionId,
     quantity: 1,
-    unitPrice: getProductUnitPrice(productDefinitionId, draft.size),
+    unitPrice,
     configurationSnapshot: {
       ...(config.requiresSize ? { size: draft.size } : {}),
       ...(config.requiresFamilyName === false ? {} : { familyName: draft.familyName }),
@@ -2013,7 +2098,11 @@ function normalizeTreeOrderItem() {
   }));
 
   const { peopleCount, petCount } = getEntryCounts(entries);
-  const unitPrice = getProductUnitPrice(productDefinitionId, draft.size);
+  const unitPrice = getProductUnitPrice(productDefinitionId, draft.size, {
+    orderItems: getOrderItems(),
+    includeCurrentDraft: true,
+    editingItemId: appState.editingItemId
+  });
   const configurationSnapshot = {
     ...(config.requiresSize ? { size: draft.size } : {}),
     ...(config.requiresFamilyName === false ? {} : { familyName: draft.familyName }),
@@ -2114,14 +2203,14 @@ function getOrderItems() {
     }
 
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.map(normalizeOrderItemRecord).filter(Boolean) : [];
+    return Array.isArray(parsed) ? applyDynamicOrderPricing(parsed) : [];
   } catch {
     return [];
   }
 }
 
 function saveOrderItems(items) {
-  localStorage.setItem(orderItemsStorageKey, JSON.stringify(items));
+  localStorage.setItem(orderItemsStorageKey, JSON.stringify(applyDynamicOrderPricing(items)));
 }
 
 function isTreeDraftBlank() {
@@ -2945,7 +3034,7 @@ function validateTreeForm() {
   }
 
   if (config.requiresFamilyName !== false && !values.familyName) {
-    setFieldError('familyName', 'Please enter engraved text.');
+    setFieldError('familyName', `Please enter ${getFamilyFieldLabel().toLowerCase()}.`);
     isValid = false;
   }
 
