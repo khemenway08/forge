@@ -7,9 +7,75 @@
     root.ForgeLocalOrdersQueue = api;
   }
 }(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  const FILTER_KEYS = ['product', 'size', 'treeColor', 'bowColor', 'year', 'fulfillment', 'openFlags', 'syncStatus'];
-  const ITEM_FILTER_KEYS = ['product', 'size', 'treeColor', 'bowColor', 'year'];
-  const ORDER_FILTER_KEYS = ['fulfillment', 'openFlags', 'syncStatus'];
+  const FILTER_KEYS = [
+    'product',
+    'ornamentType',
+    'size',
+    'treeColor',
+    'bowColor',
+    'year',
+    'productionStatus',
+    'fulfillment',
+    'event',
+    'openFlags',
+    'tray',
+    'syncStatus'
+  ];
+  const ITEM_FILTER_KEYS = ['product', 'ornamentType', 'size', 'treeColor', 'bowColor', 'year', 'productionStatus'];
+  const ORDER_FILTER_KEYS = ['fulfillment', 'event', 'tray', 'syncStatus', 'openFlags'];
+  const TERMINAL_ORDER_STATUSES = new Set(['ready_to_pack', 'packed', 'shipped', 'picked_up', 'cancelled']);
+  const ACTIVE_PRODUCTION_ORDER_STATUSES = new Set(['submitted', 'tray_assigned', 'in_production']);
+  const ISSUE_PRIORITY = ['waiting_for_tray', 'custom_icon_required', 'blocked_items', 'other_open_flags'];
+  const PRODUCT_DISPLAY_NAMES = {
+    tree_ornament: 'Tree Ornament',
+    antler_ornament: 'Antler Ornament',
+    present_stack: 'Present Stack Ornament',
+    grinch_tree: 'Grinch Tree Ornament',
+    veteran_flag: 'Veteran Flag Ornament',
+    babys_first_christmas: "Baby's First Christmas",
+    mr_and_mrs_christmas: 'Mr. & Mrs. Christmas',
+    little_reindeer_letter: 'Little Reindeer Letter Ornament',
+    custom_request: 'Custom Request',
+    classic_family_sign: 'Classic Family Sign',
+    family_cutting_board: 'Family Cutting Board',
+    live_edge_family_sign: 'Live Edge Family Sign'
+  };
+  const ORNAMENT_TYPE_LABELS = {
+    tree_ornament: 'Tree Ornament',
+    antler_ornament: 'Antler Ornament',
+    present_stack: 'Present Stack Ornament',
+    grinch_tree: 'Grinch Tree Ornament',
+    veteran_flag: 'Veteran Flag Ornament',
+    babys_first_christmas: "Baby's First Christmas",
+    mr_and_mrs_christmas: 'Mr. & Mrs. Christmas',
+    little_reindeer_letter: 'Little Reindeer Letter Ornament'
+  };
+  const ISSUE_LABELS = {
+    waiting_for_tray: 'Waiting for Tray',
+    custom_icon_required: 'Custom Icon Required',
+    blocked_items: 'Blocked Items',
+    other_open_flags: 'Other Open Flags'
+  };
+  const ISSUE_DESCRIPTIONS = {
+    waiting_for_tray: 'These pieces still need a tray assignment before they can safely enter production.',
+    custom_icon_required: 'These pieces have custom-icon requests that need special attention before normal batching.',
+    blocked_items: 'These pieces are blocked and cannot safely enter normal production yet.',
+    other_open_flags: 'These pieces have unresolved production flags that must be reviewed before batching.'
+  };
+  const APPLICABLE_DIMENSIONS = {
+    tree_ornament: new Set(['size', 'treeColor', 'bowColor', 'year']),
+    antler_ornament: new Set(['size', 'year']),
+    present_stack: new Set(['bowColor', 'year']),
+    grinch_tree: new Set(['year']),
+    veteran_flag: new Set([]),
+    little_reindeer_letter: new Set([]),
+    babys_first_christmas: new Set(['bowColor', 'year']),
+    mr_and_mrs_christmas: new Set(['year']),
+    classic_family_sign: new Set(['year']),
+    family_cutting_board: new Set(['year']),
+    live_edge_family_sign: new Set(['year']),
+    custom_request: new Set([])
+  };
 
   function isLocalOrdersQueueEnabled(searchInput) {
     try {
@@ -26,12 +92,16 @@
   function createEmptyOrderFilters() {
     return {
       product: 'all',
+      ornamentType: 'all',
       size: 'all',
       treeColor: 'all',
       bowColor: 'all',
       year: 'all',
+      productionStatus: 'all',
       fulfillment: 'all',
+      event: 'all',
       openFlags: 'all',
+      tray: 'all',
       syncStatus: 'all'
     };
   }
@@ -47,23 +117,35 @@
   }
 
   function createOrderSearchDocument(record) {
-    const searchParts = [];
     const payload = getPayload(record);
     const customer = payload.customer || {};
+    const parts = [
+      record?.forge_order_uuid,
+      payload.forge_order_uuid,
+      getShortOrderReference(record),
+      customer.full_name,
+      customer.email,
+      customer.phone,
+      payload.event_id,
+      payload.event?.event_id,
+      record?.event_id,
+      normalizeTraySearchValue(record?.current_tray_number)
+    ];
 
-    searchParts.push(record?.forge_order_uuid);
-    searchParts.push(payload.forge_order_uuid);
-    searchParts.push(getShortOrderReference(record));
-    searchParts.push(customer.full_name);
-    searchParts.push(customer.email);
-    searchParts.push(customer.phone);
-
-    getRecordItems(record).forEach((item) => {
-      searchParts.push(item.product_display_name);
-      searchParts.push(item.structured_attributes?.family_name);
+    getNormalizedProductionItems(record).forEach((item) => {
+      parts.push(item.productDisplayName);
+      parts.push(item.productDefinitionId);
+      parts.push(item.ornamentTypeLabel);
+      parts.push(item.ornamentType);
+      parts.push(item.sizeLabel);
+      parts.push(item.treeColorLabel);
+      parts.push(item.bowColorLabel);
+      parts.push(item.yearLabel);
+      parts.push(item.productionStatusLabel);
+      parts.push(item.conciseIdentifier);
     });
 
-    return normalizeSearchValue(searchParts.join(' '));
+    return normalizeSearchValue(parts.join(' '));
   }
 
   function getAvailableOrderFilters(records, options = {}) {
@@ -73,12 +155,16 @@
 
     return {
       product: buildOptionList(sortedRecords, normalizedFilters, searchTerm, 'product'),
+      ornamentType: buildOptionList(sortedRecords, normalizedFilters, searchTerm, 'ornamentType'),
       size: buildOptionList(sortedRecords, normalizedFilters, searchTerm, 'size'),
       treeColor: buildOptionList(sortedRecords, normalizedFilters, searchTerm, 'treeColor'),
       bowColor: buildOptionList(sortedRecords, normalizedFilters, searchTerm, 'bowColor'),
       year: buildOptionList(sortedRecords, normalizedFilters, searchTerm, 'year'),
+      productionStatus: buildOptionList(sortedRecords, normalizedFilters, searchTerm, 'productionStatus'),
       fulfillment: buildOptionList(sortedRecords, normalizedFilters, searchTerm, 'fulfillment'),
+      event: buildOptionList(sortedRecords, normalizedFilters, searchTerm, 'event'),
       openFlags: buildOptionList(sortedRecords, normalizedFilters, searchTerm, 'openFlags'),
+      tray: buildOptionList(sortedRecords, normalizedFilters, searchTerm, 'tray'),
       syncStatus: buildOptionList(sortedRecords, normalizedFilters, searchTerm, 'syncStatus')
     };
   }
@@ -92,21 +178,20 @@
 
   function summarizeLocalOrders(records, filters = {}) {
     const normalizedFilters = normalizeFilters(filters);
-    const filteredRecords = sortLocalOrdersNewestFirst(records);
+    const filteredRecords = sortLocalOrdersNewestFirst(records).filter((record) => recordMatches(record, normalizedFilters, ''));
     let totalItems = 0;
     let ordersWithOpenFlags = 0;
     let pendingFutureSync = 0;
 
     filteredRecords.forEach((record) => {
-      const matchingItems = getMatchingOrderItems(record, normalizedFilters);
-      const matchingItemCount = matchingItems.reduce((sum, item) => sum + normalizeQuantity(item.quantity), 0);
-      totalItems += matchingItemCount;
+      const matchingItems = getMatchingProductionItems(record, normalizedFilters);
+      totalItems += matchingItems.reduce((sum, match) => sum + match.attributes.requiredQuantity, 0);
 
       if (recordHasPendingSync(record)) {
         pendingFutureSync += 1;
       }
 
-      if (recordHasMatchingOpenFlags(record, matchingItems, normalizedFilters)) {
+      if (recordHasMatchingOpenFlags(record, matchingItems.map((match) => match.attributes), normalizedFilters)) {
         ordersWithOpenFlags += 1;
       }
     });
@@ -121,50 +206,269 @@
 
   function buildProductionBatchGroups(records, filters = {}) {
     const normalizedFilters = normalizeFilters(filters);
-    const groups = new Map();
-    let customIconRequiredCount = 0;
+    const readyGroups = new Map();
+    const issueGroups = new Map();
 
     sortLocalOrdersNewestFirst(records).forEach((record) => {
-      getMatchingOrderItems(record, normalizedFilters).forEach((item) => {
-        const quantity = normalizeQuantity(item.quantity);
-        const attributes = item.structured_attributes || {};
-        const productDefinitionId = asTrimmedString(attributes.product_definition_id || item.product_definition_id || item.productDefinitionId);
-        const productDisplayName = asTrimmedString(item.product_display_name || item.productDisplayName || productDefinitionId || 'Custom Item');
-        const size = asNullableTrimmedString(attributes.size);
-        const treeColor = asNullableTrimmedString(attributes.tree_color);
-        const bowColor = asNullableTrimmedString(attributes.bow_color);
-        const key = [productDefinitionId, size || '', treeColor || '', bowColor || ''].join('::');
+      if (!recordMatches(record, normalizedFilters, '')) {
+        return;
+      }
 
-        if (!groups.has(key)) {
-          groups.set(key, {
-            key,
-            productDefinitionId,
-            productDisplayName,
-            size,
-            treeColor,
-            bowColor,
-            quantity: 0,
-            label: buildBatchGroupLabel({
-              productDisplayName,
-              size,
-              treeColor,
-              bowColor
-            })
-          });
+      getMatchingProductionItems(record, normalizedFilters).forEach((match) => {
+        const classification = classifyProductionItem(record, match.attributes);
+        if (classification.kind === 'excluded') {
+          return;
         }
 
-        groups.get(key).quantity += quantity;
-
-        if (itemHasCustomIconFlag(item)) {
-          customIconRequiredCount += quantity;
-        }
+        const groupStore = classification.kind === 'ready' ? readyGroups : issueGroups;
+        const group = ensureBatchGroup(groupStore, classification, match.attributes);
+        group.requiredQuantity += match.attributes.requiredQuantity;
+        group.completedQuantity += match.attributes.completedQuantity;
+        group.remainingQuantity += match.attributes.remainingQuantity;
+        group.matchingLineCount += 1;
+        group.orderIds.add(match.attributes.orderUuid);
       });
     });
 
     return {
-      groups: [...groups.values()].sort(compareBatchGroups),
-      customIconRequiredCount
+      readyGroups: finalizeBatchGroups([...readyGroups.values()], compareReadyBatchGroups),
+      issueGroups: finalizeBatchGroups([...issueGroups.values()], compareIssueBatchGroups)
     };
+  }
+
+  function buildProductionBatchRows(group, records, filters = {}) {
+    const normalizedFilters = normalizeFilters(filters);
+    const targetGroup = group && typeof group === 'object' ? group : null;
+    if (!targetGroup) {
+      return [];
+    }
+
+    const rows = [];
+    sortLocalOrdersNewestFirst(records).forEach((record) => {
+      if (!recordMatches(record, normalizedFilters, '')) {
+        return;
+      }
+
+      getMatchingProductionItems(record, normalizedFilters).forEach((match) => {
+        const classification = classifyProductionItem(record, match.attributes);
+        if (!classificationMatchesGroup(classification, targetGroup)) {
+          return;
+        }
+
+        rows.push({
+          groupKey: targetGroup.key,
+          stableItemKey: `${match.attributes.orderUuid}::${match.attributes.lineId}`,
+          orderUuid: match.attributes.orderUuid,
+          lineId: match.attributes.lineId,
+          lineOrder: match.attributes.lineOrder,
+          trayNumber: match.attributes.currentTrayNumber,
+          trayLabel: match.attributes.trayLabel,
+          orderReference: match.attributes.orderReference,
+          customerName: match.attributes.customerName,
+          productDisplayName: match.attributes.productDisplayName,
+          conciseIdentifier: match.attributes.conciseIdentifier,
+          requiredQuantity: match.attributes.requiredQuantity,
+          completedQuantity: match.attributes.completedQuantity,
+          remainingQuantity: match.attributes.remainingQuantity,
+          productionStatus: match.attributes.productionStatus,
+          productionStatusLabel: match.attributes.productionStatusLabel,
+          fulfillment: match.attributes.fulfillment,
+          fulfillmentLabel: match.attributes.fulfillmentLabel,
+          openFlagMessage: getPrimaryOpenFlagMessage(record, match.attributes),
+          currentTrayNumber: match.attributes.currentTrayNumber
+        });
+      });
+    });
+
+    return sortProductionBatchRows(rows);
+  }
+
+  function classifyProductionItem(record, normalizedItem) {
+    const item = normalizedItem && typeof normalizedItem === 'object'
+      ? normalizedItem
+      : normalizeProductionItemAttributes(record, normalizedItem, 0);
+    const orderStatus = normalizeLifecycleStatus(record?.production_status);
+
+    if (
+      !item
+      || item.productionStatus === 'cancelled'
+      || item.remainingQuantity <= 0
+      || TERMINAL_ORDER_STATUSES.has(orderStatus)
+      || !ACTIVE_PRODUCTION_ORDER_STATUSES.has(orderStatus)
+    ) {
+      return { kind: 'excluded', key: '', issueType: '' };
+    }
+
+    const orderFlags = getOrderOpenFlags(record);
+    const itemFlags = item.openFlags;
+    const allFlags = [...orderFlags, ...itemFlags];
+
+    if (!item.currentTrayNumber) {
+      return { kind: 'issue', issueType: 'waiting_for_tray', key: 'issue::waiting_for_tray', label: ISSUE_LABELS.waiting_for_tray };
+    }
+    if (hasCustomIconFlagSet(allFlags)) {
+      return { kind: 'issue', issueType: 'custom_icon_required', key: 'issue::custom_icon_required', label: ISSUE_LABELS.custom_icon_required };
+    }
+    if (item.productionStatus === 'blocked') {
+      return { kind: 'issue', issueType: 'blocked_items', key: 'issue::blocked_items', label: ISSUE_LABELS.blocked_items };
+    }
+    if (recordHasAnyOpenFlags(record) || item.hasOpenFlags) {
+      return { kind: 'issue', issueType: 'other_open_flags', key: 'issue::other_open_flags', label: ISSUE_LABELS.other_open_flags };
+    }
+    if (!['pending', 'in_production'].includes(item.productionStatus)) {
+      return { kind: 'excluded', key: '', issueType: '' };
+    }
+
+    const keyParts = [
+      item.productDefinitionId,
+      item.ornamentType || '',
+      item.size || '',
+      item.treeColor || '',
+      item.bowColor || '',
+      item.year || ''
+    ];
+
+    return {
+      kind: 'ready',
+      key: `ready::${keyParts.join('::')}`,
+      issueType: '',
+      label: buildBatchGroupLabel(item)
+    };
+  }
+
+  function derivePhysicalPieceCounts(item) {
+    const quantity = normalizeQuantity(item && item.quantity);
+    const explicitStatus = normalizeItemProductionStatus(item);
+    const completedQuantity = normalizeCompletedQuantity(item && item.completed_quantity, quantity, explicitStatus);
+
+    return {
+      requiredQuantity: quantity,
+      completedQuantity,
+      remainingQuantity: Math.max(quantity - completedQuantity, 0)
+    };
+  }
+
+  function sortProductionBatchRows(rows) {
+    const normalizedRows = Array.isArray(rows) ? [...rows] : [];
+    return normalizedRows.sort(compareBatchRows);
+  }
+
+  function normalizeProductionItemAttributes(record, item, index = 0) {
+    const payload = getPayload(record);
+    const structured = item && item.structured_attributes && typeof item.structured_attributes === 'object'
+      ? item.structured_attributes
+      : {};
+    const configurationSnapshot = item && item.configuration_snapshot && typeof item.configuration_snapshot === 'object'
+      ? item.configuration_snapshot
+      : {};
+    const { requiredQuantity, completedQuantity, remainingQuantity } = derivePhysicalPieceCounts(item);
+    const productDefinitionId = normalizeStableValue(firstNonEmpty([
+      structured.product_definition_id,
+      item?.product_definition_id,
+      item?.productDefinitionId
+    ]));
+    const productDisplayName = firstNonEmpty([
+      item?.product_display_name,
+      item?.productDisplayName,
+      getProductDisplayName(productDefinitionId),
+      'Custom Item'
+    ]);
+    const category = normalizeStableValue(firstNonEmpty([
+      structured.category,
+      item?.category,
+      inferCategoryFromProduct(productDefinitionId)
+    ]));
+    const ornamentType = normalizeStableValue(firstNonEmpty([
+      structured.ornament_type,
+      inferLegacyOrnamentType(productDefinitionId, category)
+    ]));
+    const size = isApplicableDimension(productDefinitionId, 'size')
+      ? normalizeStableValue(firstNonEmpty([structured.size, configurationSnapshot.size, item?.size]))
+      : '';
+    const treeColor = isApplicableDimension(productDefinitionId, 'treeColor')
+      ? normalizeStableValue(firstNonEmpty([
+      structured.tree_color,
+      configurationSnapshot.treeColor,
+      configurationSnapshot.tree_color,
+      item?.treeColor
+    ]))
+      : '';
+    const bowColor = isApplicableDimension(productDefinitionId, 'bowColor')
+      ? normalizeStableValue(firstNonEmpty([
+      structured.bow_color,
+      configurationSnapshot.bowColor,
+      configurationSnapshot.bow_color,
+      configurationSnapshot.bow_and_stocking_color
+    ]))
+      : '';
+    const year = isApplicableDimension(productDefinitionId, 'year')
+      ? normalizeYearFilterValue(firstNonEmpty([
+      structured.year,
+      configurationSnapshot.year,
+      configurationSnapshot.wedding_year,
+      configurationSnapshot.weddingYear,
+      configurationSnapshot.established_year,
+      configurationSnapshot.establishedYear,
+      item?.year
+    ]))
+      : '';
+    const productionStatus = normalizeItemProductionStatus(item);
+    const fulfillment = getRecordFulfillmentMethod(record);
+    const eventId = normalizeStableValue(firstNonEmpty([
+      record?.event_id,
+      payload.event_id,
+      payload.event?.event_id,
+      structured.event_id
+    ]));
+    const currentTrayNumber = normalizeTrayNumber(record?.current_tray_number);
+    const syncStatus = normalizeStableValue(record?.sync_status);
+    const lineId = firstNonEmpty([item?.line_id, item?.order_item_id, `${record?.forge_order_uuid || 'order'}-line-${index + 1}`]);
+
+    return {
+      orderUuid: asTrimmedString(record?.forge_order_uuid || payload.forge_order_uuid),
+      orderReference: getShortOrderReference(record),
+      customerName: firstNonEmpty([payload.customer?.full_name, 'Unknown customer']),
+      productDefinitionId,
+      productDisplayName,
+      category,
+      ornamentType,
+      ornamentTypeLabel: getOrnamentTypeLabel(ornamentType, productDisplayName, category),
+      size,
+      sizeLabel: getDisplayLabel(size),
+      treeColor,
+      treeColorLabel: getDisplayLabel(treeColor),
+      bowColor,
+      bowColorLabel: getDisplayLabel(bowColor),
+      year,
+      yearLabel: year,
+      productionStatus,
+      productionStatusLabel: getProductionStatusLabel(productionStatus),
+      fulfillment,
+      fulfillmentLabel: getFulfillmentLabel(fulfillment),
+      eventId,
+      eventLabel: firstNonEmpty([record?.event_id, payload.event?.event_id, payload.event_id]),
+      trayValue: currentTrayNumber ? String(currentTrayNumber) : 'unassigned',
+      trayLabel: currentTrayNumber ? `Tray ${currentTrayNumber}` : 'No Tray Assigned',
+      currentTrayNumber,
+      syncStatus,
+      syncStatusLabel: getSyncStatusLabel(syncStatus),
+      lineId,
+      lineOrder: index,
+      requiredQuantity,
+      completedQuantity,
+      remainingQuantity,
+      hasOpenFlags: itemHasAnyOpenFlags(item),
+      openFlags: getItemOpenFlags(item),
+      orderOpenFlags: getOrderOpenFlags(record),
+      conciseIdentifier: buildConciseProductionIdentifier(structured, configurationSnapshot, item, year)
+    };
+  }
+
+  function itemMatchesProductionFilters(item, record, filters) {
+    const normalizedFilters = normalizeFilters(filters);
+    const attributes = normalizeProductionItemAttributes(record, item, 0);
+
+    return ITEM_FILTER_KEYS.every((dimension) => valueMatchesFilter(attributes[getDimensionProperty(dimension)], normalizedFilters[dimension]));
   }
 
   function isOrderEligibleForReadyToPack(record) {
@@ -224,90 +528,81 @@
   }
 
   function getMatchingOrderItems(record, filters = {}) {
+    if (!recordMatches(record, filters, '')) {
+      return [];
+    }
+    return getMatchingProductionItems(record, filters).map((match) => match.item);
+  }
+
+  function getMatchingProductionItems(record, filters = {}, options = {}) {
     const normalizedFilters = normalizeFilters(filters);
-    const items = getRecordItems(record);
-    if (!hasActiveItemFilters(normalizedFilters)) {
-      return items.slice();
+    if (!recordMatchesNonSearch(record, normalizedFilters, options.excludeDimension)) {
+      return [];
     }
 
-    return items.filter((item) => itemMatchesFilters(item, normalizedFilters));
+    const items = getRecordItems(record);
+    return items.reduce((matches, item, index) => {
+      const attributes = normalizeProductionItemAttributes(record, item, index);
+      if (itemMatchesFiltersByAttributes(attributes, normalizedFilters, options.excludeDimension)) {
+        matches.push({ item, attributes, index });
+      }
+      return matches;
+    }, []);
   }
 
   function buildOptionList(records, filters, searchTerm, dimension) {
     if (dimension === 'openFlags') {
       return buildOpenFlagsOptionList(records, filters, searchTerm);
     }
-    const optionCounts = new Map();
+
+    const selectedValue = normalizeFilterValue(filters[dimension]);
+    const optionMap = new Map();
     const baseFilters = removeFilterDimension(filters, dimension);
 
     sortLocalOrdersNewestFirst(records).forEach((record) => {
+      if (searchTerm && !createOrderSearchDocument(record).includes(searchTerm)) {
+        return;
+      }
+
+      if (ITEM_FILTER_KEYS.includes(dimension)) {
+        getMatchingProductionItems(record, baseFilters).forEach((match) => {
+          const value = getDimensionValue(match.attributes, dimension);
+          const label = getDimensionLabel(match.attributes, dimension);
+          addOption(optionMap, value, label);
+        });
+        return;
+      }
+
       if (!recordMatches(record, baseFilters, searchTerm)) {
         return;
       }
 
-      getDimensionValues(record, dimension, baseFilters).forEach((value) => {
-        const normalizedValue = asTrimmedString(value);
-        if (!normalizedValue) {
-          return;
-        }
-        optionCounts.set(normalizedValue, (optionCounts.get(normalizedValue) || 0) + 1);
-      });
+      const values = getOrderDimensionValues(record, dimension);
+      values.forEach(({ value, label }) => addOption(optionMap, value, label));
     });
 
-    return [...optionCounts.entries()]
-      .map(([value, count]) => ({
-        value,
-        label: formatFilterLabel(dimension, value),
-        count
-      }))
-      .sort((left, right) => compareFilterOptions(dimension, left, right));
+    if (selectedValue !== 'all' && !optionMap.has(selectedValue)) {
+      optionMap.set(selectedValue, { value: selectedValue, label: formatFilterLabel(dimension, selectedValue), count: 0 });
+    }
+
+    return [...optionMap.values()].sort((left, right) => compareFilterOptions(dimension, left, right));
   }
 
-  function getDimensionValues(record, dimension, filters) {
-    if (dimension === 'fulfillment') {
-      const method = getRecordFulfillmentMethod(record);
-      return method ? [method] : [];
-    }
-    if (dimension === 'syncStatus') {
-      const status = asTrimmedString(record && record.sync_status);
-      return status ? [status] : [];
-    }
-    if (dimension === 'openFlags') {
-      return ['with_flags', 'without_flags'];
+  function addOption(optionMap, value, label) {
+    const normalizedValue = normalizeFilterValue(value);
+    if (!normalizedValue || normalizedValue === 'all') {
+      return;
     }
 
-    const values = new Set();
-    getMatchingOrderItems(record, filters).forEach((item) => {
-      const attributes = item.structured_attributes || {};
-      if (dimension === 'product') {
-        const value = asTrimmedString(attributes.product_definition_id || item.product_definition_id || item.productDefinitionId);
-        if (value) {
-          values.add(value);
-        }
-      } else if (dimension === 'size') {
-        const value = asTrimmedString(attributes.size);
-        if (value) {
-          values.add(value);
-        }
-      } else if (dimension === 'treeColor') {
-        const value = asTrimmedString(attributes.tree_color);
-        if (value) {
-          values.add(value);
-        }
-      } else if (dimension === 'bowColor') {
-        const value = asTrimmedString(attributes.bow_color);
-        if (value) {
-          values.add(value);
-        }
-      } else if (dimension === 'year') {
-        const value = normalizeYearFilterValue(attributes.year);
-        if (value) {
-          values.add(value);
-        }
-      }
-    });
+    if (!optionMap.has(normalizedValue)) {
+      optionMap.set(normalizedValue, {
+        value: normalizedValue,
+        label: label || formatGenericLabel(normalizedValue),
+        count: 0
+      });
+    }
 
-    return [...values];
+    optionMap.get(normalizedValue).count += 1;
   }
 
   function buildOpenFlagsOptionList(records, filters, searchTerm) {
@@ -322,12 +617,8 @@
         return;
       }
 
-      const matchingItems = getMatchingOrderItems(record, baseFilters);
-      if (matchingItems.length === 0) {
-        return;
-      }
-
-      if (!recordMatchesOrderFilters(record, baseFilters, matchingItems)) {
+      const matchingItems = getMatchingProductionItems(record, baseFilters).map((match) => match.attributes);
+      if (matchingItems.length === 0 || !recordMatchesNonItemFilters(record, baseFilters, matchingItems)) {
         return;
       }
 
@@ -353,105 +644,152 @@
       return false;
     }
 
-    const matchingItems = getMatchingOrderItems(record, filters);
+    const matchingItems = getMatchingProductionItems(record, filters).map((match) => match.attributes);
     if (matchingItems.length === 0) {
       return false;
     }
 
-    return recordMatchesOrderFilters(record, filters, matchingItems);
+    return recordMatchesNonItemFilters(record, filters, matchingItems);
   }
 
-  function recordMatchesOrderFilters(record, filters, matchingItems = getMatchingOrderItems(record, filters)) {
-    const fulfillmentFilter = normalizeFilterValue(filters.fulfillment);
-    if (fulfillmentFilter !== 'all' && getRecordFulfillmentMethod(record) !== fulfillmentFilter) {
+  function recordMatchesNonSearch(record, filters, excludeDimension) {
+    const matchingItems = getRecordItems(record).reduce((matches, item, index) => {
+      const attributes = normalizeProductionItemAttributes(record, item, index);
+      if (itemMatchesFiltersByAttributes(attributes, filters, excludeDimension)) {
+        matches.push(attributes);
+      }
+      return matches;
+    }, []);
+
+    if (matchingItems.length === 0) {
       return false;
     }
 
-    const syncStatusFilter = normalizeFilterValue(filters.syncStatus);
-    if (syncStatusFilter !== 'all' && normalizeFilterValue(record && record.sync_status) !== syncStatusFilter) {
-      return false;
+    return recordMatchesNonItemFilters(record, filters, matchingItems, excludeDimension);
+  }
+
+  function recordMatchesNonItemFilters(record, filters, matchingItems, excludeDimension = '') {
+    const normalizedFilters = normalizeFilters(filters);
+    const excluded = excludeDimension || '';
+
+    if (excluded !== 'fulfillment') {
+      const fulfillmentFilter = normalizeFilterValue(normalizedFilters.fulfillment);
+      if (fulfillmentFilter !== 'all' && getRecordFulfillmentMethod(record) !== fulfillmentFilter) {
+        return false;
+      }
     }
 
-    const openFlagsFilter = normalizeFilterValue(filters.openFlags);
-    if (openFlagsFilter === 'with_flags' && !recordHasMatchingOpenFlags(record, matchingItems, filters)) {
-      return false;
+    if (excluded !== 'event') {
+      const eventFilter = normalizeFilterValue(normalizedFilters.event);
+      if (eventFilter !== 'all' && getRecordEventValue(record) !== eventFilter) {
+        return false;
+      }
     }
-    if (openFlagsFilter === 'without_flags' && recordHasMatchingOpenFlags(record, matchingItems, filters)) {
-      return false;
+
+    if (excluded !== 'tray') {
+      const trayFilter = normalizeFilterValue(normalizedFilters.tray);
+      if (trayFilter !== 'all' && getRecordTrayValue(record) !== trayFilter) {
+        return false;
+      }
+    }
+
+    if (excluded !== 'syncStatus') {
+      const syncStatusFilter = normalizeFilterValue(normalizedFilters.syncStatus);
+      if (syncStatusFilter !== 'all' && normalizeFilterValue(record && record.sync_status) !== syncStatusFilter) {
+        return false;
+      }
+    }
+
+    if (excluded !== 'openFlags') {
+      const openFlagsFilter = normalizeFilterValue(normalizedFilters.openFlags);
+      if (openFlagsFilter === 'with_flags' && !recordHasMatchingOpenFlags(record, matchingItems, normalizedFilters)) {
+        return false;
+      }
+      if (openFlagsFilter === 'without_flags' && recordHasMatchingOpenFlags(record, matchingItems, normalizedFilters)) {
+        return false;
+      }
     }
 
     return true;
   }
 
-  function itemMatchesFilters(item, filters) {
-    const attributes = item && item.structured_attributes && typeof item.structured_attributes === 'object'
-      ? item.structured_attributes
-      : {};
+  function itemMatchesFiltersByAttributes(attributes, filters, excludeDimension = '') {
+    const normalizedFilters = normalizeFilters(filters);
 
-    if (!valueMatchesFilter(attributes.product_definition_id || item.product_definition_id || item.productDefinitionId, filters.product)) {
-      return false;
-    }
-    if (!valueMatchesFilter(attributes.size, filters.size)) {
-      return false;
-    }
-    if (!valueMatchesFilter(attributes.tree_color, filters.treeColor)) {
-      return false;
-    }
-    if (!valueMatchesFilter(attributes.bow_color, filters.bowColor)) {
-      return false;
-    }
-    if (!valueMatchesFilter(normalizeYearFilterValue(attributes.year), filters.year)) {
-      return false;
-    }
+    return ITEM_FILTER_KEYS.every((dimension) => {
+      if (dimension === excludeDimension) {
+        return true;
+      }
 
-    return true;
+      return valueMatchesFilter(attributes[getDimensionProperty(dimension)], normalizedFilters[dimension]);
+    });
   }
 
   function recordHasMatchingOpenFlags(record, matchingItems, filters) {
-    const openFlagsFilter = normalizeFilterValue(filters.openFlags);
-    if (openFlagsFilter === 'without_flags') {
-      return false;
+    if (recordHasOrderLevelFlags(record)) {
+      return true;
     }
-    if (openFlagsFilter === 'with_flags' || hasActiveItemFilters(filters)) {
-      return matchingItems.some((item) => itemHasAnyOpenFlags(item));
-    }
-    return recordHasAnyOpenFlags(record);
+    return (Array.isArray(matchingItems) ? matchingItems : []).some((item) => Boolean(item && item.hasOpenFlags));
   }
 
   function recordHasAnyOpenFlags(record) {
+    return recordHasOrderLevelFlags(record) || getRecordItems(record).some((item) => itemHasAnyOpenFlags(item));
+  }
+
+  function recordHasOrderLevelFlags(record) {
     if (!record || typeof record !== 'object') {
       return false;
     }
-
     if (Boolean(record.has_open_flags)) {
       return true;
     }
-
     const payload = getPayload(record);
     if (Boolean(payload.has_open_flags)) {
       return true;
     }
-
-    if (Array.isArray(payload.open_flags) && payload.open_flags.length > 0) {
-      return true;
-    }
-
-    return getRecordItems(record).some((item) => itemHasAnyOpenFlags(item));
+    return getOrderOpenFlags(record).length > 0;
   }
 
   function itemHasAnyOpenFlags(item) {
-    if (Array.isArray(item && item.open_flags) && item.open_flags.length > 0) {
+    if (!item || typeof item !== 'object') {
+      return false;
+    }
+    if (getItemOpenFlags(item).length > 0) {
       return true;
     }
-    return Boolean(item && item.structured_attributes && item.structured_attributes.has_open_flags);
+    const structuredAttributes = item.structured_attributes && typeof item.structured_attributes === 'object'
+      ? item.structured_attributes
+      : {};
+    return Boolean(structuredAttributes.has_open_flags);
+  }
+
+  function getOrderOpenFlags(record) {
+    const payload = getPayload(record);
+    return Array.isArray(payload.open_flags) ? payload.open_flags.slice() : [];
+  }
+
+  function getItemOpenFlags(item) {
+    return Array.isArray(item && item.open_flags) ? item.open_flags.slice() : [];
+  }
+
+  function hasCustomIconFlagSet(flags) {
+    return (Array.isArray(flags) ? flags : []).some((flag) => {
+      const code = normalizeFilterValue(flag && flag.code);
+      const message = normalizeSearchValue(flag && flag.message);
+      return code === 'custom_icon' || message.includes('custom icon');
+    });
   }
 
   function itemHasCustomIconFlag(item) {
-    return Array.isArray(item && item.open_flags) && item.open_flags.some((flag) => normalizeFilterValue(flag && flag.code) === 'custom_icon');
+    return hasCustomIconFlagSet(getItemOpenFlags(item));
   }
 
   function recordHasPendingSync(record) {
     return normalizeFilterValue(record && record.sync_status) === 'pending';
+  }
+
+  function getNormalizedProductionItems(record) {
+    return getRecordItems(record).map((item, index) => normalizeProductionItemAttributes(record, item, index));
   }
 
   function getRecordItems(record) {
@@ -469,13 +807,50 @@
     return method === 'pickup' ? 'pickup' : (method === 'shipping' ? 'shipping' : '');
   }
 
+  function getRecordEventValue(record) {
+    const payload = getPayload(record);
+    return normalizeFilterValue(firstNonEmpty([record?.event_id, payload.event?.event_id, payload.event_id]));
+  }
+
+  function getRecordTrayValue(record) {
+    const trayNumber = normalizeTrayNumber(record && record.current_tray_number);
+    return trayNumber ? String(trayNumber) : 'unassigned';
+  }
+
+  function getOrderDimensionValues(record, dimension) {
+    if (dimension === 'fulfillment') {
+      const fulfillment = getRecordFulfillmentMethod(record);
+      return fulfillment ? [{ value: fulfillment, label: getFulfillmentLabel(fulfillment) }] : [];
+    }
+    if (dimension === 'event') {
+      const payload = getPayload(record);
+      const rawValue = firstNonEmpty([record?.event_id, payload.event?.event_id, payload.event_id]);
+      const value = normalizeFilterValue(rawValue);
+      return value === 'all' ? [] : [{ value, label: rawValue }];
+    }
+    if (dimension === 'tray') {
+      const trayNumber = normalizeTrayNumber(record && record.current_tray_number);
+      return trayNumber
+        ? [{ value: String(trayNumber), label: `Tray ${trayNumber}` }]
+        : [{ value: 'unassigned', label: 'No Tray Assigned' }];
+    }
+    if (dimension === 'syncStatus') {
+      const syncStatus = normalizeFilterValue(record && record.sync_status);
+      return syncStatus === 'all' ? [] : [{ value: syncStatus, label: getSyncStatusLabel(syncStatus) }];
+    }
+    return [];
+  }
+
   function normalizeFilters(filters) {
     const defaults = createEmptyOrderFilters();
     const source = filters && typeof filters === 'object' ? filters : {};
     const normalized = { ...defaults };
+
     FILTER_KEYS.forEach((key) => {
-      normalized[key] = normalizeFilterValue(source[key] == null ? defaults[key] : source[key]);
+      const rawValue = source[key] == null ? defaults[key] : source[key];
+      normalized[key] = key === 'year' ? normalizeYearFilterValue(rawValue) || 'all' : normalizeFilterValue(rawValue);
     });
+
     return normalized;
   }
 
@@ -485,11 +860,6 @@
       normalized[dimension] = 'all';
     }
     return normalized;
-  }
-
-  function hasActiveItemFilters(filters) {
-    const normalized = normalizeFilters(filters);
-    return ITEM_FILTER_KEYS.some((key) => normalizeFilterValue(normalized[key]) !== 'all');
   }
 
   function valueMatchesFilter(value, filterValue) {
@@ -505,64 +875,283 @@
     return normalized || 'all';
   }
 
+  function normalizeStableValue(value) {
+    const normalized = asTrimmedString(value).toLowerCase();
+    return normalized || '';
+  }
+
   function normalizeYearFilterValue(value) {
-    if (value == null || value === '') {
-      return '';
-    }
-    return asTrimmedString(value);
+    const normalized = asTrimmedString(value);
+    return normalized || '';
   }
 
   function normalizeSearchValue(value) {
     return asTrimmedString(value).toLowerCase().replace(/\s+/g, ' ');
   }
 
-  function buildBatchGroupLabel(parts) {
-    const labelParts = [parts.productDisplayName];
-    if (parts.size) {
-      labelParts.push(parts.size);
+  function buildBatchGroupLabel(item) {
+    const labelParts = [item.productDisplayName];
+    if (item.ornamentType && item.ornamentType !== item.productDefinitionId && item.ornamentTypeLabel && item.ornamentTypeLabel !== item.productDisplayName) {
+      labelParts.push(item.ornamentTypeLabel);
     }
-    if (parts.treeColor) {
-      labelParts.push(parts.treeColor);
+    if (item.sizeLabel) {
+      labelParts.push(item.sizeLabel);
     }
-    if (parts.bowColor) {
-      labelParts.push(`${parts.bowColor} Bow`);
+    if (item.treeColorLabel) {
+      labelParts.push(item.treeColorLabel);
+    }
+    if (item.bowColorLabel) {
+      labelParts.push(`${item.bowColorLabel} Bow`);
+    }
+    if (item.yearLabel) {
+      labelParts.push(item.yearLabel);
     }
     return labelParts.join(' / ');
+  }
+
+  function ensureBatchGroup(groupStore, classification, item) {
+    if (!groupStore.has(classification.key)) {
+      groupStore.set(classification.key, {
+        kind: classification.kind,
+        issueType: classification.issueType || '',
+        key: classification.key,
+        label: classification.label,
+        description: classification.kind === 'issue' ? ISSUE_DESCRIPTIONS[classification.issueType] : '',
+        requiredQuantity: 0,
+        completedQuantity: 0,
+        remainingQuantity: 0,
+        matchingLineCount: 0,
+        orderIds: new Set(),
+        productDefinitionId: item.productDefinitionId,
+        ornamentType: item.ornamentType,
+        size: item.size,
+        treeColor: item.treeColor,
+        bowColor: item.bowColor,
+        year: item.year
+      });
+    }
+
+    return groupStore.get(classification.key);
+  }
+
+  function finalizeBatchGroups(groups, sorter) {
+    return groups
+      .map((group) => ({
+        ...group,
+        orderCount: group.orderIds.size
+      }))
+      .sort(sorter);
+  }
+
+  function classificationMatchesGroup(classification, group) {
+    return Boolean(classification && group && classification.key === group.key && classification.kind === group.kind);
+  }
+
+  function getPrimaryOpenFlagMessage(record, item) {
+    const flags = [
+      ...getOrderOpenFlags(record),
+      ...(Array.isArray(item.openFlags) ? item.openFlags : [])
+    ];
+    const flagged = flags.find((flag) => asTrimmedString(flag && flag.message));
+    return flagged ? asTrimmedString(flagged.message) : '';
+  }
+
+  function buildConciseProductionIdentifier(structured, configurationSnapshot, item, year) {
+    const familyName = firstNonEmpty([
+      structured.family_name,
+      configurationSnapshot.familyName,
+      configurationSnapshot.family_name,
+      configurationSnapshot.lastName,
+      configurationSnapshot.last_name,
+      item?.familyName
+    ]);
+    const babyName = firstNonEmpty([configurationSnapshot.babyName, configurationSnapshot.baby_name]);
+    const edgeText = firstNonEmpty([configurationSnapshot.edgeText, configurationSnapshot.edge_text]);
+    const letter = firstNonEmpty([configurationSnapshot.letter, structured.letter]);
+    const name = firstNonEmpty([configurationSnapshot.name, structured.name]);
+    const veteranName = firstNonEmpty([configurationSnapshot.veteranName, configurationSnapshot.veteran_name]);
+    const rank = firstNonEmpty([configurationSnapshot.rank, configurationSnapshot.veteranRank]);
+
+    if (letter && name) {
+      return `${letter} • ${name}`;
+    }
+    if (familyName && year) {
+      return `${familyName} • ${year}`;
+    }
+
+    return firstNonEmpty([
+      familyName,
+      babyName,
+      edgeText,
+      veteranName && rank ? `${veteranName} • ${rank}` : '',
+      veteranName,
+      name,
+      letter,
+      year
+    ]);
+  }
+
+  function inferCategoryFromProduct(productDefinitionId) {
+    if (['classic_family_sign', 'family_cutting_board', 'live_edge_family_sign'].includes(productDefinitionId)) {
+      return 'sign';
+    }
+    if (productDefinitionId === 'custom_request') {
+      return 'custom';
+    }
+    return productDefinitionId ? 'ornament' : '';
+  }
+
+  function inferLegacyOrnamentType(productDefinitionId, category) {
+    if (category === 'ornament') {
+      return productDefinitionId;
+    }
+    return category;
+  }
+
+  function isApplicableDimension(productDefinitionId, dimension) {
+    const allowed = APPLICABLE_DIMENSIONS[normalizeFilterValue(productDefinitionId)];
+    return allowed ? allowed.has(dimension) : true;
+  }
+
+  function getProductionStatusLabel(status) {
+    const normalized = normalizeFilterValue(status);
+    if (normalized === 'in_production') {
+      return 'In Production';
+    }
+    if (normalized === 'complete') {
+      return 'Complete';
+    }
+    if (normalized === 'blocked') {
+      return 'Blocked';
+    }
+    if (normalized === 'cancelled') {
+      return 'Cancelled';
+    }
+    return 'Pending';
+  }
+
+  function getFulfillmentLabel(value) {
+    return normalizeFilterValue(value) === 'pickup' ? 'Pickup' : 'Shipping';
+  }
+
+  function getSyncStatusLabel(value) {
+    const normalized = normalizeFilterValue(value);
+    if (normalized === 'synced') {
+      return 'Synced';
+    }
+    if (normalized === 'error') {
+      return 'Sync Error';
+    }
+    return 'Sync Pending';
+  }
+
+  function getOrnamentTypeLabel(value, productDisplayName, category) {
+    if (category !== 'ornament') {
+      return formatGenericLabel(value || category);
+    }
+    return ORNAMENT_TYPE_LABELS[normalizeFilterValue(value)] || productDisplayName || formatGenericLabel(value);
+  }
+
+  function getProductDisplayName(productDefinitionId) {
+    const normalized = normalizeFilterValue(productDefinitionId);
+    return PRODUCT_DISPLAY_NAMES[normalized] || productDefinitionId;
+  }
+
+  function getDimensionProperty(dimension) {
+    const mapping = {
+      product: 'productDefinitionId',
+      ornamentType: 'ornamentType',
+      size: 'size',
+      treeColor: 'treeColor',
+      bowColor: 'bowColor',
+      year: 'year',
+      productionStatus: 'productionStatus'
+    };
+    return mapping[dimension] || dimension;
+  }
+
+  function getDimensionValue(attributes, dimension) {
+    if (!attributes) {
+      return '';
+    }
+    if (dimension === 'productionStatus') {
+      return attributes.productionStatus;
+    }
+    return attributes[getDimensionProperty(dimension)];
+  }
+
+  function getDimensionLabel(attributes, dimension) {
+    if (!attributes) {
+      return '';
+    }
+    if (dimension === 'product') {
+      return attributes.productDisplayName;
+    }
+    if (dimension === 'ornamentType') {
+      return attributes.ornamentTypeLabel;
+    }
+    if (dimension === 'size') {
+      return attributes.sizeLabel;
+    }
+    if (dimension === 'treeColor') {
+      return attributes.treeColorLabel;
+    }
+    if (dimension === 'bowColor') {
+      return attributes.bowColorLabel;
+    }
+    if (dimension === 'year') {
+      return attributes.yearLabel;
+    }
+    if (dimension === 'productionStatus') {
+      return attributes.productionStatusLabel;
+    }
+    return '';
   }
 
   function formatFilterLabel(dimension, value) {
     if (dimension === 'product') {
       return getProductDisplayName(value);
     }
+    if (dimension === 'ornamentType') {
+      return getOrnamentTypeLabel(value, '', value === 'ornament' ? 'ornament' : value);
+    }
     if (dimension === 'fulfillment') {
-      return value === 'pickup' ? 'Pickup' : 'Shipping';
+      return getFulfillmentLabel(value);
     }
     if (dimension === 'openFlags') {
       return value === 'with_flags' ? 'With Flags' : 'Without Flags';
     }
     if (dimension === 'syncStatus') {
-      return value.split('_').map(capitalizeWord).join(' ');
+      return getSyncStatusLabel(value);
     }
-    return value;
+    if (dimension === 'productionStatus') {
+      return getProductionStatusLabel(value);
+    }
+    if (dimension === 'tray') {
+      return normalizeFilterValue(value) === 'unassigned' ? 'No Tray Assigned' : `Tray ${asTrimmedString(value)}`;
+    }
+    if (dimension === 'event') {
+      return asTrimmedString(value);
+    }
+    if (dimension === 'year') {
+      return asTrimmedString(value);
+    }
+    return formatGenericLabel(value);
   }
 
-  function getProductDisplayName(productDefinitionId) {
-    const normalized = normalizeFilterValue(productDefinitionId);
-    const PRODUCT_DISPLAY_NAMES = {
-      tree_ornament: 'Tree Ornament',
-      antler_ornament: 'Antler Ornament',
-      present_stack: 'Present Stack Ornament',
-      grinch_tree: 'Grinch Tree Ornament',
-      veteran_flag: 'Veteran Flag Ornament',
-      babys_first_christmas: "Baby's First Christmas",
-      mr_and_mrs_christmas: 'Mr. & Mrs. Christmas',
-      little_reindeer_letter: 'Little Reindeer Letter Ornament',
-      custom_request: 'Custom Request',
-      classic_family_sign: 'Classic Family Sign',
-      family_cutting_board: 'Family Cutting Board',
-      live_edge_family_sign: 'Live Edge Family Sign'
-    };
-    return PRODUCT_DISPLAY_NAMES[normalized] || productDefinitionId;
+  function formatGenericLabel(value) {
+    return asTrimmedString(value)
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .split(' ')
+      .map(capitalizeWord)
+      .join(' ');
+  }
+
+  function getDisplayLabel(value) {
+    const normalized = asTrimmedString(value);
+    return normalized ? formatGenericLabel(normalized) : '';
   }
 
   function compareOrdersNewestFirst(left, right) {
@@ -576,9 +1165,9 @@
 
   function compareFilterOptions(dimension, left, right) {
     if (dimension === 'size') {
-      const sizeRank = { Small: 1, Large: 2 };
-      const leftRank = sizeRank[left.value] || 99;
-      const rightRank = sizeRank[right.value] || 99;
+      const sizeRank = { small: 1, large: 2 };
+      const leftRank = sizeRank[normalizeFilterValue(left.value)] || 99;
+      const rightRank = sizeRank[normalizeFilterValue(right.value)] || 99;
       if (leftRank !== rightRank) {
         return leftRank - rightRank;
       }
@@ -590,23 +1179,63 @@
         return leftYear - rightYear;
       }
     }
+    if (dimension === 'tray') {
+      const leftTray = normalizeTrayNumber(left.value);
+      const rightTray = normalizeTrayNumber(right.value);
+      if (leftTray && rightTray && leftTray !== rightTray) {
+        return leftTray - rightTray;
+      }
+      if (!leftTray && rightTray) {
+        return 1;
+      }
+      if (leftTray && !rightTray) {
+        return -1;
+      }
+    }
     return left.label.localeCompare(right.label);
   }
 
-  function compareBatchGroups(left, right) {
-    const byName = left.productDisplayName.localeCompare(right.productDisplayName);
-    if (byName !== 0) {
-      return byName;
+  function compareReadyBatchGroups(left, right) {
+    const byLabel = left.label.localeCompare(right.label);
+    if (byLabel !== 0) {
+      return byLabel;
     }
-    const bySize = asTrimmedString(left.size).localeCompare(asTrimmedString(right.size));
-    if (bySize !== 0) {
-      return bySize;
+    return left.remainingQuantity - right.remainingQuantity;
+  }
+
+  function compareIssueBatchGroups(left, right) {
+    const leftPriority = ISSUE_PRIORITY.indexOf(left.issueType);
+    const rightPriority = ISSUE_PRIORITY.indexOf(right.issueType);
+    if (leftPriority !== rightPriority) {
+      return leftPriority - rightPriority;
     }
-    const byTreeColor = asTrimmedString(left.treeColor).localeCompare(asTrimmedString(right.treeColor));
-    if (byTreeColor !== 0) {
-      return byTreeColor;
+    return left.label.localeCompare(right.label);
+  }
+
+  function compareBatchRows(left, right) {
+    const leftTray = normalizeTrayNumber(left?.trayNumber);
+    const rightTray = normalizeTrayNumber(right?.trayNumber);
+    if (leftTray && rightTray && leftTray !== rightTray) {
+      return leftTray - rightTray;
     }
-    return asTrimmedString(left.bowColor).localeCompare(asTrimmedString(right.bowColor));
+    if (leftTray && !rightTray) {
+      return -1;
+    }
+    if (!leftTray && rightTray) {
+      return 1;
+    }
+
+    const byOrderReference = asTrimmedString(left?.orderReference).localeCompare(asTrimmedString(right?.orderReference));
+    if (byOrderReference !== 0) {
+      return byOrderReference;
+    }
+
+    return (left?.lineOrder || 0) - (right?.lineOrder || 0);
+  }
+
+  function normalizeTraySearchValue(value) {
+    const trayNumber = normalizeTrayNumber(value);
+    return trayNumber ? `tray ${trayNumber}` : 'no tray assigned';
   }
 
   function getSearchParams(searchInput) {
@@ -706,20 +1335,29 @@
     return getShortOrderReference(left).localeCompare(getShortOrderReference(right));
   }
 
+  function firstNonEmpty(values) {
+    const source = Array.isArray(values) ? values : [];
+    for (const value of source) {
+      const normalized = asTrimmedString(value);
+      if (normalized) {
+        return normalized;
+      }
+    }
+    return '';
+  }
+
   function asTrimmedString(value) {
     return value == null ? '' : String(value).trim();
   }
 
-  function asNullableTrimmedString(value) {
-    const normalized = asTrimmedString(value);
-    return normalized || null;
-  }
-
   return {
-    buildReadyToPackItemSummaries,
     buildProductionBatchGroups,
+    buildProductionBatchRows,
+    buildReadyToPackItemSummaries,
+    classifyProductionItem,
     createEmptyOrderFilters,
     createOrderSearchDocument,
+    derivePhysicalPieceCounts,
     filterLocalOrders,
     filterReadyToPackOrders,
     getAvailableOrderFilters,
@@ -727,9 +1365,12 @@
     getShortOrderReference,
     isLocalOrdersQueueEnabled,
     isOrderEligibleForReadyToPack,
-    sortReadyToPackOrders,
+    itemMatchesProductionFilters,
+    normalizeProductionItemAttributes,
     shouldCreateStaffOrdersUi,
     sortLocalOrdersNewestFirst,
+    sortProductionBatchRows,
+    sortReadyToPackOrders,
     summarizeLocalOrders
   };
 }));

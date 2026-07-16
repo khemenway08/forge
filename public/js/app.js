@@ -84,6 +84,15 @@ const staffOrdersState = {
   error: '',
   notice: '',
   noticeTone: 'success',
+  batchSummary: null,
+  batchError: '',
+  batchDialogOpen: false,
+  batchDialogLoading: false,
+  batchDialogError: '',
+  batchDialogGroupKey: '',
+  batchDialogGroupKind: '',
+  batchDialogGroup: null,
+  batchDialogRows: [],
   detailOpen: false,
   detailOrderUuid: '',
   detailRecord: null,
@@ -580,6 +589,9 @@ let lastStaffOrderDetailFocusTarget = null;
 let staffTrayAssignmentBackdrop = null;
 let staffTrayAssignmentDialog = null;
 let lastStaffTrayAssignmentFocusTarget = null;
+let staffBatchBackdrop = null;
+let staffBatchDialog = null;
+let lastStaffBatchFocusTarget = null;
 let staffPackingBackdrop = null;
 let staffPackingDialog = null;
 let lastStaffPackingFocusTarget = null;
@@ -3326,6 +3338,45 @@ function ensureStaffTrayAssignmentUi() {
   });
 }
 
+function ensureStaffBatchUi() {
+  if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled) || staffBatchDialog) {
+    return;
+  }
+
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="staff-order-detail-backdrop staff-batch-backdrop" data-staff-batch-backdrop hidden>
+      <div class="staff-order-detail-dialog staff-batch-dialog" data-staff-batch-dialog role="dialog" aria-modal="true" aria-labelledby="staff-batch-title" tabindex="-1" hidden></div>
+    </div>
+  `);
+
+  staffBatchBackdrop = document.querySelector('[data-staff-batch-backdrop]');
+  staffBatchDialog = document.querySelector('[data-staff-batch-dialog]');
+
+  staffBatchDialog?.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    const orderUuid = event.target.closest('[data-order-uuid]')?.dataset.orderUuid;
+    if (!action) {
+      return;
+    }
+
+    if (action === 'close-staff-batch') {
+      closeStaffBatchDialog();
+      return;
+    }
+
+    if (action === 'staff-view-order' && orderUuid) {
+      closeStaffBatchDialog({ restoreFocus: false });
+      openStaffOrderDetail(orderUuid);
+    }
+  });
+
+  staffBatchBackdrop?.addEventListener('click', (event) => {
+    if (event.target === staffBatchBackdrop) {
+      closeStaffBatchDialog();
+    }
+  });
+}
+
 function ensureStaffPackingUi() {
   if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled) || staffPackingDialog) {
     return;
@@ -3664,6 +3715,199 @@ function getStaffPackingItemIdentifier(item) {
   return candidates[0] || '';
 }
 
+function formatPieceCountLabel(count, noun = 'piece') {
+  const normalizedCount = Number.isInteger(count) && count >= 0 ? count : 0;
+  return `${normalizedCount} ${noun}${normalizedCount === 1 ? '' : 's'}`;
+}
+
+function getBatchGroupByKey(kind, key) {
+  const batchSummary = staffOrdersState.batchSummary;
+  if (!batchSummary) {
+    return null;
+  }
+
+  const groups = kind === 'issue' ? batchSummary.issueGroups : batchSummary.readyGroups;
+  return (Array.isArray(groups) ? groups : []).find((group) => group.key === key) || null;
+}
+
+async function openStaffBatchDialog(kind, key) {
+  ensureStaffBatchUi();
+  if (!staffBatchDialog) {
+    return;
+  }
+
+  staffOrdersState.batchDialogOpen = true;
+  staffOrdersState.batchDialogLoading = true;
+  staffOrdersState.batchDialogError = '';
+  staffOrdersState.batchDialogGroupKey = key;
+  staffOrdersState.batchDialogGroupKind = kind;
+  staffOrdersState.batchDialogGroup = null;
+  staffOrdersState.batchDialogRows = [];
+  lastStaffBatchFocusTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  renderStaffBatchDialog();
+
+  try {
+    const group = getBatchGroupByKey(kind, key);
+    if (!group) {
+      throw new Error('That production batch could not be found.');
+    }
+    const filteredRecords = forgeLocalOrdersQueue.filterLocalOrders(
+      staffOrdersState.records,
+      staffOrdersState.filters,
+      staffOrdersState.searchTerm
+    );
+    const rows = forgeLocalOrdersQueue.buildProductionBatchRows(group, filteredRecords, staffOrdersState.filters);
+    staffOrdersState.batchDialogGroup = group;
+    staffOrdersState.batchDialogRows = rows;
+  } catch (error) {
+    console.error('Forge staff batch dialog failed to build', error);
+    staffOrdersState.batchDialogError = error?.message || 'Production batch details could not be loaded on this device.';
+  } finally {
+    staffOrdersState.batchDialogLoading = false;
+    renderStaffBatchDialog();
+    window.setTimeout(() => {
+      (getStaffBatchFocusableElements()[0] || staffBatchDialog)?.focus();
+    }, 0);
+  }
+}
+
+function closeStaffBatchDialog(options = {}) {
+  const restoreFocus = options.restoreFocus !== false;
+  staffOrdersState.batchDialogOpen = false;
+  staffOrdersState.batchDialogLoading = false;
+  staffOrdersState.batchDialogError = '';
+  staffOrdersState.batchDialogGroupKey = '';
+  staffOrdersState.batchDialogGroupKind = '';
+  staffOrdersState.batchDialogGroup = null;
+  staffOrdersState.batchDialogRows = [];
+  renderStaffBatchDialog();
+  if (restoreFocus && lastStaffBatchFocusTarget) {
+    lastStaffBatchFocusTarget.focus();
+  }
+  lastStaffBatchFocusTarget = null;
+}
+
+function buildBatchDetailRowMarkup(row) {
+  return `
+    <article class="staff-batch-row">
+      <div class="staff-batch-row-primary">
+        <div class="staff-batch-row-tray">${escapeHtml(row.trayLabel)}</div>
+        <div class="staff-batch-row-heading">
+          <strong>${escapeHtml(row.productDisplayName)}</strong>
+          <p>${escapeHtml(row.orderReference)} • ${escapeHtml(row.customerName)}</p>
+        </div>
+        <span class="staff-status-badge ${escapeHtml(getStaffItemProductionStatusBadgeClass({ production_status: row.productionStatus }))}">${escapeHtml(row.productionStatusLabel)}</span>
+      </div>
+      <div class="staff-batch-row-meta">
+        <div><span>Required</span><strong>${escapeHtml(String(row.requiredQuantity))}</strong></div>
+        <div><span>Complete</span><strong>${escapeHtml(String(row.completedQuantity))}</strong></div>
+        <div><span>Remaining</span><strong>${escapeHtml(String(row.remainingQuantity))}</strong></div>
+        <div><span>Fulfillment</span><strong>${escapeHtml(row.fulfillmentLabel)}</strong></div>
+        ${row.conciseIdentifier ? `<div><span>Identifier</span><strong>${escapeHtml(row.conciseIdentifier)}</strong></div>` : ''}
+        ${row.openFlagMessage ? `<div class="staff-batch-row-flag"><span>Open Flag</span><strong>${escapeHtml(row.openFlagMessage)}</strong></div>` : ''}
+      </div>
+      <div class="staff-order-card-actions">
+        <button class="secondary-button" type="button" data-action="staff-view-order" data-order-uuid="${escapeHtml(row.orderUuid)}">View Order</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderStaffBatchDialog() {
+  ensureStaffBatchUi();
+  if (!staffBatchBackdrop || !staffBatchDialog) {
+    return;
+  }
+
+  staffBatchBackdrop.hidden = !staffOrdersState.batchDialogOpen;
+  staffBatchDialog.hidden = !staffOrdersState.batchDialogOpen;
+
+  if (!staffOrdersState.batchDialogOpen) {
+    staffBatchDialog.innerHTML = '';
+    return;
+  }
+
+  if (staffOrdersState.batchDialogLoading) {
+    staffBatchDialog.innerHTML = `
+      <div class="staff-order-detail-header">
+        <div>
+          <p class="eyebrow staff-orders-eyebrow">Production Batch</p>
+          <h2 id="staff-batch-title">Loading Batch</h2>
+        </div>
+        <button class="text-button" type="button" data-action="close-staff-batch">Close</button>
+      </div>
+      <p class="staff-orders-status">Building matching order lines...</p>
+    `;
+    return;
+  }
+
+  if (staffOrdersState.batchDialogError || !staffOrdersState.batchDialogGroup) {
+    staffBatchDialog.innerHTML = `
+      <div class="staff-order-detail-header">
+        <div>
+          <p class="eyebrow staff-orders-eyebrow">Production Batch</p>
+          <h2 id="staff-batch-title">Batch Unavailable</h2>
+        </div>
+        <button class="text-button" type="button" data-action="close-staff-batch">Close</button>
+      </div>
+      <div class="staff-empty-state">
+        <h3>Unable to open this batch</h3>
+        <p>${escapeHtml(staffOrdersState.batchDialogError || 'Production batch details could not be loaded on this device.')}</p>
+      </div>
+    `;
+    return;
+  }
+
+  const group = staffOrdersState.batchDialogGroup;
+  const rows = staffOrdersState.batchDialogRows;
+  const headerEyebrow = group.kind === 'issue' ? 'Needs Attention' : 'Production Batch';
+  const title = group.kind === 'issue' ? group.label : group.label;
+  const supportingCopy = group.kind === 'issue'
+    ? group.description || 'These pieces are not cleared for normal production.'
+    : `${formatPieceCountLabel(group.remainingQuantity)} remaining`;
+
+  staffBatchDialog.innerHTML = `
+    <div class="staff-order-detail-header">
+      <div>
+        <p class="eyebrow staff-orders-eyebrow">${escapeHtml(headerEyebrow)}</p>
+        <h2 id="staff-batch-title">${escapeHtml(title)}</h2>
+        <p>${escapeHtml(supportingCopy)}</p>
+      </div>
+      <button class="text-button" type="button" data-action="close-staff-batch">Close</button>
+    </div>
+
+    <section class="staff-order-detail-section">
+      <div class="staff-order-detail-grid">
+        <div><span>Remaining Pieces</span><strong>${escapeHtml(String(group.remainingQuantity))}</strong></div>
+        <div><span>Required Quantity</span><strong>${escapeHtml(String(group.requiredQuantity))}</strong></div>
+        <div><span>Completed Quantity</span><strong>${escapeHtml(String(group.completedQuantity))}</strong></div>
+        <div><span>Matching Orders</span><strong>${escapeHtml(String(group.orderCount))}</strong></div>
+      </div>
+      ${group.kind === 'issue' && group.description ? `<p class="staff-order-detail-note">${escapeHtml(group.description)}</p>` : ''}
+    </section>
+
+    <section class="staff-order-detail-section staff-batch-rows-section">
+      <div class="staff-section-heading">
+        <div>
+          <p class="eyebrow staff-orders-eyebrow">Matching Lines</p>
+          <h3>Order Destinations</h3>
+        </div>
+        <p class="staff-orders-status">${escapeHtml(`${rows.length} matching line${rows.length === 1 ? '' : 's'}`)}</p>
+      </div>
+      <div class="staff-batch-rows">
+        ${rows.length
+          ? rows.map((row) => buildBatchDetailRowMarkup(row)).join('')
+          : `
+            <div class="staff-empty-state">
+              <h3>No lines match this batch</h3>
+              <p>Refresh the queue to reload the latest production data.</p>
+            </div>
+          `}
+      </div>
+    </section>
+  `;
+}
+
 function renderStaffOrdersQueue() {
   if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled) || !staffOrdersSummary || !staffOrdersFilters || !staffBatchGroups || !staffOrdersList || !staffOrdersStatus) {
     return;
@@ -3679,7 +3923,16 @@ function renderStaffOrdersQueue() {
     activeFilters: staffOrdersState.filters,
     searchTerm: staffOrdersState.searchTerm
   });
-  const batchSummary = forgeLocalOrdersQueue.buildProductionBatchGroups(filteredRecords, staffOrdersState.filters);
+  let batchSummary = { readyGroups: [], issueGroups: [] };
+  staffOrdersState.batchError = '';
+
+  try {
+    batchSummary = forgeLocalOrdersQueue.buildProductionBatchGroups(filteredRecords, staffOrdersState.filters);
+  } catch (error) {
+    console.error('Forge production batch summary failed to build', error);
+    staffOrdersState.batchError = 'Production batches could not be built on this device.';
+  }
+  staffOrdersState.batchSummary = batchSummary;
 
   staffOrdersSummary.innerHTML = [
     { label: 'Total Saved Orders', value: summary.totalOrders },
@@ -3695,12 +3948,16 @@ function renderStaffOrdersQueue() {
 
   staffOrdersFilters.innerHTML = [
     { key: 'product', label: 'Product', options: availableFilters.product },
+    { key: 'ornamentType', label: 'Ornament Type', options: availableFilters.ornamentType },
     { key: 'size', label: 'Size', options: availableFilters.size },
     { key: 'treeColor', label: 'Tree Color', options: availableFilters.treeColor },
     { key: 'bowColor', label: 'Bow Color', options: availableFilters.bowColor },
     { key: 'year', label: 'Year', options: availableFilters.year },
+    { key: 'productionStatus', label: 'Production Status', options: availableFilters.productionStatus },
     { key: 'fulfillment', label: 'Fulfillment', options: availableFilters.fulfillment },
+    { key: 'event', label: 'Event', options: availableFilters.event },
     { key: 'openFlags', label: 'Open Flags', options: availableFilters.openFlags },
+    { key: 'tray', label: 'Tray', options: availableFilters.tray },
     { key: 'syncStatus', label: 'Sync Status', options: availableFilters.syncStatus }
   ].map((field) => `
     <div class="staff-filter-field">
@@ -3708,7 +3965,7 @@ function renderStaffOrdersQueue() {
       <select id="staff-filter-${escapeHtml(field.key)}" data-staff-filter="${escapeHtml(field.key)}">
         <option value="all">All</option>
         ${field.options.map((option) => `
-          <option value="${escapeHtml(option.value)}"${staffOrdersState.filters[field.key] === option.value.toLowerCase() ? ' selected' : ''}>
+          <option value="${escapeHtml(option.value)}"${staffOrdersState.filters[field.key] === option.value ? ' selected' : ''}>
             ${escapeHtml(option.label)} (${escapeHtml(String(option.count))})
           </option>
         `).join('')}
@@ -3729,7 +3986,7 @@ function renderStaffOrdersQueue() {
 
   staffOrdersStatus.textContent = staffOrdersState.error || `${filteredRecords.length} order${filteredRecords.length === 1 ? '' : 's'} shown`;
 
-  staffBatchGroups.innerHTML = buildStaffBatchMarkup(batchSummary);
+  staffBatchGroups.innerHTML = buildStaffBatchMarkup(batchSummary, staffOrdersState.batchError);
   staffOrdersList.innerHTML = `
     ${buildStaffNoticeMarkup(staffOrdersState.notice, staffOrdersState.noticeTone)}
     ${filteredRecords.length
@@ -3811,27 +4068,68 @@ function buildReadyToPackCardMarkup(record) {
   `;
 }
 
-function buildStaffBatchMarkup(batchSummary) {
-  const cards = batchSummary.groups.map((group) => `
+function buildBatchCardMarkup(group, kind) {
+  return `
     <article class="staff-batch-card">
-      <strong>${escapeHtml(group.label)}</strong>
-      <span class="staff-batch-card-quantity">${escapeHtml(`${group.quantity} item${group.quantity === 1 ? '' : 's'}`)}</span>
+      <div class="staff-batch-card-copy">
+        <strong>${escapeHtml(group.label)}</strong>
+        <span class="staff-batch-card-quantity">${escapeHtml(`${formatPieceCountLabel(group.remainingQuantity)} remaining`)}</span>
+        <span>${escapeHtml(`${group.requiredQuantity} required • ${group.completedQuantity} complete`)}</span>
+        <span>${escapeHtml(`${group.orderCount} order${group.orderCount === 1 ? '' : 's'}`)}</span>
+      </div>
+      <div class="staff-order-card-actions">
+        <button class="secondary-button" type="button" data-action="staff-view-batch" data-batch-kind="${escapeHtml(kind)}" data-batch-key="${escapeHtml(group.key)}">View Batch</button>
+      </div>
     </article>
-  `);
+  `;
+}
 
-  if (batchSummary.customIconRequiredCount > 0) {
-    cards.push(`
-      <article class="staff-batch-card">
-        <strong>Custom Icon Required</strong>
-        <span class="staff-batch-card-quantity">${escapeHtml(`${batchSummary.customIconRequiredCount} item${batchSummary.customIconRequiredCount === 1 ? '' : 's'}`)}</span>
-      </article>
-    `);
+function buildStaffBatchMarkup(batchSummary, batchError = '') {
+  if (batchError) {
+    return `
+      <div class="staff-empty-state">
+        <h3>Production batches unavailable</h3>
+        <p>${escapeHtml(batchError)}</p>
+      </div>
+    `;
   }
 
-  return cards.length ? cards.join('') : `
-    <div class="staff-empty-state">
-      <h3>No batch data</h3>
-      <p>Saved orders will appear here as soon as a filter matches at least one production line item.</p>
+  const readyGroups = Array.isArray(batchSummary?.readyGroups) ? batchSummary.readyGroups : [];
+  const issueGroups = Array.isArray(batchSummary?.issueGroups) ? batchSummary.issueGroups : [];
+
+  return `
+    <div class="staff-batch-sections">
+      <section class="staff-batch-section">
+        <div class="staff-section-heading">
+          <div>
+            <p class="eyebrow staff-orders-eyebrow">Ready to Produce</p>
+            <h3>Production Setups</h3>
+          </div>
+        </div>
+        <div class="staff-batch-groups">
+          ${readyGroups.length
+            ? readyGroups.map((group) => buildBatchCardMarkup(group, 'ready')).join('')
+            : `
+              <div class="staff-empty-state">
+                <h3>No production batches ready</h3>
+                <p>Assign trays and resolve open issues before producing these items.</p>
+              </div>
+            `}
+        </div>
+      </section>
+      ${issueGroups.length ? `
+        <section class="staff-batch-section">
+          <div class="staff-section-heading">
+            <div>
+              <p class="eyebrow staff-orders-eyebrow">Needs Attention</p>
+              <h3>Issue Groups</h3>
+            </div>
+          </div>
+          <div class="staff-batch-groups">
+            ${issueGroups.map((group) => buildBatchCardMarkup(group, 'issue')).join('')}
+          </div>
+        </section>
+      ` : ''}
     </div>
   `;
 }
@@ -3843,6 +4141,8 @@ function buildStaffOrderCardMarkup(record, filters) {
   const estimatedTotalCents = payload.pricing?.estimated_total_cents;
   const fulfillmentMethod = payload.fulfillment?.method === 'pickup' ? 'Pickup' : 'Shipping';
   const itemCount = matchingItems.reduce((sum, item) => sum + (Number.isInteger(item.quantity) ? item.quantity : 1), 0);
+  const hasActiveItemFilters = ['product', 'ornamentType', 'size', 'treeColor', 'bowColor', 'year', 'productionStatus']
+    .some((key) => String(filters?.[key] || 'all').toLowerCase() !== 'all');
   const hasFlags = Array.isArray(payload.open_flags) && payload.open_flags.length > 0;
   const trayLabel = getOrderTrayLabel(record);
   const productionStatusLabel = getOrderProductionStatusLabel(record);
@@ -3872,7 +4172,7 @@ function buildStaffOrderCardMarkup(record, filters) {
         <div><span>Progress</span><strong>${escapeHtml(completionSummary)}</strong></div>
       </div>
       <div class="staff-order-card-meta staff-order-card-meta--secondary">
-        <div><span>Items</span><strong>${escapeHtml(String(itemCount))}</strong></div>
+        <div><span>${hasActiveItemFilters ? 'Matching Pieces' : 'Items'}</span><strong>${escapeHtml(String(itemCount))}</strong></div>
         <div><span>Estimated Total</span><strong>${Number.isInteger(estimatedTotalCents) ? escapeHtml(formatPrice(estimatedTotalCents / 100)) : 'Quote Required'}</strong></div>
         <div><span>Fulfillment</span><strong>${escapeHtml(fulfillmentMethod)}</strong></div>
       </div>
@@ -3923,6 +4223,7 @@ async function loadStaffOrdersQueue() {
 async function openStaffOrderDetail(forgeOrderUuid) {
   ensureStaffOrderDetailUi();
   ensureStaffTrayAssignmentUi();
+  ensureStaffBatchUi();
   ensureStaffPackingUi();
   if (!staffOrderDetailDialog) {
     return;
@@ -4866,6 +5167,15 @@ function getStaffTrayAssignmentFocusableElements() {
     .filter((element) => !element.hasAttribute('disabled'));
 }
 
+function getStaffBatchFocusableElements() {
+  if (!staffBatchDialog) {
+    return [];
+  }
+
+  return [...staffBatchDialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter((element) => !element.hasAttribute('disabled'));
+}
+
 function getStaffPackingFocusableElements() {
   if (!staffPackingDialog) {
     return [];
@@ -5615,6 +5925,7 @@ if (treeForm) {
   ensureSavedOrdersUi();
   ensureStaffOrderDetailUi();
   ensureStaffTrayAssignmentUi();
+  ensureStaffBatchUi();
   renderDebugOrderTools();
   renderPlaceOrderButton();
   renderStaffOrdersQueue();
@@ -5699,6 +6010,33 @@ if (treeForm) {
   });
 
   document.addEventListener('keydown', (event) => {
+    if (staffOrdersState.batchDialogOpen && event.key === 'Tab') {
+      const focusable = getStaffBatchFocusableElements();
+      if (focusable.length === 0) {
+        event.preventDefault();
+        staffBatchDialog?.focus();
+        return;
+      }
+
+      const currentIndex = focusable.indexOf(document.activeElement);
+      if (event.shiftKey) {
+        if (currentIndex <= 0) {
+          event.preventDefault();
+          focusable[focusable.length - 1].focus();
+        }
+      } else if (currentIndex === focusable.length - 1 || currentIndex === -1) {
+        event.preventDefault();
+        focusable[0].focus();
+      }
+      return;
+    }
+
+    if (staffOrdersState.batchDialogOpen && event.key === 'Escape') {
+      event.preventDefault();
+      closeStaffBatchDialog();
+      return;
+    }
+
     if (staffOrdersState.packingDialogOpen && event.key === 'Tab') {
       const focusable = getStaffPackingFocusableElements();
       if (focusable.length === 0) {
@@ -6326,6 +6664,7 @@ if (treeForm) {
 
     if (action === 'staff-return-welcome') {
       staffOrdersState.notice = '';
+      closeStaffBatchDialog({ restoreFocus: false });
       closeStaffPackingDialog({ restoreFocus: false });
       closeStaffTrayAssignment();
       closeStaffOrderDetail();
@@ -6343,6 +6682,15 @@ if (treeForm) {
 
     if (action === 'staff-view-order' && orderUuid) {
       openStaffOrderDetail(orderUuid);
+    }
+
+    if (action === 'staff-view-batch') {
+      const batchButton = event.target.closest('[data-batch-key]');
+      const batchKind = batchButton?.dataset.batchKind || '';
+      const batchKey = batchButton?.dataset.batchKey || '';
+      if (batchKind && batchKey) {
+        openStaffBatchDialog(batchKind, batchKey);
+      }
     }
 
     if (action === 'staff-pack-order' && orderUuid) {
@@ -6372,6 +6720,7 @@ if (treeForm) {
 
     if (action === 'staff-return-welcome') {
       staffOrdersState.notice = '';
+      closeStaffBatchDialog({ restoreFocus: false });
       closeStaffPackingDialog({ restoreFocus: false });
       closeStaffTrayAssignment();
       closeStaffOrderDetail();
