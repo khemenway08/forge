@@ -15,7 +15,6 @@
 }(typeof globalThis !== 'undefined' ? globalThis : this, function (payloadBuilder, orderStoreModule) {
   const SUBMISSION_CONTEXT_STORAGE_KEY = 'forge-order-submission-context';
   const COMPLETION_RECEIPT_STORAGE_KEY = 'forge-order-completion-receipt';
-
   function createSubmissionContextManager(options = {}) {
     const storage = options.storage || null;
     const storageKey = options.storageKey || SUBMISSION_CONTEXT_STORAGE_KEY;

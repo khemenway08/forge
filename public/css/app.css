@@ -2189,6 +2189,13 @@ h1 {
   gap: 16px;
 }
 
+.staff-order-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: 10px;
+}
+
 .staff-order-card-header,
 .staff-order-card-meta,
 .staff-order-card-actions,
@@ -2211,7 +2218,8 @@ h1 {
 }
 
 .staff-status-badge,
-.staff-flag-badge {
+.staff-flag-badge,
+.staff-tray-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2229,6 +2237,16 @@ h1 {
   color: #ffb178;
 }
 
+.staff-status-badge--production-submitted {
+  background: rgba(216,165,59,.18);
+  color: #f3c768;
+}
+
+.staff-status-badge--production-tray-assigned {
+  background: rgba(76,175,115,.18);
+  color: #87d4a5;
+}
+
 .staff-status-badge--pending {
   background: rgba(216,165,59,.18);
   color: #f3c768;
@@ -2242,6 +2260,24 @@ h1 {
 .staff-flag-badge {
   background: rgba(217,106,94,.18);
   color: #ef9b90;
+}
+
+.staff-tray-badge {
+  border: 1px solid var(--staff-line);
+  background: rgba(255,255,255,.04);
+  color: var(--staff-text);
+}
+
+.staff-tray-badge--assigned {
+  background: rgba(76,175,115,.16);
+  border-color: rgba(76,175,115,.45);
+  color: #9be0b5;
+}
+
+.staff-tray-badge--unassigned {
+  background: rgba(216,165,59,.12);
+  border-color: rgba(216,165,59,.3);
+  color: #f3c768;
 }
 
 .staff-order-card-meta {
@@ -2300,6 +2336,26 @@ h1 {
   color: var(--staff-muted);
 }
 
+.staff-inline-notice {
+  padding: 14px 16px;
+  border: 1px solid var(--staff-line);
+  border-radius: 16px;
+  background: rgba(255,255,255,.04);
+  color: var(--staff-text);
+}
+
+.staff-inline-notice--success {
+  border-color: rgba(76,175,115,.35);
+  background: rgba(76,175,115,.12);
+  color: #9be0b5;
+}
+
+.staff-inline-notice--error {
+  border-color: rgba(217,106,94,.38);
+  background: rgba(217,106,94,.14);
+  color: #f6b5ad;
+}
+
 .staff-order-detail-backdrop {
   position: fixed;
   inset: 0;
@@ -2321,6 +2377,10 @@ h1 {
   box-shadow: 0 28px 68px rgba(0, 0, 0, .42);
   display: grid;
   gap: 18px;
+}
+
+.staff-tray-assignment-dialog {
+  width: min(860px, 100%);
 }
 
 .staff-order-detail-meta {
@@ -2366,6 +2426,23 @@ h1 {
 .staff-order-detail-row {
   display: grid;
   gap: 6px;
+}
+
+.staff-tray-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 12px;
+}
+
+.staff-tray-option {
+  min-height: 52px;
+  width: 100%;
+}
+
+.staff-tray-option.is-selected {
+  border-color: rgba(239,108,26,.72);
+  background: rgba(239,108,26,.18);
+  color: var(--staff-text);
 }
 
 .review-image-fallback {

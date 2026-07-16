@@ -18,8 +18,9 @@
         <button class="staff-entry" type="button" aria-label="Staff access" aria-expanded="false" data-action="staff">•••</button>
         <div class="staff-panel" data-staff-panel role="dialog" aria-labelledby="staff-panel-title" hidden>
           <p class="staff-panel-title" id="staff-panel-title">Staff Tools</p>
-          <p class="staff-panel-copy">Reset this shared kiosk before the next customer begins.</p>
+          <p class="staff-panel-copy">Open Staff Orders or reset this shared kiosk before the next customer begins.</p>
           <div class="staff-panel-actions" data-staff-actions="default">
+            <button class="secondary-button" type="button" data-action="staff-open-orders">Staff Orders</button>
             <button class="secondary-button" type="button" data-action="staff-reset-kiosk">Reset Kiosk</button>
             <button class="secondary-button" type="button" data-action="close-staff-panel">Cancel</button>
           </div>
@@ -56,7 +57,7 @@
               <div>
                 <p class="eyebrow staff-orders-eyebrow">Development Only</p>
                 <h1>Local Orders Queue</h1>
-                <p class="lead">Read-only access to the durable local orders stored on this device.</p>
+                <p class="lead">View durable local orders on this device and assign one production tray per active order.</p>
               </div>
             </div>
             <div class="staff-orders-header-actions">

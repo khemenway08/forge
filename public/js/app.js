@@ -80,11 +80,21 @@ const staffOrdersState = {
   searchTerm: '',
   filters: {},
   error: '',
+  notice: '',
+  noticeTone: 'success',
   detailOpen: false,
   detailOrderUuid: '',
   detailRecord: null,
   detailLoading: false,
-  detailError: ''
+  detailError: '',
+  trayDialogOpen: false,
+  trayDialogOrderUuid: '',
+  trayDialogRecord: null,
+  trayDialogLoading: false,
+  trayDialogSaving: false,
+  trayDialogError: '',
+  trayDialogSelectedTrayNumber: null,
+  trayDialogAvailableTrays: []
 };
 
 if (!forgeProductCatalog) {
@@ -516,7 +526,6 @@ const finalReviewState = {
   tone: '',
   savingOrder: false
 };
-
 const payloadPreviewState = {
   enabled: forgeOrderPayloadPreview.isPayloadPreviewEnabled(window.location.search),
   open: false,
@@ -555,6 +564,9 @@ let savedOrdersStatus = null;
 let staffOrderDetailBackdrop = null;
 let staffOrderDetailDialog = null;
 let lastStaffOrderDetailFocusTarget = null;
+let staffTrayAssignmentBackdrop = null;
+let staffTrayAssignmentDialog = null;
+let lastStaffTrayAssignmentFocusTarget = null;
 const payloadPreviewContextStore = forgeOrderPayloadPreview.createPayloadPreviewContextStore();
 const orderStore = forgeOrderStore.createOrderStore();
 const submissionContextManager = forgeOrderSubmission.createSubmissionContextManager({
@@ -1225,7 +1237,7 @@ function setStaffPanelState(isOpen, needsConfirmation = false) {
   if (isOpen) {
     const focusTarget = needsConfirmation
       ? staffPanel.querySelector('[data-action="cancel-staff-reset"]')
-      : staffPanel.querySelector('[data-action="staff-reset-kiosk"]');
+      : staffPanel.querySelector('[data-action="staff-open-orders"]') || staffPanel.querySelector('[data-action="staff-reset-kiosk"]');
     window.setTimeout(() => focusTarget?.focus(), 0);
   }
 }
@@ -1235,6 +1247,16 @@ function closeStaffPanel() {
   if (lastStaffFocusTarget instanceof HTMLElement) {
     lastStaffFocusTarget.focus();
   }
+}
+
+function openStaffOrdersScreen() {
+  staffOrdersState.enabled = true;
+  ensureStaffOrderDetailUi();
+  ensureStaffTrayAssignmentUi();
+  renderStaffOrdersQueue();
+  loadStaffOrdersQueue();
+  closeStaffPanel();
+  showScreen('staff-orders');
 }
 
 function resetActiveOrderSession({ clearCart = true, goToWelcome = true } = {}) {
@@ -3192,6 +3214,129 @@ function ensureStaffOrderDetailUi() {
 
   staffOrderDetailBackdrop = document.querySelector('[data-staff-order-detail-backdrop]');
   staffOrderDetailDialog = document.querySelector('[data-staff-order-detail-dialog]');
+
+  staffOrderDetailDialog?.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    const orderUuid = event.target.closest('[data-order-uuid]')?.dataset.orderUuid;
+    if (!action) {
+      return;
+    }
+
+    if (action === 'close-staff-order-detail') {
+      closeStaffOrderDetail();
+      return;
+    }
+
+    if (action === 'staff-view-order-json' && orderUuid) {
+      closeStaffOrderDetail();
+      inspectSavedOrderRecord(orderUuid);
+      return;
+    }
+
+    if (action === 'staff-open-tray-assignment' && orderUuid) {
+      openStaffTrayAssignment(orderUuid);
+    }
+  });
+
+  staffOrderDetailBackdrop?.addEventListener('click', (event) => {
+    if (event.target === staffOrderDetailBackdrop) {
+      closeStaffOrderDetail();
+    }
+  });
+}
+
+function ensureStaffTrayAssignmentUi() {
+  if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled) || staffTrayAssignmentDialog) {
+    return;
+  }
+
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="staff-order-detail-backdrop staff-tray-assignment-backdrop" data-staff-tray-assignment-backdrop hidden>
+      <div class="staff-order-detail-dialog staff-tray-assignment-dialog" data-staff-tray-assignment-dialog role="dialog" aria-modal="true" aria-labelledby="staff-tray-assignment-title" tabindex="-1" hidden></div>
+    </div>
+  `);
+
+  staffTrayAssignmentBackdrop = document.querySelector('[data-staff-tray-assignment-backdrop]');
+  staffTrayAssignmentDialog = document.querySelector('[data-staff-tray-assignment-dialog]');
+
+  staffTrayAssignmentDialog?.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    const trayNumber = Number.parseInt(event.target.closest('[data-tray-number]')?.dataset.trayNumber || '', 10);
+    if (!action) {
+      return;
+    }
+
+    if (action === 'close-staff-tray-assignment') {
+      closeStaffTrayAssignment();
+      return;
+    }
+
+    if (action === 'staff-select-tray' && Number.isInteger(trayNumber) && trayNumber > 0 && !staffOrdersState.trayDialogSaving) {
+      staffOrdersState.trayDialogSelectedTrayNumber = trayNumber;
+      staffOrdersState.trayDialogError = '';
+      renderStaffTrayAssignment();
+      return;
+    }
+
+    if (action === 'staff-confirm-tray-assignment') {
+      submitStaffTrayAssignment();
+    }
+  });
+
+  staffTrayAssignmentBackdrop?.addEventListener('click', (event) => {
+    if (event.target === staffTrayAssignmentBackdrop && !staffOrdersState.trayDialogSaving) {
+      closeStaffTrayAssignment();
+    }
+  });
+}
+
+function getOrderShortReference(record) {
+  return forgeLocalOrdersQueue.getShortOrderReference(record) || 'No Ref';
+}
+
+function getOrderProductionStatus(record) {
+  return sanitizeText(record?.production_status || forgeOrderStore.PRODUCTION_STATUSES?.submitted || 'submitted');
+}
+
+function getOrderProductionStatusLabel(record) {
+  return getOrderProductionStatus(record) === 'tray_assigned' ? 'Tray Assigned' : 'Submitted';
+}
+
+function getOrderProductionStatusBadgeClass(record) {
+  return getOrderProductionStatus(record) === 'tray_assigned'
+    ? 'staff-status-badge--production-tray-assigned'
+    : 'staff-status-badge--production-submitted';
+}
+
+function getOrderTrayNumber(record) {
+  return Number.isInteger(record?.current_tray_number) && record.current_tray_number > 0
+    ? record.current_tray_number
+    : null;
+}
+
+function getOrderTrayLabel(record) {
+  const trayNumber = getOrderTrayNumber(record);
+  return trayNumber ? `TRAY ${trayNumber}` : 'NO TRAY ASSIGNED';
+}
+
+function getOrderTrayBadgeClass(record) {
+  return getOrderTrayNumber(record) ? 'staff-tray-badge--assigned' : 'staff-tray-badge--unassigned';
+}
+
+function canAssignTrayToOrder(record) {
+  return !getOrderTrayNumber(record) && getOrderProductionStatus(record) === 'submitted';
+}
+
+function buildStaffNoticeMarkup(message, tone = 'success') {
+  if (!message) {
+    return '';
+  }
+
+  return `
+    <div class="staff-inline-notice staff-inline-notice--${escapeHtml(tone)}" role="status" aria-live="polite">
+      ${escapeHtml(message)}
+    </div>
+  `;
 }
 
 function renderStaffOrdersQueue() {
@@ -3260,14 +3405,17 @@ function renderStaffOrdersQueue() {
   staffOrdersStatus.textContent = staffOrdersState.error || `${filteredRecords.length} order${filteredRecords.length === 1 ? '' : 's'} shown`;
 
   staffBatchGroups.innerHTML = buildStaffBatchMarkup(batchSummary);
-  staffOrdersList.innerHTML = filteredRecords.length
-    ? filteredRecords.map((record) => buildStaffOrderCardMarkup(record, staffOrdersState.filters)).join('')
-    : `
-      <div class="staff-empty-state">
-        <h3>No orders match these filters</h3>
-        <p>Adjust the search or clear filters to see the saved local orders on this device.</p>
-      </div>
-    `;
+  staffOrdersList.innerHTML = `
+    ${buildStaffNoticeMarkup(staffOrdersState.notice, staffOrdersState.noticeTone)}
+    ${filteredRecords.length
+      ? filteredRecords.map((record) => buildStaffOrderCardMarkup(record, staffOrdersState.filters)).join('')
+      : `
+        <div class="staff-empty-state">
+          <h3>No orders match these filters</h3>
+          <p>Adjust the search or clear filters to see the saved local orders on this device.</p>
+        </div>
+      `}
+  `;
 }
 
 function buildStaffBatchMarkup(batchSummary) {
@@ -3304,15 +3452,19 @@ function buildStaffOrderCardMarkup(record, filters) {
   const itemCount = matchingItems.reduce((sum, item) => sum + (Number.isInteger(item.quantity) ? item.quantity : 1), 0);
   const hasFlags = Array.isArray(payload.open_flags) && payload.open_flags.length > 0;
   const syncStatus = sanitizeText(record.sync_status || 'pending');
+  const trayLabel = getOrderTrayLabel(record);
+  const productionStatusLabel = getOrderProductionStatusLabel(record);
 
   return `
     <article class="staff-order-card">
       <div class="staff-order-card-header">
         <div>
-          <div class="staff-order-ref">${escapeHtml(forgeLocalOrdersQueue.getShortOrderReference(record) || 'No Ref')}</div>
+          <div class="staff-order-ref">${escapeHtml(getOrderShortReference(record))}</div>
           <p>${escapeHtml(formatReadableDateTime(record.submitted_at || record.local_saved_at || ''))}</p>
         </div>
-        <div class="staff-order-card-actions">
+        <div class="staff-order-card-badges">
+          <span class="staff-tray-badge ${escapeHtml(getOrderTrayBadgeClass(record))}">${escapeHtml(trayLabel)}</span>
+          <span class="staff-status-badge ${escapeHtml(getOrderProductionStatusBadgeClass(record))}">${escapeHtml(productionStatusLabel)}</span>
           <span class="staff-status-badge staff-status-badge--${escapeHtml(syncStatus.toLowerCase())}">${escapeHtml(syncStatus.replace(/_/g, ' '))}</span>
           ${hasFlags ? '<span class="staff-flag-badge">Open Flags</span>' : ''}
         </div>
@@ -3320,7 +3472,9 @@ function buildStaffOrderCardMarkup(record, filters) {
       <div class="staff-order-card-meta">
         <div><span>Customer</span><strong>${escapeHtml(payload.customer?.full_name || 'Unknown customer')}</strong></div>
         <div><span>Items</span><strong>${escapeHtml(String(itemCount))}</strong></div>
+        <div><span>Production</span><strong>${escapeHtml(productionStatusLabel)}</strong></div>
         <div><span>Estimated Total</span><strong>${Number.isInteger(estimatedTotalCents) ? escapeHtml(formatPrice(estimatedTotalCents / 100)) : 'Quote Required'}</strong></div>
+        <div><span>Tray</span><strong>${escapeHtml(trayLabel)}</strong></div>
         <div><span>Fulfillment</span><strong>${escapeHtml(fulfillmentMethod)}</strong></div>
       </div>
       <div class="staff-order-products">
@@ -3367,6 +3521,7 @@ async function loadStaffOrdersQueue() {
 
 async function openStaffOrderDetail(forgeOrderUuid) {
   ensureStaffOrderDetailUi();
+  ensureStaffTrayAssignmentUi();
   if (!staffOrderDetailDialog) {
     return;
   }
@@ -3399,6 +3554,9 @@ async function openStaffOrderDetail(forgeOrderUuid) {
 }
 
 function closeStaffOrderDetail() {
+  if (staffOrdersState.trayDialogOpen) {
+    closeStaffTrayAssignment();
+  }
   staffOrdersState.detailOpen = false;
   staffOrdersState.detailLoading = false;
   staffOrdersState.detailOrderUuid = '';
@@ -3462,20 +3620,32 @@ function renderStaffOrderDetail() {
   const fulfillment = payload.fulfillment || {};
   const openFlags = Array.isArray(payload.open_flags) ? payload.open_flags : [];
   const shippingAddress = fulfillment.shipping_address || null;
+  const shortOrderReference = getOrderShortReference(record);
+  const productionStatusLabel = getOrderProductionStatusLabel(record);
+  const trayLabel = getOrderTrayLabel(record);
+  const showAssignTrayAction = canAssignTrayToOrder(record);
 
   staffOrderDetailDialog.innerHTML = `
     <div class="staff-order-detail-header">
       <div>
         <p class="eyebrow staff-orders-eyebrow">Development Only</p>
-        <h2 id="staff-order-detail-title">Order ${escapeHtml(forgeLocalOrdersQueue.getShortOrderReference(record) || 'Detail')}</h2>
+        <h2 id="staff-order-detail-title">Order ${escapeHtml(shortOrderReference)}</h2>
+        <p>${escapeHtml(customer.full_name || 'Unknown customer')}</p>
       </div>
       <div class="staff-order-card-actions">
+        ${showAssignTrayAction ? `<button class="primary-button" type="button" data-action="staff-open-tray-assignment" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Assign Tray</button>` : ''}
         <button class="secondary-button" type="button" data-action="staff-view-order-json" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">View Raw JSON</button>
         <button class="text-button" type="button" data-action="close-staff-order-detail">Close</button>
       </div>
     </div>
 
+    ${buildStaffNoticeMarkup(staffOrdersState.notice, staffOrdersState.noticeTone)}
+
     <div class="staff-order-detail-meta">
+      <div><span>Order Number</span><strong>${escapeHtml(shortOrderReference)}</strong></div>
+      <div><span>Customer</span><strong>${escapeHtml(customer.full_name || 'Unknown customer')}</strong></div>
+      <div><span>Tray</span><strong>${escapeHtml(trayLabel)}</strong></div>
+      <div><span>Production Status</span><strong>${escapeHtml(productionStatusLabel)}</strong></div>
       <div><span>UUID</span><strong>${escapeHtml(record.forge_order_uuid)}</strong></div>
       <div><span>Submitted</span><strong>${escapeHtml(formatReadableDateTime(record.submitted_at || ''))}</strong></div>
       <div><span>Local Saved</span><strong>${escapeHtml(formatReadableDateTime(record.local_saved_at || ''))}</strong></div>
@@ -3485,7 +3655,8 @@ function renderStaffOrderDetail() {
     <section class="staff-order-detail-section">
       <h3>Order</h3>
       <div class="staff-order-detail-grid">
-        <div><span>Status</span><strong>${escapeHtml(record.status || 'submitted')}</strong></div>
+        <div><span>Production Status</span><strong>${escapeHtml(productionStatusLabel)}</strong></div>
+        <div><span>Tray State</span><strong>${escapeHtml(trayLabel)}</strong></div>
         <div><span>Sync Attempts</span><strong>${escapeHtml(String(record.sync_attempt_count ?? 0))}</strong></div>
       </div>
       <div class="staff-order-detail-flags">
@@ -3525,6 +3696,206 @@ function renderStaffOrderDetail() {
   `;
 }
 
+async function openStaffTrayAssignment(forgeOrderUuid) {
+  ensureStaffTrayAssignmentUi();
+  if (!staffTrayAssignmentDialog) {
+    return;
+  }
+
+  staffOrdersState.trayDialogOpen = true;
+  staffOrdersState.trayDialogLoading = true;
+  staffOrdersState.trayDialogSaving = false;
+  staffOrdersState.trayDialogError = '';
+  staffOrdersState.trayDialogOrderUuid = forgeOrderUuid;
+  staffOrdersState.trayDialogRecord = null;
+  staffOrdersState.trayDialogSelectedTrayNumber = null;
+  staffOrdersState.trayDialogAvailableTrays = [];
+  lastStaffTrayAssignmentFocusTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  renderStaffTrayAssignment();
+
+  try {
+    const [record, trays] = await Promise.all([
+      orderStore.getOrder(forgeOrderUuid),
+      orderStore.listTrays()
+    ]);
+
+    if (!record) {
+      staffOrdersState.trayDialogError = 'That saved order could not be found.';
+    } else if (!canAssignTrayToOrder(record)) {
+      staffOrdersState.trayDialogError = 'This order already has an assigned tray.';
+    } else {
+      staffOrdersState.trayDialogRecord = record;
+      staffOrdersState.trayDialogAvailableTrays = trays.filter((tray) => tray.tray_status === 'available');
+    }
+  } catch (error) {
+    console.error('Forge tray assignment options failed to load', error);
+    staffOrdersState.trayDialogError = 'Production trays could not be loaded on this device.';
+  } finally {
+    staffOrdersState.trayDialogLoading = false;
+    renderStaffTrayAssignment();
+    window.setTimeout(() => {
+      (getStaffTrayAssignmentFocusableElements()[0] || staffTrayAssignmentDialog)?.focus();
+    }, 0);
+  }
+}
+
+function closeStaffTrayAssignment(options = {}) {
+  const restoreFocus = options.restoreFocus !== false;
+  staffOrdersState.trayDialogOpen = false;
+  staffOrdersState.trayDialogLoading = false;
+  staffOrdersState.trayDialogSaving = false;
+  staffOrdersState.trayDialogError = '';
+  staffOrdersState.trayDialogOrderUuid = '';
+  staffOrdersState.trayDialogRecord = null;
+  staffOrdersState.trayDialogSelectedTrayNumber = null;
+  staffOrdersState.trayDialogAvailableTrays = [];
+  renderStaffTrayAssignment();
+  if (restoreFocus && lastStaffTrayAssignmentFocusTarget) {
+    lastStaffTrayAssignmentFocusTarget.focus();
+  }
+  lastStaffTrayAssignmentFocusTarget = null;
+}
+
+async function submitStaffTrayAssignment() {
+  if (
+    staffOrdersState.trayDialogSaving
+    || !staffOrdersState.trayDialogRecord
+    || !staffOrdersState.trayDialogSelectedTrayNumber
+  ) {
+    return;
+  }
+
+  staffOrdersState.trayDialogSaving = true;
+  staffOrdersState.trayDialogError = '';
+  renderStaffTrayAssignment();
+
+  try {
+    const result = await orderStore.assignTrayToOrder(
+      staffOrdersState.trayDialogRecord.forge_order_uuid,
+      staffOrdersState.trayDialogSelectedTrayNumber
+    );
+
+    staffOrdersState.notice = `Tray ${result.tray.tray_number} assigned to ${result.order.payload?.customer?.full_name || 'this order'}.`;
+    staffOrdersState.noticeTone = 'success';
+    closeStaffTrayAssignment({ restoreFocus: false });
+    await loadStaffOrdersQueue();
+    staffOrdersState.detailRecord = await orderStore.getOrder(result.order.forge_order_uuid);
+    renderStaffOrderDetail();
+  } catch (error) {
+    console.error('Forge tray assignment failed', error);
+    staffOrdersState.trayDialogError = error?.message || 'Tray assignment could not be saved.';
+    staffOrdersState.notice = '';
+    staffOrdersState.trayDialogSaving = false;
+    renderStaffTrayAssignment();
+  }
+}
+
+function renderStaffTrayAssignment() {
+  ensureStaffTrayAssignmentUi();
+  if (!staffTrayAssignmentBackdrop || !staffTrayAssignmentDialog) {
+    return;
+  }
+
+  staffTrayAssignmentBackdrop.hidden = !staffOrdersState.trayDialogOpen;
+  staffTrayAssignmentDialog.hidden = !staffOrdersState.trayDialogOpen;
+
+  if (!staffOrdersState.trayDialogOpen) {
+    staffTrayAssignmentDialog.innerHTML = '';
+    return;
+  }
+
+  if (staffOrdersState.trayDialogLoading) {
+    staffTrayAssignmentDialog.innerHTML = `
+      <div class="staff-order-detail-header">
+        <div>
+          <p class="eyebrow staff-orders-eyebrow">Production Tray Assignment</p>
+          <h2 id="staff-tray-assignment-title">Loading Trays</h2>
+        </div>
+        <button class="text-button" type="button" data-action="close-staff-tray-assignment">Cancel</button>
+      </div>
+      <p class="staff-orders-status">Loading available production trays...</p>
+    `;
+    return;
+  }
+
+  if (staffOrdersState.trayDialogError || !staffOrdersState.trayDialogRecord) {
+    staffTrayAssignmentDialog.innerHTML = `
+      <div class="staff-order-detail-header">
+        <div>
+          <p class="eyebrow staff-orders-eyebrow">Production Tray Assignment</p>
+          <h2 id="staff-tray-assignment-title">Tray Assignment Unavailable</h2>
+        </div>
+        <button class="text-button" type="button" data-action="close-staff-tray-assignment">Close</button>
+      </div>
+      <div class="staff-empty-state">
+        <h3>Unable to assign a tray</h3>
+        <p>${escapeHtml(staffOrdersState.trayDialogError || 'Tray assignment is unavailable.')}</p>
+      </div>
+    `;
+    return;
+  }
+
+  const record = staffOrdersState.trayDialogRecord;
+  const customerName = record.payload?.customer?.full_name || 'Unknown customer';
+  const availableTrays = [...staffOrdersState.trayDialogAvailableTrays].sort((left, right) => left.tray_number - right.tray_number);
+  const hasSelection = Number.isInteger(staffOrdersState.trayDialogSelectedTrayNumber);
+  const disableSubmit = !hasSelection || staffOrdersState.trayDialogSaving;
+
+  staffTrayAssignmentDialog.innerHTML = `
+    <div class="staff-order-detail-header">
+      <div>
+        <p class="eyebrow staff-orders-eyebrow">Production Tray Assignment</p>
+        <h2 id="staff-tray-assignment-title">Assign Tray</h2>
+        <p>${escapeHtml(getOrderShortReference(record))} • ${escapeHtml(customerName)}</p>
+      </div>
+      <button class="text-button" type="button" data-action="close-staff-tray-assignment"${staffOrdersState.trayDialogSaving ? ' disabled' : ''}>Cancel</button>
+    </div>
+
+    ${staffOrdersState.trayDialogError ? buildStaffNoticeMarkup(staffOrdersState.trayDialogError, 'error') : ''}
+
+    <section class="staff-order-detail-section">
+      <div class="staff-order-detail-grid">
+        <div><span>Order Number</span><strong>${escapeHtml(getOrderShortReference(record))}</strong></div>
+        <div><span>Customer</span><strong>${escapeHtml(customerName)}</strong></div>
+        <div><span>Current Tray</span><strong>${escapeHtml(getOrderTrayLabel(record))}</strong></div>
+        <div><span>Production Status</span><strong>${escapeHtml(getOrderProductionStatusLabel(record))}</strong></div>
+      </div>
+    </section>
+
+    <section class="staff-order-detail-section">
+      <h3>Available Production Trays</h3>
+      ${availableTrays.length ? `
+        <div class="staff-tray-grid" role="group" aria-label="Available production trays">
+          ${availableTrays.map((tray) => `
+            <button
+              class="secondary-button staff-tray-option${staffOrdersState.trayDialogSelectedTrayNumber === tray.tray_number ? ' is-selected' : ''}"
+              type="button"
+              data-action="staff-select-tray"
+              data-tray-number="${escapeHtml(String(tray.tray_number))}"
+              aria-pressed="${staffOrdersState.trayDialogSelectedTrayNumber === tray.tray_number ? 'true' : 'false'}"
+              ${staffOrdersState.trayDialogSaving ? 'disabled' : ''}
+            >
+              Tray ${escapeHtml(String(tray.tray_number))}
+            </button>
+          `).join('')}
+        </div>
+      ` : `
+        <div class="staff-empty-state">
+          <h3>No production trays are currently available.</h3>
+          <p>Finish packing or release a tray before assigning another order.</p>
+        </div>
+      `}
+    </section>
+
+    <div class="staff-order-card-actions">
+      <button class="primary-button" type="button" data-action="staff-confirm-tray-assignment"${disableSubmit ? ' disabled' : ''}>
+        ${staffOrdersState.trayDialogSaving ? 'Assigning Tray...' : 'Assign Tray'}
+      </button>
+      <button class="secondary-button" type="button" data-action="close-staff-tray-assignment"${staffOrdersState.trayDialogSaving ? ' disabled' : ''}>Cancel</button>
+    </div>
+  `;
+}
+
 function getStaffOrderItemsMarkup(items) {
   if (!Array.isArray(items) || items.length === 0) {
     return '<div class="staff-empty-state"><h3>No items</h3><p>No normalized line items were stored for this record.</p></div>';
@@ -3532,8 +3903,11 @@ function getStaffOrderItemsMarkup(items) {
 
   return items.map((item) => {
     const flags = Array.isArray(item.open_flags) ? item.open_flags : [];
-    const attributes = item.structured_attributes || {};
     const pricing = item.pricing || {};
+    const itemDetails = buildStaffItemDetailRows(item);
+    const showPersonalizationOrder = usesPeopleAndPetsPersonalization(item);
+    const customerNote = sanitizeText(item.customer_note || '');
+    const productionNote = sanitizeText(item.production_note || '');
     return `
       <article>
         <div class="staff-order-card-header">
@@ -3544,18 +3918,24 @@ function getStaffOrderItemsMarkup(items) {
           ${flags.length ? '<span class="staff-flag-badge">Item Flags</span>' : ''}
         </div>
         <div class="staff-order-detail-grid">
-          <div><span>Configuration</span><strong>${escapeHtml(formatStaffConfigurationSummary(attributes))}</strong></div>
+          ${itemDetails.map((detail) => `
+            <div>
+              <span>${escapeHtml(detail.label)}</span>
+              <strong>${escapeHtml(detail.value)}</strong>
+            </div>
+          `).join('')}
           <div><span>Prices</span><strong>${Number.isInteger(pricing.line_total_cents) ? escapeHtml(formatPrice(pricing.line_total_cents / 100)) : 'Quote Required'}</strong></div>
-          <div><span>Structured Attributes</span><strong>${escapeHtml(formatStaffStructuredAttributes(attributes))}</strong></div>
-          <div><span>Customer Note</span><strong>${escapeHtml(item.customer_note || 'None')}</strong></div>
-          <div><span>Production Note</span><strong>${escapeHtml(item.production_note || 'None')}</strong></div>
+          ${customerNote ? `<div><span>Customer Note</span><strong>${escapeHtml(customerNote)}</strong></div>` : ''}
+          ${productionNote ? `<div><span>Production Note</span><strong>${escapeHtml(productionNote)}</strong></div>` : ''}
         </div>
-        <div class="staff-order-detail-row">
-          <span>Personalization Order</span>
-          ${Array.isArray(item.personalization_order) && item.personalization_order.length
-            ? `<ul class="staff-order-detail-list">${item.personalization_order.map((entry) => `<li>${escapeHtml(formatStaffPersonalizationEntry(entry))}</li>`).join('')}</ul>`
-            : '<p>No personalization order saved.</p>'}
-        </div>
+        ${showPersonalizationOrder ? `
+          <div class="staff-order-detail-row">
+            <span>People & Pets Order</span>
+            ${Array.isArray(item.personalization_order) && item.personalization_order.length
+              ? `<ul class="staff-order-detail-list">${item.personalization_order.map((entry) => `<li>${escapeHtml(formatStaffPersonalizationEntry(entry))}</li>`).join('')}</ul>`
+              : '<p>No people or pets were added.</p>'}
+          </div>
+        ` : ''}
         <div class="staff-order-detail-row">
           <span>Item Open Flags</span>
           ${flags.length ? `<ul class="staff-order-detail-list">${flags.map((flag) => `<li>${escapeHtml(flag.message || flag.code || 'Open flag')}</li>`).join('')}</ul>` : '<p>No item open flags.</p>'}
@@ -3565,30 +3945,64 @@ function getStaffOrderItemsMarkup(items) {
   }).join('');
 }
 
-function formatStaffConfigurationSummary(attributes) {
-  const parts = [];
-  if (attributes.size) {
-    parts.push(attributes.size);
-  }
-  if (attributes.tree_color) {
-    parts.push(attributes.tree_color);
-  }
-  if (attributes.bow_color) {
-    parts.push(`${attributes.bow_color} Bow`);
-  }
-  if (attributes.year) {
-    parts.push(`Year ${attributes.year}`);
-  }
-  return parts.join(' / ') || 'No additional production attributes';
+function buildStaffItemDetailRows(item) {
+  const attributes = item?.structured_attributes && typeof item.structured_attributes === 'object'
+    ? item.structured_attributes
+    : {};
+  const configurationSnapshot = item?.configuration_snapshot && typeof item.configuration_snapshot === 'object'
+    ? item.configuration_snapshot
+    : {};
+  const productDefinitionId = resolveConfiguredProductDefinitionId(
+    item?.product_definition_id || attributes.product_definition_id || item?.productDefinitionId || ''
+  );
+  const familyFieldLabel = getFamilyFieldLabel(productDefinitionId);
+  const rows = [
+    { label: 'Product', value: sanitizeText(item?.product_display_name || item?.product_definition_id || '') },
+    { label: 'Fulfillment', value: formatFulfillmentMethodLabel(attributes.fulfillment_method) },
+    { label: 'Size', value: sanitizeText(attributes.size || configurationSnapshot.size || '') },
+    { label: 'Tree Color', value: sanitizeText(attributes.tree_color || configurationSnapshot.treeColor || configurationSnapshot.tree_color || '') },
+    { label: getBowColorDetailLabel(productDefinitionId), value: sanitizeText(attributes.bow_color || configurationSnapshot.bowColor || configurationSnapshot.bow_color || configurationSnapshot.bow_and_stocking_color || '') },
+    { label: familyFieldLabel, value: sanitizeText(attributes.family_name || configurationSnapshot.familyName || configurationSnapshot.family_name || configurationSnapshot.lastName || configurationSnapshot.last_name || '') },
+    { label: 'Personalization', value: formatPersonalizationModeLabel(configurationSnapshot.personalizationMode || configurationSnapshot.personalization_mode || '') },
+    { label: 'Edge Text', value: sanitizeText(configurationSnapshot.edgeText || configurationSnapshot.edge_text || '') },
+    { label: 'Year', value: formatDisplayValue(attributes.year ?? configurationSnapshot.year ?? configurationSnapshot.establishedYear ?? configurationSnapshot.established_year ?? '') }
+  ];
+
+  return rows.filter((row) => row.value);
 }
 
-function formatStaffStructuredAttributes(attributes) {
-  return [
-    attributes.product_definition_id,
-    attributes.fulfillment_method,
-    attributes.family_name,
-    attributes.year
-  ].filter(Boolean).join(' / ') || 'No structured attributes';
+function getBowColorDetailLabel(productDefinitionId) {
+  return productDefinitionId === 'babys_first_christmas' ? 'Bow and Stocking Color' : 'Bow Color';
+}
+
+function formatFulfillmentMethodLabel(value) {
+  const normalized = sanitizeText(value || '').toLowerCase();
+  if (normalized === 'pickup' || normalized === 'local pickup') {
+    return 'Local Pickup';
+  }
+  if (normalized === 'shipping') {
+    return 'Shipping';
+  }
+  return capitalizeWords(normalized);
+}
+
+function formatPersonalizationModeLabel(value) {
+  const normalized = sanitizeText(value || '');
+  if (!normalized) {
+    return '';
+  }
+  if (normalized === 'As Shown' || normalized === 'Change Edge Text') {
+    return normalized;
+  }
+  return capitalizeWords(normalized);
+}
+
+function usesPeopleAndPetsPersonalization(item) {
+  const attributes = item?.structured_attributes && typeof item.structured_attributes === 'object'
+    ? item.structured_attributes
+    : {};
+  const personalizationOrder = Array.isArray(item?.personalization_order) ? item.personalization_order : [];
+  return personalizationOrder.length > 0 || Number(attributes.people_count || 0) > 0 || Number(attributes.pet_count || 0) > 0;
 }
 
 function formatStaffPersonalizationEntry(entry) {
@@ -3626,6 +4040,15 @@ function getStaffOrderDetailFocusableElements() {
   }
 
   return [...staffOrderDetailDialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter((element) => !element.hasAttribute('disabled'));
+}
+
+function getStaffTrayAssignmentFocusableElements() {
+  if (!staffTrayAssignmentDialog) {
+    return [];
+  }
+
+  return [...staffTrayAssignmentDialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
     .filter((element) => !element.hasAttribute('disabled'));
 }
 
@@ -4368,6 +4791,7 @@ if (treeForm) {
   ensurePayloadPreviewUi();
   ensureSavedOrdersUi();
   ensureStaffOrderDetailUi();
+  ensureStaffTrayAssignmentUi();
   renderDebugOrderTools();
   renderPlaceOrderButton();
   renderStaffOrdersQueue();
@@ -4411,6 +4835,11 @@ if (treeForm) {
       return;
     }
 
+    if (action === 'staff-open-orders') {
+      openStaffOrdersScreen();
+      return;
+    }
+
     if (action === 'close-staff-panel') {
       closeStaffPanel();
       return;
@@ -4441,6 +4870,33 @@ if (treeForm) {
   });
 
   document.addEventListener('keydown', (event) => {
+    if (staffOrdersState.trayDialogOpen && event.key === 'Tab') {
+      const focusable = getStaffTrayAssignmentFocusableElements();
+      if (focusable.length === 0) {
+        event.preventDefault();
+        staffTrayAssignmentDialog?.focus();
+        return;
+      }
+
+      const currentIndex = focusable.indexOf(document.activeElement);
+      if (event.shiftKey) {
+        if (currentIndex <= 0) {
+          event.preventDefault();
+          focusable[focusable.length - 1].focus();
+        }
+      } else if (currentIndex === focusable.length - 1 || currentIndex === -1) {
+        event.preventDefault();
+        focusable[0].focus();
+      }
+      return;
+    }
+
+    if (staffOrdersState.trayDialogOpen && event.key === 'Escape') {
+      event.preventDefault();
+      closeStaffTrayAssignment();
+      return;
+    }
+
     if (staffOrdersState.detailOpen && event.key === 'Tab') {
       const focusable = getStaffOrderDetailFocusableElements();
       if (focusable.length === 0) {
@@ -4949,30 +5405,6 @@ if (treeForm) {
     }
   });
 
-  staffOrderDetailDialog?.addEventListener('click', (event) => {
-    const action = event.target.closest('[data-action]')?.dataset.action;
-    const orderUuid = event.target.closest('[data-order-uuid]')?.dataset.orderUuid;
-    if (!action) {
-      return;
-    }
-
-    if (action === 'close-staff-order-detail') {
-      closeStaffOrderDetail();
-      return;
-    }
-
-    if (action === 'staff-view-order-json' && orderUuid) {
-      closeStaffOrderDetail();
-      inspectSavedOrderRecord(orderUuid);
-    }
-  });
-
-  staffOrderDetailBackdrop?.addEventListener('click', (event) => {
-    if (event.target === staffOrderDetailBackdrop) {
-      closeStaffOrderDetail();
-    }
-  });
-
   debugOrderToolContainers.forEach((container) => {
     container.addEventListener('click', (event) => {
       const action = event.target.closest('[data-action]')?.dataset.action;
@@ -5023,17 +5455,21 @@ if (treeForm) {
     }
 
     if (action === 'staff-refresh-orders') {
+      staffOrdersState.notice = '';
       loadStaffOrdersQueue();
       return;
     }
 
     if (action === 'staff-return-welcome') {
+      staffOrdersState.notice = '';
+      closeStaffTrayAssignment();
       closeStaffOrderDetail();
       showScreen('welcome');
       return;
     }
 
     if (action === 'staff-clear-order-filters') {
+      staffOrdersState.notice = '';
       staffOrdersState.searchTerm = '';
       staffOrdersState.filters = forgeLocalOrdersQueue.createEmptyOrderFilters();
       renderStaffOrdersQueue();
