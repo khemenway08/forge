@@ -2247,6 +2247,27 @@ h1 {
   color: #87d4a5;
 }
 
+.staff-status-badge--production-in-production {
+  background: rgba(239,108,26,.18);
+  color: #ffbf90;
+}
+
+.staff-status-badge--production-ready-to-pack {
+  background: rgba(76,175,115,.24);
+  color: #b9f0cb;
+}
+
+.staff-status-badge--production-packed,
+.staff-status-badge--production-complete {
+  background: rgba(96,168,255,.18);
+  color: #b8d8ff;
+}
+
+.staff-status-badge--production-cancelled {
+  background: rgba(217,106,94,.18);
+  color: #ef9b90;
+}
+
 .staff-status-badge--pending {
   background: rgba(216,165,59,.18);
   color: #f3c768;
@@ -2423,9 +2444,53 @@ h1 {
   font-size: 20px;
 }
 
+.staff-order-progress-text {
+  color: var(--staff-text);
+  font-weight: 700;
+}
+
 .staff-order-detail-row {
   display: grid;
   gap: 6px;
+}
+
+.staff-order-detail-note {
+  margin: 0;
+  color: var(--staff-muted);
+}
+
+.staff-item-progress-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.staff-item-progress-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.staff-item-progress-copy span {
+  color: var(--staff-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.staff-item-progress-copy strong {
+  color: var(--staff-text);
+}
+
+.staff-item-progress-copy p {
+  margin: 0;
+}
+
+.staff-item-complete-button {
+  min-width: 190px;
 }
 
 .staff-tray-grid {
@@ -2669,6 +2734,7 @@ h1 {
   .staff-order-card-header,
   .staff-order-card-meta,
   .staff-order-card-actions,
+  .staff-item-progress-row,
   .staff-section-heading,
   .staff-order-detail-header,
   .staff-order-detail-meta,

@@ -87,6 +87,7 @@ const staffOrdersState = {
   detailRecord: null,
   detailLoading: false,
   detailError: '',
+  detailSavingLineId: '',
   trayDialogOpen: false,
   trayDialogOrderUuid: '',
   trayDialogRecord: null,
@@ -3235,6 +3236,14 @@ function ensureStaffOrderDetailUi() {
 
     if (action === 'staff-open-tray-assignment' && orderUuid) {
       openStaffTrayAssignment(orderUuid);
+      return;
+    }
+
+    if (action === 'staff-complete-item' && orderUuid && !staffOrdersState.detailSavingLineId) {
+      const lineId = event.target.closest('[data-line-id]')?.dataset.lineId;
+      if (lineId) {
+        submitStaffItemCompletion(orderUuid, lineId);
+      }
     }
   });
 
@@ -3299,13 +3308,52 @@ function getOrderProductionStatus(record) {
 }
 
 function getOrderProductionStatusLabel(record) {
-  return getOrderProductionStatus(record) === 'tray_assigned' ? 'Tray Assigned' : 'Submitted';
+  const status = getOrderProductionStatus(record);
+  if (status === forgeOrderStore.PRODUCTION_STATUSES?.trayAssigned) {
+    return 'Tray Assigned';
+  }
+  if (status === forgeOrderStore.PRODUCTION_STATUSES?.inProduction) {
+    return 'In Production';
+  }
+  if (status === forgeOrderStore.PRODUCTION_STATUSES?.readyToPack) {
+    return 'Ready to Pack';
+  }
+  if (status === forgeOrderStore.PRODUCTION_STATUSES?.packed) {
+    return 'Packed';
+  }
+  if (status === forgeOrderStore.PRODUCTION_STATUSES?.shipped) {
+    return 'Shipped';
+  }
+  if (status === forgeOrderStore.PRODUCTION_STATUSES?.pickedUp) {
+    return 'Picked Up';
+  }
+  if (status === forgeOrderStore.PRODUCTION_STATUSES?.cancelled) {
+    return 'Cancelled';
+  }
+  return 'Submitted';
 }
 
 function getOrderProductionStatusBadgeClass(record) {
-  return getOrderProductionStatus(record) === 'tray_assigned'
-    ? 'staff-status-badge--production-tray-assigned'
-    : 'staff-status-badge--production-submitted';
+  const status = getOrderProductionStatus(record);
+  if (status === forgeOrderStore.PRODUCTION_STATUSES?.trayAssigned) {
+    return 'staff-status-badge--production-tray-assigned';
+  }
+  if (status === forgeOrderStore.PRODUCTION_STATUSES?.inProduction) {
+    return 'staff-status-badge--production-in-production';
+  }
+  if (status === forgeOrderStore.PRODUCTION_STATUSES?.readyToPack) {
+    return 'staff-status-badge--production-ready-to-pack';
+  }
+  if (status === forgeOrderStore.PRODUCTION_STATUSES?.packed) {
+    return 'staff-status-badge--production-packed';
+  }
+  if (status === forgeOrderStore.PRODUCTION_STATUSES?.shipped || status === forgeOrderStore.PRODUCTION_STATUSES?.pickedUp) {
+    return 'staff-status-badge--production-complete';
+  }
+  if (status === forgeOrderStore.PRODUCTION_STATUSES?.cancelled) {
+    return 'staff-status-badge--production-cancelled';
+  }
+  return 'staff-status-badge--production-submitted';
 }
 
 function getOrderTrayNumber(record) {
@@ -3325,6 +3373,99 @@ function getOrderTrayBadgeClass(record) {
 
 function canAssignTrayToOrder(record) {
   return !getOrderTrayNumber(record) && getOrderProductionStatus(record) === 'submitted';
+}
+
+function getOrderCompletionCounts(record) {
+  const totalItemCount = Number.isInteger(record?.total_item_count)
+    ? Math.max(record.total_item_count, 0)
+    : forgeOrderStore.deriveOrderCompletionCounts(record?.payload?.items || []).total_item_count;
+  const completedItemCount = Number.isInteger(record?.completed_item_count)
+    ? Math.max(Math.min(record.completed_item_count, totalItemCount), 0)
+    : forgeOrderStore.deriveOrderCompletionCounts(record?.payload?.items || []).completed_item_count;
+
+  return {
+    totalItemCount,
+    completedItemCount
+  };
+}
+
+function getOrderCompletionSummary(record) {
+  const counts = getOrderCompletionCounts(record);
+  return `${counts.completedItemCount} of ${counts.totalItemCount} Complete`;
+}
+
+function getStaffItemProductionStatus(item) {
+  return sanitizeText(
+    item?.production_status
+    || item?.structured_attributes?.production_status
+    || forgeOrderStore.ITEM_PRODUCTION_STATUSES?.pending
+    || 'pending'
+  );
+}
+
+function getStaffItemProductionStatusLabel(item) {
+  const status = getStaffItemProductionStatus(item);
+  if (status === forgeOrderStore.ITEM_PRODUCTION_STATUSES?.inProduction) {
+    return 'In Production';
+  }
+  if (status === forgeOrderStore.ITEM_PRODUCTION_STATUSES?.complete) {
+    return 'Complete';
+  }
+  if (status === forgeOrderStore.ITEM_PRODUCTION_STATUSES?.blocked) {
+    return 'Blocked';
+  }
+  if (status === forgeOrderStore.ITEM_PRODUCTION_STATUSES?.cancelled) {
+    return 'Cancelled';
+  }
+  return 'Pending';
+}
+
+function getStaffItemProductionStatusBadgeClass(item) {
+  const status = getStaffItemProductionStatus(item);
+  if (status === forgeOrderStore.ITEM_PRODUCTION_STATUSES?.inProduction) {
+    return 'staff-status-badge--production-in-production';
+  }
+  if (status === forgeOrderStore.ITEM_PRODUCTION_STATUSES?.complete) {
+    return 'staff-status-badge--production-ready-to-pack';
+  }
+  if (status === forgeOrderStore.ITEM_PRODUCTION_STATUSES?.blocked) {
+    return 'staff-status-badge--production-cancelled';
+  }
+  if (status === forgeOrderStore.ITEM_PRODUCTION_STATUSES?.cancelled) {
+    return 'staff-status-badge--production-cancelled';
+  }
+  return 'staff-status-badge--production-submitted';
+}
+
+function getStaffItemCompletionSummary(item) {
+  const quantity = Number.isInteger(item?.quantity) && item.quantity > 0 ? item.quantity : 1;
+  const completedQuantity = Number.isInteger(item?.completed_quantity)
+    ? Math.max(Math.min(item.completed_quantity, quantity), 0)
+    : 0;
+  return `${completedQuantity} of ${quantity} Complete`;
+}
+
+function canMarkStaffItemComplete(record, item) {
+  const quantity = Number.isInteger(item?.quantity) && item.quantity > 0 ? item.quantity : 1;
+  const completedQuantity = Number.isInteger(item?.completed_quantity)
+    ? Math.max(Math.min(item.completed_quantity, quantity), 0)
+    : 0;
+  const status = getStaffItemProductionStatus(item);
+  return Boolean(getOrderTrayNumber(record))
+    && completedQuantity < quantity
+    && status !== forgeOrderStore.ITEM_PRODUCTION_STATUSES?.blocked
+    && status !== forgeOrderStore.ITEM_PRODUCTION_STATUSES?.cancelled;
+}
+
+function getStaffItemCompletionActionLabel(item) {
+  const quantity = Number.isInteger(item?.quantity) && item.quantity > 0 ? item.quantity : 1;
+  const completedQuantity = Number.isInteger(item?.completed_quantity)
+    ? Math.max(Math.min(item.completed_quantity, quantity), 0)
+    : 0;
+  if (completedQuantity >= quantity) {
+    return 'Completed';
+  }
+  return quantity > 1 ? 'Mark One Complete' : 'Mark Complete';
 }
 
 function buildStaffNoticeMarkup(message, tone = 'success') {
@@ -3454,6 +3595,7 @@ function buildStaffOrderCardMarkup(record, filters) {
   const syncStatus = sanitizeText(record.sync_status || 'pending');
   const trayLabel = getOrderTrayLabel(record);
   const productionStatusLabel = getOrderProductionStatusLabel(record);
+  const completionSummary = getOrderCompletionSummary(record);
 
   return `
     <article class="staff-order-card">
@@ -3473,6 +3615,7 @@ function buildStaffOrderCardMarkup(record, filters) {
         <div><span>Customer</span><strong>${escapeHtml(payload.customer?.full_name || 'Unknown customer')}</strong></div>
         <div><span>Items</span><strong>${escapeHtml(String(itemCount))}</strong></div>
         <div><span>Production</span><strong>${escapeHtml(productionStatusLabel)}</strong></div>
+        <div><span>Progress</span><strong>${escapeHtml(completionSummary)}</strong></div>
         <div><span>Estimated Total</span><strong>${Number.isInteger(estimatedTotalCents) ? escapeHtml(formatPrice(estimatedTotalCents / 100)) : 'Quote Required'}</strong></div>
         <div><span>Tray</span><strong>${escapeHtml(trayLabel)}</strong></div>
         <div><span>Fulfillment</span><strong>${escapeHtml(fulfillmentMethod)}</strong></div>
@@ -3529,6 +3672,7 @@ async function openStaffOrderDetail(forgeOrderUuid) {
   staffOrdersState.detailOpen = true;
   staffOrdersState.detailLoading = true;
   staffOrdersState.detailError = '';
+  staffOrdersState.detailSavingLineId = '';
   staffOrdersState.detailOrderUuid = forgeOrderUuid;
   staffOrdersState.detailRecord = null;
   lastStaffOrderDetailFocusTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -3562,6 +3706,7 @@ function closeStaffOrderDetail() {
   staffOrdersState.detailOrderUuid = '';
   staffOrdersState.detailRecord = null;
   staffOrdersState.detailError = '';
+  staffOrdersState.detailSavingLineId = '';
   renderStaffOrderDetail();
   if (lastStaffOrderDetailFocusTarget) {
     lastStaffOrderDetailFocusTarget.focus();
@@ -3624,6 +3769,13 @@ function renderStaffOrderDetail() {
   const productionStatusLabel = getOrderProductionStatusLabel(record);
   const trayLabel = getOrderTrayLabel(record);
   const showAssignTrayAction = canAssignTrayToOrder(record);
+  const completionCounts = getOrderCompletionCounts(record);
+  const completionSummary = getOrderCompletionSummary(record);
+  const showNoTrayMessage = !getOrderTrayNumber(record);
+  const showOpenFlagProgressNote = getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.inProduction
+    && completionCounts.totalItemCount > 0
+    && completionCounts.completedItemCount >= completionCounts.totalItemCount
+    && openFlags.length > 0;
 
   staffOrderDetailDialog.innerHTML = `
     <div class="staff-order-detail-header">
@@ -3631,6 +3783,7 @@ function renderStaffOrderDetail() {
         <p class="eyebrow staff-orders-eyebrow">Development Only</p>
         <h2 id="staff-order-detail-title">Order ${escapeHtml(shortOrderReference)}</h2>
         <p>${escapeHtml(customer.full_name || 'Unknown customer')}</p>
+        <p class="staff-order-progress-text">${escapeHtml(completionSummary)}</p>
       </div>
       <div class="staff-order-card-actions">
         ${showAssignTrayAction ? `<button class="primary-button" type="button" data-action="staff-open-tray-assignment" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Assign Tray</button>` : ''}
@@ -3640,12 +3793,14 @@ function renderStaffOrderDetail() {
     </div>
 
     ${buildStaffNoticeMarkup(staffOrdersState.notice, staffOrdersState.noticeTone)}
+    ${staffOrdersState.detailError ? buildStaffNoticeMarkup(staffOrdersState.detailError, 'error') : ''}
 
     <div class="staff-order-detail-meta">
       <div><span>Order Number</span><strong>${escapeHtml(shortOrderReference)}</strong></div>
       <div><span>Customer</span><strong>${escapeHtml(customer.full_name || 'Unknown customer')}</strong></div>
       <div><span>Tray</span><strong>${escapeHtml(trayLabel)}</strong></div>
       <div><span>Production Status</span><strong>${escapeHtml(productionStatusLabel)}</strong></div>
+      <div><span>Progress</span><strong>${escapeHtml(completionSummary)}</strong></div>
       <div><span>UUID</span><strong>${escapeHtml(record.forge_order_uuid)}</strong></div>
       <div><span>Submitted</span><strong>${escapeHtml(formatReadableDateTime(record.submitted_at || ''))}</strong></div>
       <div><span>Local Saved</span><strong>${escapeHtml(formatReadableDateTime(record.local_saved_at || ''))}</strong></div>
@@ -3657,8 +3812,10 @@ function renderStaffOrderDetail() {
       <div class="staff-order-detail-grid">
         <div><span>Production Status</span><strong>${escapeHtml(productionStatusLabel)}</strong></div>
         <div><span>Tray State</span><strong>${escapeHtml(trayLabel)}</strong></div>
+        <div><span>Production Progress</span><strong>${escapeHtml(completionSummary)}</strong></div>
         <div><span>Sync Attempts</span><strong>${escapeHtml(String(record.sync_attempt_count ?? 0))}</strong></div>
       </div>
+      ${showOpenFlagProgressNote ? '<p class="staff-order-detail-note">All required pieces are complete, but this order still has an open flag and cannot move to Ready to Pack yet.</p>' : ''}
       <div class="staff-order-detail-flags">
         <span>Open Flags</span>
         ${openFlags.length ? `<ul>${openFlags.map((flag) => `<li>${escapeHtml(flag.message || flag.code || 'Open flag')}</li>`).join('')}</ul>` : '<p>No order-level open flags.</p>'}
@@ -3691,9 +3848,41 @@ function renderStaffOrderDetail() {
 
     <section class="staff-order-detail-section staff-order-detail-items">
       <h3>Items</h3>
-      ${getStaffOrderItemsMarkup(payload.items || [])}
+      ${showNoTrayMessage ? '<p class="staff-order-detail-note">Assign a tray before marking any finished piece complete.</p>' : '<p class="staff-order-detail-note">Mark complete only after the finished piece has been placed in the assigned tray.</p>'}
+      ${getStaffOrderItemsMarkup(record, payload.items || [])}
     </section>
   `;
+}
+
+async function submitStaffItemCompletion(forgeOrderUuid, lineId) {
+  if (!forgeOrderUuid || !lineId || staffOrdersState.detailSavingLineId) {
+    return;
+  }
+
+  staffOrdersState.detailSavingLineId = lineId;
+  staffOrdersState.detailError = '';
+  renderStaffOrderDetail();
+
+  try {
+    const result = await orderStore.incrementOrderItemCompletion(forgeOrderUuid, lineId);
+    const refreshedRecord = await orderStore.getOrder(forgeOrderUuid);
+    staffOrdersState.detailRecord = refreshedRecord || result?.order || null;
+    staffOrdersState.notice = result?.alreadyComplete
+      ? 'That piece was already recorded as complete.'
+      : 'Item completion saved.';
+    staffOrdersState.noticeTone = 'success';
+    await loadStaffOrdersQueue();
+    renderStaffOrderDetail();
+  } catch (error) {
+    console.error('Forge staff item completion failed', error);
+    staffOrdersState.notice = '';
+    staffOrdersState.noticeTone = 'error';
+    staffOrdersState.detailError = error?.message || 'Item completion could not be saved.';
+    renderStaffOrderDetail();
+  } finally {
+    staffOrdersState.detailSavingLineId = '';
+    renderStaffOrderDetail();
+  }
 }
 
 async function openStaffTrayAssignment(forgeOrderUuid) {
@@ -3896,7 +4085,7 @@ function renderStaffTrayAssignment() {
   `;
 }
 
-function getStaffOrderItemsMarkup(items) {
+function getStaffOrderItemsMarkup(record, items) {
   if (!Array.isArray(items) || items.length === 0) {
     return '<div class="staff-empty-state"><h3>No items</h3><p>No normalized line items were stored for this record.</p></div>';
   }
@@ -3908,6 +4097,11 @@ function getStaffOrderItemsMarkup(items) {
     const showPersonalizationOrder = usesPeopleAndPetsPersonalization(item);
     const customerNote = sanitizeText(item.customer_note || '');
     const productionNote = sanitizeText(item.production_note || '');
+    const itemStatusLabel = getStaffItemProductionStatusLabel(item);
+    const itemProgressLabel = getStaffItemCompletionSummary(item);
+    const canComplete = canMarkStaffItemComplete(record, item);
+    const isSaving = staffOrdersState.detailSavingLineId === item.line_id;
+    const completionActionLabel = isSaving ? 'Saving...' : getStaffItemCompletionActionLabel(item);
     return `
       <article>
         <div class="staff-order-card-header">
@@ -3915,7 +4109,25 @@ function getStaffOrderItemsMarkup(items) {
             <h4>${escapeHtml(item.product_display_name || item.product_definition_id || 'Custom Item')}</h4>
             <p>${escapeHtml(`${Number.isInteger(item.quantity) ? item.quantity : 1} × ${Number.isInteger(pricing.final_unit_price_cents) ? formatPrice(pricing.final_unit_price_cents / 100) : 'Quote Required'}`)}</p>
           </div>
-          ${flags.length ? '<span class="staff-flag-badge">Item Flags</span>' : ''}
+          <div class="staff-order-card-badges">
+            <span class="staff-status-badge ${escapeHtml(getStaffItemProductionStatusBadgeClass(item))}">${escapeHtml(itemStatusLabel)}</span>
+            ${flags.length ? '<span class="staff-flag-badge">Item Flags</span>' : ''}
+          </div>
+        </div>
+        <div class="staff-item-progress-row">
+          <div class="staff-item-progress-copy">
+            <span>Item Progress</span>
+            <strong>${escapeHtml(itemProgressLabel)}</strong>
+            ${item.completed_at ? `<p>Completed ${escapeHtml(formatReadableDateTime(item.completed_at))}</p>` : ''}
+          </div>
+          <button
+            class="primary-button staff-item-complete-button"
+            type="button"
+            data-action="staff-complete-item"
+            data-order-uuid="${escapeHtml(record.forge_order_uuid)}"
+            data-line-id="${escapeHtml(item.line_id || '')}"
+            ${!canComplete || isSaving ? 'disabled' : ''}
+          >${escapeHtml(completionActionLabel)}</button>
         </div>
         <div class="staff-order-detail-grid">
           ${itemDetails.map((detail) => `

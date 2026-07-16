@@ -214,3 +214,232 @@ test('assignTrayToOrder prevents one tray from being assigned twice and one orde
   assert.equal(orderB.current_tray_number, null);
   assert.equal(orderB.production_status, orderStoreModule.PRODUCTION_STATUSES.submitted);
 });
+
+test('legacy item production fields normalize on read without rewriting the order', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore();
+
+  await store.saveNewOrder(createRecord({
+    forge_order_uuid: 'legacy-normalization-order',
+    payload: {
+      forge_order_uuid: 'legacy-normalization-order',
+      customer: { full_name: 'Legacy Customer' },
+      items: [
+        {
+          line_number: 1,
+          quantity: 2,
+          structured_attributes: {
+            production_status: 'not_started'
+          }
+        }
+      ],
+      pricing: { estimated_total_cents: 5200 }
+    }
+  }));
+
+  const order = await store.getOrder('legacy-normalization-order');
+  const item = order.payload.items[0];
+
+  assert.equal(item.line_id, 'legacy-normalization-order-line-1');
+  assert.equal(item.production_status, orderStoreModule.ITEM_PRODUCTION_STATUSES.pending);
+  assert.equal(item.completed_quantity, 0);
+  assert.equal(item.completed_at, null);
+  assert.equal(item.structured_attributes.production_status, orderStoreModule.ITEM_PRODUCTION_STATUSES.pending);
+  assert.equal(order.completed_item_count, 0);
+  assert.equal(order.total_item_count, 2);
+});
+
+test('incrementOrderItemCompletion moves a multi-quantity line from tray assigned to in production to ready to pack', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore({
+    now: (() => {
+      const timestamps = [
+        new Date('2026-07-16T18:00:00.000Z'),
+        new Date('2026-07-16T18:05:00.000Z'),
+        new Date('2026-07-16T18:10:00.000Z')
+      ];
+      let index = 0;
+      return () => timestamps[Math.min(index++, timestamps.length - 1)];
+    })(),
+    randomUUID: () => 'assignment-completion'
+  });
+
+  await store.saveNewOrder(createRecord({
+    forge_order_uuid: 'completion-order',
+    payload: {
+      forge_order_uuid: 'completion-order',
+      customer: { full_name: 'Kyle Hemenway' },
+      items: [
+        {
+          line_number: 1,
+          line_id: 'completion-line-1',
+          quantity: 2,
+          structured_attributes: {}
+        }
+      ],
+      pricing: { estimated_total_cents: 6000 }
+    }
+  }));
+
+  await store.assignTrayToOrder('completion-order', 1);
+
+  const firstResult = await store.incrementOrderItemCompletion('completion-order', 'completion-line-1');
+  assert.equal(firstResult.alreadyComplete, false);
+  assert.equal(firstResult.item.completed_quantity, 1);
+  assert.equal(firstResult.item.production_status, orderStoreModule.ITEM_PRODUCTION_STATUSES.inProduction);
+  assert.equal(firstResult.item.completed_at, null);
+  assert.equal(firstResult.order.production_status, orderStoreModule.PRODUCTION_STATUSES.inProduction);
+  assert.equal(firstResult.order.completed_item_count, 1);
+  assert.equal(firstResult.order.total_item_count, 2);
+  assert.equal(firstResult.order.ready_to_pack_at, null);
+
+  const secondResult = await store.incrementOrderItemCompletion('completion-order', 'completion-line-1');
+  assert.equal(secondResult.alreadyComplete, false);
+  assert.equal(secondResult.item.completed_quantity, 2);
+  assert.equal(secondResult.item.production_status, orderStoreModule.ITEM_PRODUCTION_STATUSES.complete);
+  assert.equal(secondResult.item.completed_at, '2026-07-16T18:10:00.000Z');
+  assert.equal(secondResult.order.production_status, orderStoreModule.PRODUCTION_STATUSES.readyToPack);
+  assert.equal(secondResult.order.current_tray_number, 1);
+  assert.equal(secondResult.order.completed_item_count, 2);
+  assert.equal(secondResult.order.total_item_count, 2);
+  assert.equal(secondResult.order.ready_to_pack_at, '2026-07-16T18:10:00.000Z');
+});
+
+test('incrementOrderItemCompletion counts physical quantities across lines and excludes cancelled items from totals', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore({
+    now: (() => {
+      let tick = 0;
+      return () => new Date(`2026-07-16T19:0${Math.min(tick++, 5)}:00.000Z`);
+    })(),
+    randomUUID: () => 'assignment-physical-counts'
+  });
+
+  await store.saveNewOrder(createRecord({
+    forge_order_uuid: 'physical-count-order',
+    payload: {
+      forge_order_uuid: 'physical-count-order',
+      customer: { full_name: 'Production Team' },
+      items: [
+        {
+          line_number: 1,
+          line_id: 'tree-line',
+          quantity: 1,
+          structured_attributes: {}
+        },
+        {
+          line_number: 2,
+          line_id: 'reindeer-line',
+          quantity: 2,
+          structured_attributes: {}
+        },
+        {
+          line_number: 3,
+          line_id: 'cancelled-line',
+          quantity: 4,
+          production_status: orderStoreModule.ITEM_PRODUCTION_STATUSES.cancelled,
+          structured_attributes: {}
+        }
+      ],
+      pricing: { estimated_total_cents: 9000 }
+    }
+  }));
+
+  await store.assignTrayToOrder('physical-count-order', 2);
+  await store.incrementOrderItemCompletion('physical-count-order', 'tree-line');
+  await store.incrementOrderItemCompletion('physical-count-order', 'reindeer-line');
+
+  let order = await store.getOrder('physical-count-order');
+  assert.equal(order.total_item_count, 3);
+  assert.equal(order.completed_item_count, 2);
+  assert.equal(order.production_status, orderStoreModule.PRODUCTION_STATUSES.inProduction);
+
+  await store.incrementOrderItemCompletion('physical-count-order', 'reindeer-line');
+  order = await store.getOrder('physical-count-order');
+  assert.equal(order.total_item_count, 3);
+  assert.equal(order.completed_item_count, 3);
+  assert.equal(order.production_status, orderStoreModule.PRODUCTION_STATUSES.readyToPack);
+});
+
+test('incrementOrderItemCompletion stays in production when open flags remain even after all pieces are complete', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore({
+    now: () => new Date('2026-07-16T20:00:00.000Z'),
+    randomUUID: () => 'assignment-open-flag'
+  });
+
+  await store.saveNewOrder(createRecord({
+    forge_order_uuid: 'open-flag-order',
+    has_open_flags: true,
+    payload: {
+      forge_order_uuid: 'open-flag-order',
+      customer: { full_name: 'Flagged Customer' },
+      open_flags: [{ code: 'needs_clarification', message: 'Needs clarification' }],
+      items: [
+        {
+          line_number: 1,
+          line_id: 'flag-line',
+          quantity: 1,
+          structured_attributes: {}
+        }
+      ],
+      pricing: { estimated_total_cents: 3000 }
+    }
+  }));
+
+  await store.assignTrayToOrder('open-flag-order', 3);
+  const result = await store.incrementOrderItemCompletion('open-flag-order', 'flag-line');
+
+  assert.equal(result.item.production_status, orderStoreModule.ITEM_PRODUCTION_STATUSES.complete);
+  assert.equal(result.order.completed_item_count, 1);
+  assert.equal(result.order.total_item_count, 1);
+  assert.equal(result.order.production_status, orderStoreModule.PRODUCTION_STATUSES.inProduction);
+  assert.equal(result.order.ready_to_pack_at, null);
+});
+
+test('incrementOrderItemCompletion rejects missing trays and blocked items and does not overcount completed lines', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore({
+    now: () => new Date('2026-07-16T21:00:00.000Z'),
+    randomUUID: () => 'assignment-guard-rails'
+  });
+
+  await store.saveNewOrder(createRecord({
+    forge_order_uuid: 'guard-order',
+    payload: {
+      forge_order_uuid: 'guard-order',
+      customer: { full_name: 'Guard Rails' },
+      items: [
+        {
+          line_number: 1,
+          line_id: 'blocked-line',
+          quantity: 1,
+          production_status: orderStoreModule.ITEM_PRODUCTION_STATUSES.blocked,
+          structured_attributes: {}
+        },
+        {
+          line_number: 2,
+          line_id: 'complete-line',
+          quantity: 1,
+          completed_quantity: 1,
+          production_status: orderStoreModule.ITEM_PRODUCTION_STATUSES.complete,
+          completed_at: '2026-07-16T20:30:00.000Z',
+          structured_attributes: {}
+        }
+      ],
+      pricing: { estimated_total_cents: 6000 }
+    }
+  }));
+
+  await assert.rejects(
+    () => store.incrementOrderItemCompletion('guard-order', 'blocked-line'),
+    /assign a production tray/i
+  );
+
+  await store.assignTrayToOrder('guard-order', 4);
+
+  await assert.rejects(
+    () => store.incrementOrderItemCompletion('guard-order', 'blocked-line'),
+    /blocked items cannot be marked complete/i
+  );
+
+  const alreadyComplete = await store.incrementOrderItemCompletion('guard-order', 'complete-line');
+  assert.equal(alreadyComplete.alreadyComplete, true);
+  assert.equal(alreadyComplete.item.completed_quantity, 1);
+  assert.equal(alreadyComplete.order.completed_item_count, 1);
+});

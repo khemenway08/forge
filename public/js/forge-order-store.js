@@ -39,7 +39,20 @@
   };
   const PRODUCTION_STATUSES = {
     submitted: 'submitted',
-    trayAssigned: 'tray_assigned'
+    trayAssigned: 'tray_assigned',
+    inProduction: 'in_production',
+    readyToPack: 'ready_to_pack',
+    packed: 'packed',
+    shipped: 'shipped',
+    pickedUp: 'picked_up',
+    cancelled: 'cancelled'
+  };
+  const ITEM_PRODUCTION_STATUSES = {
+    pending: 'pending',
+    inProduction: 'in_production',
+    complete: 'complete',
+    blocked: 'blocked',
+    cancelled: 'cancelled'
   };
   const TRAY_STATUSES = {
     available: 'available',
@@ -340,6 +353,113 @@
       });
     }
 
+    async function incrementOrderItemCompletion(forgeOrderUuid, lineId) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      const normalizedLineId = asTrimmedString(lineId);
+      if (!orderUuid) {
+        throw new Error('Item completion requires a Forge order UUID.');
+      }
+      if (!normalizedLineId) {
+        throw new Error('Item completion requires a valid line ID.');
+      }
+
+      const db = await openOrderStore();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(objectStoreNames.orders, 'readwrite');
+        const ordersStore = transaction.objectStore(objectStoreNames.orders);
+        const timestamp = normalizeDateValue(getNow()).toISOString();
+        let completionResult = null;
+
+        transaction.oncomplete = () => {
+          resolve(completionResult);
+        };
+        transaction.onerror = () => reject(transaction.__forgeError || transaction.error || new Error('Item completion failed.'));
+        transaction.onabort = () => reject(transaction.__forgeError || transaction.error || new Error('Item completion was aborted.'));
+
+        const orderRequest = ordersStore.get(orderUuid);
+        orderRequest.onerror = () => abortTransaction(transaction, orderRequest.error || new Error('The selected order could not be loaded.'));
+        orderRequest.onsuccess = () => {
+          const storedOrder = orderRequest.result;
+          if (!storedOrder) {
+            abortTransaction(transaction, new Error('That saved order could not be found.'));
+            return;
+          }
+
+          const normalizedOrder = normalizeOrderRecordForRead(storedOrder);
+          if (!hasAssignedTray(normalizedOrder)) {
+            abortTransaction(transaction, new Error('Assign a production tray before marking completed pieces.'));
+            return;
+          }
+          if (isTerminalOrderProductionStatus(normalizedOrder.production_status)) {
+            abortTransaction(transaction, new Error('This order can no longer be updated from the production queue.'));
+            return;
+          }
+
+          const items = getNormalizedOrderItems(normalizedOrder);
+          const itemIndex = items.findIndex((item) => item.line_id === normalizedLineId);
+          if (itemIndex === -1) {
+            abortTransaction(transaction, new Error('That saved item could not be found.'));
+            return;
+          }
+
+          const item = items[itemIndex];
+          if (item.production_status === ITEM_PRODUCTION_STATUSES.blocked) {
+            abortTransaction(transaction, new Error('Blocked items cannot be marked complete until the issue is resolved.'));
+            return;
+          }
+          if (item.production_status === ITEM_PRODUCTION_STATUSES.cancelled) {
+            abortTransaction(transaction, new Error('Cancelled items cannot be marked complete.'));
+            return;
+          }
+
+          if (item.completed_quantity >= item.quantity) {
+            completionResult = {
+              ok: true,
+              alreadyComplete: true,
+              record: normalizedOrder,
+              order: normalizedOrder,
+              item: deepCloneValue(item)
+            };
+            return;
+          }
+
+          const nextCompletedQuantity = item.completed_quantity + 1;
+          const nextItemStatus = deriveItemProductionStatus({
+            explicitStatus: item.production_status,
+            completedQuantity: nextCompletedQuantity,
+            quantity: item.quantity
+          });
+          const updatedItem = normalizeOrderItemRecord({
+            ...deepCloneValue(item),
+            completed_quantity: nextCompletedQuantity,
+            completed_at: nextCompletedQuantity === item.quantity ? (item.completed_at || timestamp) : null,
+            production_status: nextItemStatus,
+            structured_attributes: {
+              ...(item.structured_attributes || {}),
+              production_status: nextItemStatus
+            }
+          }, item.line_number - 1, orderUuid);
+          const updatedItems = items.slice();
+          updatedItems[itemIndex] = updatedItem;
+          const updatedOrder = createUpdatedOrderRecord(normalizedOrder, {
+            items: updatedItems,
+            updatedAt: timestamp
+          });
+
+          const putRequest = ordersStore.put(deepCloneValue(updatedOrder));
+          putRequest.onerror = () => abortTransaction(transaction, putRequest.error || new Error('The item completion could not be saved.'));
+
+          completionResult = {
+            ok: true,
+            alreadyComplete: false,
+            record: updatedOrder,
+            order: updatedOrder,
+            item: deepCloneValue(updatedItem)
+          };
+        };
+      });
+    }
+
     return {
       openOrderStore,
       saveNewOrder,
@@ -349,7 +469,8 @@
       listTrays,
       getTray,
       listTrayAssignmentHistory,
-      assignTrayToOrder
+      assignTrayToOrder,
+      incrementOrderItemCompletion
     };
   }
 
@@ -468,6 +589,83 @@
           tray: normalizeTrayRecord(updatedTray),
           assignmentHistoryRecord: normalizeTrayAssignmentHistoryRecord(assignmentHistoryRecord)
         };
+      },
+      async incrementOrderItemCompletion(forgeOrderUuid, lineId) {
+        const orderUuid = asTrimmedString(forgeOrderUuid);
+        const normalizedLineId = asTrimmedString(lineId);
+        const storedOrder = records.get(orderUuid);
+        if (!storedOrder) {
+          throw new Error('That saved order could not be found.');
+        }
+        if (!normalizedLineId) {
+          throw new Error('Item completion requires a valid line ID.');
+        }
+
+        const normalizedOrder = normalizeOrderRecordForRead(storedOrder);
+        if (!hasAssignedTray(normalizedOrder)) {
+          throw new Error('Assign a production tray before marking completed pieces.');
+        }
+        if (isTerminalOrderProductionStatus(normalizedOrder.production_status)) {
+          throw new Error('This order can no longer be updated from the production queue.');
+        }
+
+        const items = getNormalizedOrderItems(normalizedOrder);
+        const itemIndex = items.findIndex((item) => item.line_id === normalizedLineId);
+        if (itemIndex === -1) {
+          throw new Error('That saved item could not be found.');
+        }
+
+        const item = items[itemIndex];
+        if (item.production_status === ITEM_PRODUCTION_STATUSES.blocked) {
+          throw new Error('Blocked items cannot be marked complete until the issue is resolved.');
+        }
+        if (item.production_status === ITEM_PRODUCTION_STATUSES.cancelled) {
+          throw new Error('Cancelled items cannot be marked complete.');
+        }
+
+        if (item.completed_quantity >= item.quantity) {
+          return {
+            ok: true,
+            alreadyComplete: true,
+            record: normalizedOrder,
+            order: normalizedOrder,
+            item: deepCloneValue(item)
+          };
+        }
+
+        const timestamp = normalizeDateValue(getNow()).toISOString();
+        const nextCompletedQuantity = item.completed_quantity + 1;
+        const nextItemStatus = deriveItemProductionStatus({
+          explicitStatus: item.production_status,
+          completedQuantity: nextCompletedQuantity,
+          quantity: item.quantity
+        });
+        const updatedItem = normalizeOrderItemRecord({
+          ...deepCloneValue(item),
+          completed_quantity: nextCompletedQuantity,
+          completed_at: nextCompletedQuantity === item.quantity ? (item.completed_at || timestamp) : null,
+          production_status: nextItemStatus,
+          structured_attributes: {
+            ...(item.structured_attributes || {}),
+            production_status: nextItemStatus
+          }
+        }, item.line_number - 1, orderUuid);
+        const updatedItems = items.slice();
+        updatedItems[itemIndex] = updatedItem;
+        const updatedOrder = createUpdatedOrderRecord(normalizedOrder, {
+          items: updatedItems,
+          updatedAt: timestamp
+        });
+
+        records.set(orderUuid, deepCloneValue(updatedOrder));
+
+        return {
+          ok: true,
+          alreadyComplete: false,
+          record: updatedOrder,
+          order: updatedOrder,
+          item: deepCloneValue(updatedItem)
+        };
       }
     };
   }
@@ -543,6 +741,150 @@
     });
   }
 
+  function normalizeOrderPayload(payload, forgeOrderUuid) {
+    const source = payload && typeof payload === 'object' ? payload : {};
+    const normalizedItems = Array.isArray(source.items)
+      ? source.items.map((item, index) => normalizeOrderItemRecord(item, index, forgeOrderUuid))
+      : [];
+
+    return deepCloneValue({
+      ...source,
+      items: normalizedItems,
+      open_flags: Array.isArray(source.open_flags) ? deepCloneValue(source.open_flags) : [],
+      has_open_flags: Boolean(source.has_open_flags) || normalizedItems.some((item) => itemHasBlockingFlags(item))
+    });
+  }
+
+  function normalizeOrderItemRecord(item, index, forgeOrderUuid) {
+    const source = item && typeof item === 'object' ? item : {};
+    const quantity = normalizeQuantity(source.quantity);
+    const explicitStatus = firstNonEmptyString([
+      source.production_status,
+      source.structured_attributes && source.structured_attributes.production_status
+    ]);
+    const completedQuantity = normalizeCompletedQuantity(source.completed_quantity, quantity, explicitStatus);
+    const productionStatus = deriveItemProductionStatus({
+      explicitStatus,
+      completedQuantity,
+      quantity
+    });
+    const lineNumber = normalizeLineNumber(source.line_number, index + 1);
+    const lineId = normalizeLineId(source.line_id, forgeOrderUuid, lineNumber);
+    const structuredAttributes = source.structured_attributes && typeof source.structured_attributes === 'object'
+      ? deepCloneValue(source.structured_attributes)
+      : {};
+    structuredAttributes.production_status = productionStatus;
+    structuredAttributes.has_open_flags = Boolean(structuredAttributes.has_open_flags) || itemHasBlockingFlags(source);
+
+    return deepCloneValue({
+      ...source,
+      line_id: lineId,
+      line_number: lineNumber,
+      quantity,
+      production_status: productionStatus,
+      completed_quantity: completedQuantity,
+      completed_at: completedQuantity === quantity && source.completed_at ? asTrimmedString(source.completed_at) : null,
+      structured_attributes: structuredAttributes,
+      open_flags: Array.isArray(source.open_flags) ? deepCloneValue(source.open_flags) : [],
+      production_note: source.production_note == null ? null : asTrimmedString(source.production_note)
+    });
+  }
+
+  function getNormalizedOrderItems(record) {
+    const payload = record && record.payload && typeof record.payload === 'object' ? record.payload : {};
+    return Array.isArray(payload.items)
+      ? payload.items.map((item, index) => normalizeOrderItemRecord(item, index, record.forge_order_uuid))
+      : [];
+  }
+
+  function deriveItemProductionStatus({ explicitStatus, completedQuantity, quantity }) {
+    const normalizedExplicitStatus = normalizeItemProductionStatus(explicitStatus);
+    if (normalizedExplicitStatus === ITEM_PRODUCTION_STATUSES.blocked || normalizedExplicitStatus === ITEM_PRODUCTION_STATUSES.cancelled) {
+      return normalizedExplicitStatus;
+    }
+    if (completedQuantity >= quantity) {
+      return ITEM_PRODUCTION_STATUSES.complete;
+    }
+    if (completedQuantity > 0) {
+      return ITEM_PRODUCTION_STATUSES.inProduction;
+    }
+    return ITEM_PRODUCTION_STATUSES.pending;
+  }
+
+  function deriveOrderCompletionCounts(items) {
+    return (Array.isArray(items) ? items : []).reduce((summary, item) => {
+      const normalizedItem = item && typeof item === 'object' ? item : {};
+      const quantity = normalizeQuantity(normalizedItem.quantity);
+      const status = normalizeItemProductionStatus(normalizedItem.production_status);
+      if (status === ITEM_PRODUCTION_STATUSES.cancelled) {
+        return summary;
+      }
+      const completedQuantity = Math.min(normalizeCompletedQuantity(normalizedItem.completed_quantity, quantity), quantity);
+      summary.total_item_count += quantity;
+      summary.completed_item_count += completedQuantity;
+      return summary;
+    }, {
+      total_item_count: 0,
+      completed_item_count: 0
+    });
+  }
+
+  function deriveOrderProductionStatus({ explicitStatus, currentTrayNumber, completedItemCount, totalItemCount, hasBlockingFlags }) {
+    const normalizedExplicitStatus = normalizeProductionStatus(explicitStatus);
+    if (isTerminalOrderProductionStatus(normalizedExplicitStatus)) {
+      return normalizedExplicitStatus;
+    }
+    if (!normalizeNullableTrayNumber(currentTrayNumber)) {
+      return PRODUCTION_STATUSES.submitted;
+    }
+    if (completedItemCount <= 0) {
+      return PRODUCTION_STATUSES.trayAssigned;
+    }
+    if (totalItemCount > 0 && completedItemCount >= totalItemCount && !hasBlockingFlags) {
+      return PRODUCTION_STATUSES.readyToPack;
+    }
+    return PRODUCTION_STATUSES.inProduction;
+  }
+
+  function createUpdatedOrderRecord(record, { items, updatedAt }) {
+    const normalizedRecord = normalizeOrderRecordForRead(record);
+    const nextItems = Array.isArray(items) ? items.map((item, index) => normalizeOrderItemRecord(item, index, normalizedRecord.forge_order_uuid)) : [];
+    const nextPayload = {
+      ...(normalizedRecord.payload || {}),
+      items: nextItems
+    };
+    const nextCounts = deriveOrderCompletionCounts(nextItems);
+    const nextHasOpenFlags = orderHasBlockingFlags({
+      ...normalizedRecord,
+      payload: nextPayload,
+      has_open_flags: normalizedRecord.has_open_flags
+    });
+    const nextStatus = deriveOrderProductionStatus({
+      explicitStatus: normalizedRecord.production_status,
+      currentTrayNumber: normalizedRecord.current_tray_number,
+      completedItemCount: nextCounts.completed_item_count,
+      totalItemCount: nextCounts.total_item_count,
+      hasBlockingFlags: nextHasOpenFlags
+    });
+    const readyToPackAt = nextStatus === PRODUCTION_STATUSES.readyToPack
+      ? (normalizedRecord.ready_to_pack_at || updatedAt)
+      : null;
+
+    return normalizeLocalOrderRecord({
+      ...deepCloneValue(normalizedRecord),
+      updated_at: updatedAt,
+      has_open_flags: nextHasOpenFlags,
+      production_status: nextStatus,
+      total_item_count: nextCounts.total_item_count,
+      completed_item_count: nextCounts.completed_item_count,
+      ready_to_pack_at: readyToPackAt,
+      payload: {
+        ...nextPayload,
+        has_open_flags: nextHasOpenFlags
+      }
+    });
+  }
+
   function normalizeLocalOrderRecord(record) {
     if (!record || typeof record !== 'object') {
       throw new Error('Forge local order records must be objects.');
@@ -556,8 +898,26 @@
     const submittedAt = asTrimmedString(record.submitted_at);
     const localSavedAt = asTrimmedString(record.local_saved_at);
     const updatedAt = asTrimmedString(record.updated_at || localSavedAt || submittedAt);
-    const productionStatus = normalizeProductionStatus(record.production_status);
+    const normalizedPayload = normalizeOrderPayload(record.payload || {}, forgeOrderUuid);
+    const derivedCounts = deriveOrderCompletionCounts(normalizedPayload.items);
+    const productionStatus = deriveOrderProductionStatus({
+      explicitStatus: record.production_status,
+      currentTrayNumber: record.current_tray_number,
+      completedItemCount: derivedCounts.completed_item_count,
+      totalItemCount: derivedCounts.total_item_count,
+      hasBlockingFlags: orderHasBlockingFlags({
+        ...record,
+        payload: normalizedPayload,
+        has_open_flags: record.has_open_flags
+      })
+    });
     const currentTrayNumber = normalizeNullableTrayNumber(record.current_tray_number);
+    const readyToPackAt = normalizeOrderReadyToPackAt(record.ready_to_pack_at, productionStatus);
+    const hasOpenFlags = orderHasBlockingFlags({
+      ...record,
+      payload: normalizedPayload,
+      has_open_flags: record.has_open_flags
+    });
 
     return deepCloneValue({
       record_type: asTrimmedString(record.record_type) || 'forge_local_order',
@@ -573,10 +933,15 @@
       last_sync_error: record.last_sync_error == null ? null : asTrimmedString(record.last_sync_error),
       event_id: record.event_id == null ? null : asTrimmedString(record.event_id),
       device_id: record.device_id == null ? null : asTrimmedString(record.device_id),
-      has_open_flags: Boolean(record.has_open_flags),
+      has_open_flags: hasOpenFlags,
       production_status: productionStatus,
       current_tray_number: currentTrayNumber,
-      payload: deepCloneValue(record.payload || {})
+      total_item_count: derivedCounts.total_item_count,
+      completed_item_count: derivedCounts.completed_item_count,
+      ready_to_pack_at: readyToPackAt,
+      packed_at: record.packed_at == null ? null : asTrimmedString(record.packed_at),
+      fulfilled_at: record.fulfilled_at == null ? null : asTrimmedString(record.fulfilled_at),
+      payload: normalizedPayload
     });
   }
 
@@ -676,10 +1041,48 @@
 
   function normalizeProductionStatus(value) {
     const normalized = asTrimmedString(value).toLowerCase();
+    if (normalized === PRODUCTION_STATUSES.readyToPack) {
+      return PRODUCTION_STATUSES.readyToPack;
+    }
+    if (normalized === PRODUCTION_STATUSES.inProduction) {
+      return PRODUCTION_STATUSES.inProduction;
+    }
+    if (normalized === PRODUCTION_STATUSES.packed) {
+      return PRODUCTION_STATUSES.packed;
+    }
+    if (normalized === PRODUCTION_STATUSES.shipped) {
+      return PRODUCTION_STATUSES.shipped;
+    }
+    if (normalized === PRODUCTION_STATUSES.pickedUp) {
+      return PRODUCTION_STATUSES.pickedUp;
+    }
+    if (normalized === PRODUCTION_STATUSES.cancelled) {
+      return PRODUCTION_STATUSES.cancelled;
+    }
     if (normalized === PRODUCTION_STATUSES.trayAssigned) {
       return PRODUCTION_STATUSES.trayAssigned;
     }
     return PRODUCTION_STATUSES.submitted;
+  }
+
+  function normalizeItemProductionStatus(value) {
+    const normalized = asTrimmedString(value).toLowerCase();
+    if (normalized === 'not_started') {
+      return ITEM_PRODUCTION_STATUSES.pending;
+    }
+    if (normalized === ITEM_PRODUCTION_STATUSES.inProduction) {
+      return ITEM_PRODUCTION_STATUSES.inProduction;
+    }
+    if (normalized === ITEM_PRODUCTION_STATUSES.complete) {
+      return ITEM_PRODUCTION_STATUSES.complete;
+    }
+    if (normalized === ITEM_PRODUCTION_STATUSES.blocked) {
+      return ITEM_PRODUCTION_STATUSES.blocked;
+    }
+    if (normalized === ITEM_PRODUCTION_STATUSES.cancelled) {
+      return ITEM_PRODUCTION_STATUSES.cancelled;
+    }
+    return ITEM_PRODUCTION_STATUSES.pending;
   }
 
   function normalizeTrayStatus(value) {
@@ -695,6 +1098,87 @@
 
   function hasAssignedTray(record) {
     return normalizeNullableTrayNumber(record?.current_tray_number) != null;
+  }
+
+  function isTerminalOrderProductionStatus(value) {
+    const normalized = normalizeProductionStatus(value);
+    return normalized === PRODUCTION_STATUSES.packed
+      || normalized === PRODUCTION_STATUSES.shipped
+      || normalized === PRODUCTION_STATUSES.pickedUp
+      || normalized === PRODUCTION_STATUSES.cancelled;
+  }
+
+  function normalizeQuantity(value) {
+    const parsed = Number.parseInt(asTrimmedString(value), 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
+  }
+
+  function normalizeCompletedQuantity(value, quantity, explicitStatus = '') {
+    const parsed = Number.parseInt(asTrimmedString(value), 10);
+    if (Number.isInteger(parsed)) {
+      return Math.max(0, Math.min(parsed, quantity));
+    }
+    const status = normalizeItemProductionStatus(explicitStatus);
+    return status === ITEM_PRODUCTION_STATUSES.complete ? quantity : 0;
+  }
+
+  function normalizeLineNumber(value, fallback) {
+    const parsed = Number.parseInt(asTrimmedString(value), 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  function normalizeLineId(value, forgeOrderUuid, lineNumber) {
+    const normalized = asTrimmedString(value);
+    return normalized || `${forgeOrderUuid}-line-${lineNumber}`;
+  }
+
+  function normalizeOrderReadyToPackAt(value, productionStatus) {
+    if (normalizeProductionStatus(productionStatus) !== PRODUCTION_STATUSES.readyToPack) {
+      return value == null ? null : asNullableTrimmedString(value);
+    }
+    return asNullableTrimmedString(value);
+  }
+
+  function orderHasBlockingFlags(record) {
+    if (!record || typeof record !== 'object') {
+      return false;
+    }
+    if (Boolean(record.has_open_flags)) {
+      return true;
+    }
+    const payload = record.payload && typeof record.payload === 'object' ? record.payload : {};
+    if (Boolean(payload.has_open_flags)) {
+      return true;
+    }
+    if (Array.isArray(payload.open_flags) && payload.open_flags.length > 0) {
+      return true;
+    }
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    return items.some((item) => itemHasBlockingFlags(item));
+  }
+
+  function itemHasBlockingFlags(item) {
+    if (!item || typeof item !== 'object') {
+      return false;
+    }
+    if (Array.isArray(item.open_flags) && item.open_flags.length > 0) {
+      return true;
+    }
+    const structuredAttributes = item.structured_attributes && typeof item.structured_attributes === 'object'
+      ? item.structured_attributes
+      : {};
+    return Boolean(structuredAttributes.has_open_flags);
+  }
+
+  function firstNonEmptyString(values) {
+    const source = Array.isArray(values) ? values : [];
+    for (const value of source) {
+      const normalized = asTrimmedString(value);
+      if (normalized) {
+        return normalized;
+      }
+    }
+    return '';
   }
 
   function normalizeTrayNumber(value) {
@@ -777,13 +1261,17 @@
     OBJECT_STORE_NAMES,
     INDEX_NAMES,
     PRODUCTION_STATUSES,
+    ITEM_PRODUCTION_STATUSES,
     TRAY_STATUSES,
     DEFAULT_TRAY_INVENTORY,
     createDefaultTrayInventoryConfig,
     createInMemoryOrderStore,
     createOrderStore,
+    deriveOrderCompletionCounts,
     normalizeLocalOrderRecord,
     normalizeOrderRecordForRead,
+    normalizeOrderPayload,
+    normalizeOrderItemRecord,
     normalizeTrayRecord,
     normalizeTrayAssignmentHistoryRecord,
     openOrderStore: (...args) => defaultOrderStore.openOrderStore(...args),
@@ -794,6 +1282,7 @@
     listTrays: (...args) => defaultOrderStore.listTrays(...args),
     getTray: (...args) => defaultOrderStore.getTray(...args),
     listTrayAssignmentHistory: (...args) => defaultOrderStore.listTrayAssignmentHistory(...args),
-    assignTrayToOrder: (...args) => defaultOrderStore.assignTrayToOrder(...args)
+    assignTrayToOrder: (...args) => defaultOrderStore.assignTrayToOrder(...args),
+    incrementOrderItemCompletion: (...args) => defaultOrderStore.incrementOrderItemCompletion(...args)
   };
 }));
