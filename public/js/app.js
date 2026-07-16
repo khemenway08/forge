@@ -3394,6 +3394,32 @@ function getOrderCompletionSummary(record) {
   return `${counts.completedItemCount} of ${counts.totalItemCount} Complete`;
 }
 
+function getStaffSyncStatus(record) {
+  return sanitizeText(record?.sync_status || 'pending').toLowerCase();
+}
+
+function getStaffSyncStatusLabel(record) {
+  const syncStatus = getStaffSyncStatus(record);
+  if (syncStatus === 'synced') {
+    return 'Synced';
+  }
+  if (syncStatus === 'error') {
+    return 'Sync Error';
+  }
+  return 'Sync Pending';
+}
+
+function getStaffSyncStatusBadgeClass(record) {
+  const syncStatus = getStaffSyncStatus(record);
+  if (syncStatus === 'synced') {
+    return 'staff-status-badge--synced';
+  }
+  if (syncStatus === 'error') {
+    return 'staff-status-badge--sync-error';
+  }
+  return 'staff-status-badge--sync-pending';
+}
+
 function getStaffItemProductionStatus(item) {
   return sanitizeText(
     item?.production_status
@@ -3563,7 +3589,7 @@ function buildStaffBatchMarkup(batchSummary) {
   const cards = batchSummary.groups.map((group) => `
     <article class="staff-batch-card">
       <strong>${escapeHtml(group.label)}</strong>
-      <span>${escapeHtml(`${group.quantity} item${group.quantity === 1 ? '' : 's'}`)}</span>
+      <span class="staff-batch-card-quantity">${escapeHtml(`${group.quantity} item${group.quantity === 1 ? '' : 's'}`)}</span>
     </article>
   `);
 
@@ -3571,7 +3597,7 @@ function buildStaffBatchMarkup(batchSummary) {
     cards.push(`
       <article class="staff-batch-card">
         <strong>Custom Icon Required</strong>
-        <span>${escapeHtml(`${batchSummary.customIconRequiredCount} item${batchSummary.customIconRequiredCount === 1 ? '' : 's'}`)}</span>
+        <span class="staff-batch-card-quantity">${escapeHtml(`${batchSummary.customIconRequiredCount} item${batchSummary.customIconRequiredCount === 1 ? '' : 's'}`)}</span>
       </article>
     `);
   }
@@ -3592,37 +3618,40 @@ function buildStaffOrderCardMarkup(record, filters) {
   const fulfillmentMethod = payload.fulfillment?.method === 'pickup' ? 'Pickup' : 'Shipping';
   const itemCount = matchingItems.reduce((sum, item) => sum + (Number.isInteger(item.quantity) ? item.quantity : 1), 0);
   const hasFlags = Array.isArray(payload.open_flags) && payload.open_flags.length > 0;
-  const syncStatus = sanitizeText(record.sync_status || 'pending');
   const trayLabel = getOrderTrayLabel(record);
   const productionStatusLabel = getOrderProductionStatusLabel(record);
   const completionSummary = getOrderCompletionSummary(record);
+  const syncStatusLabel = getStaffSyncStatusLabel(record);
+  const syncStatusBadgeClass = getStaffSyncStatusBadgeClass(record);
 
   return `
     <article class="staff-order-card">
       <div class="staff-order-card-header">
-        <div>
+        <div class="staff-order-card-title">
           <div class="staff-order-ref">${escapeHtml(getOrderShortReference(record))}</div>
           <p>${escapeHtml(formatReadableDateTime(record.submitted_at || record.local_saved_at || ''))}</p>
         </div>
         <div class="staff-order-card-badges">
           <span class="staff-tray-badge ${escapeHtml(getOrderTrayBadgeClass(record))}">${escapeHtml(trayLabel)}</span>
           <span class="staff-status-badge ${escapeHtml(getOrderProductionStatusBadgeClass(record))}">${escapeHtml(productionStatusLabel)}</span>
-          <span class="staff-status-badge staff-status-badge--${escapeHtml(syncStatus.toLowerCase())}">${escapeHtml(syncStatus.replace(/_/g, ' '))}</span>
+          <span class="staff-status-badge ${escapeHtml(syncStatusBadgeClass)}">${escapeHtml(syncStatusLabel)}</span>
           ${hasFlags ? '<span class="staff-flag-badge">Open Flags</span>' : ''}
         </div>
       </div>
-      <div class="staff-order-card-meta">
+      <div class="staff-order-card-meta staff-order-card-meta--primary">
         <div><span>Customer</span><strong>${escapeHtml(payload.customer?.full_name || 'Unknown customer')}</strong></div>
-        <div><span>Items</span><strong>${escapeHtml(String(itemCount))}</strong></div>
+        <div><span>Tray</span><strong>${escapeHtml(trayLabel)}</strong></div>
         <div><span>Production</span><strong>${escapeHtml(productionStatusLabel)}</strong></div>
         <div><span>Progress</span><strong>${escapeHtml(completionSummary)}</strong></div>
+      </div>
+      <div class="staff-order-card-meta staff-order-card-meta--secondary">
+        <div><span>Items</span><strong>${escapeHtml(String(itemCount))}</strong></div>
         <div><span>Estimated Total</span><strong>${Number.isInteger(estimatedTotalCents) ? escapeHtml(formatPrice(estimatedTotalCents / 100)) : 'Quote Required'}</strong></div>
-        <div><span>Tray</span><strong>${escapeHtml(trayLabel)}</strong></div>
         <div><span>Fulfillment</span><strong>${escapeHtml(fulfillmentMethod)}</strong></div>
       </div>
       <div class="staff-order-products">
         <span>Products</span>
-        <ul>${productSummary.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}</ul>
+        <ul>${productSummary.map((line) => `<li><span>${escapeHtml(line)}</span></li>`).join('')}</ul>
       </div>
       <div class="staff-order-card-actions">
         <button class="secondary-button" type="button" data-action="staff-view-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">View Order</button>
@@ -3772,6 +3801,8 @@ function renderStaffOrderDetail() {
   const completionCounts = getOrderCompletionCounts(record);
   const completionSummary = getOrderCompletionSummary(record);
   const showNoTrayMessage = !getOrderTrayNumber(record);
+  const syncStatusLabel = getStaffSyncStatusLabel(record);
+  const syncStatusBadgeClass = getStaffSyncStatusBadgeClass(record);
   const showOpenFlagProgressNote = getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.inProduction
     && completionCounts.totalItemCount > 0
     && completionCounts.completedItemCount >= completionCounts.totalItemCount
@@ -3779,13 +3810,19 @@ function renderStaffOrderDetail() {
 
   staffOrderDetailDialog.innerHTML = `
     <div class="staff-order-detail-header">
-      <div>
+      <div class="staff-order-detail-heading">
         <p class="eyebrow staff-orders-eyebrow">Development Only</p>
         <h2 id="staff-order-detail-title">Order ${escapeHtml(shortOrderReference)}</h2>
-        <p>${escapeHtml(customer.full_name || 'Unknown customer')}</p>
+        <p class="staff-order-detail-customer">${escapeHtml(customer.full_name || 'Unknown customer')}</p>
+        <div class="staff-order-detail-badges">
+          <span class="staff-tray-badge ${escapeHtml(getOrderTrayBadgeClass(record))}">${escapeHtml(trayLabel)}</span>
+          <span class="staff-status-badge ${escapeHtml(getOrderProductionStatusBadgeClass(record))}">${escapeHtml(productionStatusLabel)}</span>
+          <span class="staff-status-badge ${escapeHtml(syncStatusBadgeClass)}">${escapeHtml(syncStatusLabel)}</span>
+          ${openFlags.length ? '<span class="staff-flag-badge">Open Flags</span>' : ''}
+        </div>
         <p class="staff-order-progress-text">${escapeHtml(completionSummary)}</p>
       </div>
-      <div class="staff-order-card-actions">
+      <div class="staff-order-card-actions staff-order-detail-actions">
         ${showAssignTrayAction ? `<button class="primary-button" type="button" data-action="staff-open-tray-assignment" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Assign Tray</button>` : ''}
         <button class="secondary-button" type="button" data-action="staff-view-order-json" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">View Raw JSON</button>
         <button class="text-button" type="button" data-action="close-staff-order-detail">Close</button>
@@ -3797,22 +3834,20 @@ function renderStaffOrderDetail() {
 
     <div class="staff-order-detail-meta">
       <div><span>Order Number</span><strong>${escapeHtml(shortOrderReference)}</strong></div>
-      <div><span>Customer</span><strong>${escapeHtml(customer.full_name || 'Unknown customer')}</strong></div>
-      <div><span>Tray</span><strong>${escapeHtml(trayLabel)}</strong></div>
-      <div><span>Production Status</span><strong>${escapeHtml(productionStatusLabel)}</strong></div>
-      <div><span>Progress</span><strong>${escapeHtml(completionSummary)}</strong></div>
+      <div><span>Fulfillment</span><strong>${escapeHtml(fulfillment.method === 'pickup' ? 'Pickup' : 'Shipping')}</strong></div>
+      <div><span>Needed By</span><strong>${escapeHtml(fulfillment.needed_by ? formatReadableDate(fulfillment.needed_by) : 'Not provided')}</strong></div>
       <div><span>UUID</span><strong>${escapeHtml(record.forge_order_uuid)}</strong></div>
       <div><span>Submitted</span><strong>${escapeHtml(formatReadableDateTime(record.submitted_at || ''))}</strong></div>
       <div><span>Local Saved</span><strong>${escapeHtml(formatReadableDateTime(record.local_saved_at || ''))}</strong></div>
-      <div><span>Sync Status</span><strong>${escapeHtml(sanitizeText(record.sync_status || 'pending').replace(/_/g, ' '))}</strong></div>
+      <div><span>Sync Status</span><strong>${escapeHtml(syncStatusLabel)}</strong></div>
     </div>
 
     <section class="staff-order-detail-section">
       <h3>Order</h3>
       <div class="staff-order-detail-grid">
-        <div><span>Production Status</span><strong>${escapeHtml(productionStatusLabel)}</strong></div>
         <div><span>Tray State</span><strong>${escapeHtml(trayLabel)}</strong></div>
         <div><span>Production Progress</span><strong>${escapeHtml(completionSummary)}</strong></div>
+        <div><span>Production Status</span><strong>${escapeHtml(productionStatusLabel)}</strong></div>
         <div><span>Sync Attempts</span><strong>${escapeHtml(String(record.sync_attempt_count ?? 0))}</strong></div>
       </div>
       ${showOpenFlagProgressNote ? '<p class="staff-order-detail-note">All required pieces are complete, but this order still has an open flag and cannot move to Ready to Pack yet.</p>' : ''}
@@ -4105,7 +4140,7 @@ function getStaffOrderItemsMarkup(record, items) {
     return `
       <article>
         <div class="staff-order-card-header">
-          <div>
+          <div class="staff-order-item-title">
             <h4>${escapeHtml(item.product_display_name || item.product_definition_id || 'Custom Item')}</h4>
             <p>${escapeHtml(`${Number.isInteger(item.quantity) ? item.quantity : 1} × ${Number.isInteger(pricing.final_unit_price_cents) ? formatPrice(pricing.final_unit_price_cents / 100) : 'Quote Required'}`)}</p>
           </div>
@@ -4136,7 +4171,7 @@ function getStaffOrderItemsMarkup(record, items) {
               <strong>${escapeHtml(detail.value)}</strong>
             </div>
           `).join('')}
-          <div><span>Prices</span><strong>${Number.isInteger(pricing.line_total_cents) ? escapeHtml(formatPrice(pricing.line_total_cents / 100)) : 'Quote Required'}</strong></div>
+          <div><span>Price</span><strong>${Number.isInteger(pricing.line_total_cents) ? escapeHtml(formatPrice(pricing.line_total_cents / 100)) : 'Quote Required'}</strong></div>
           ${customerNote ? `<div><span>Customer Note</span><strong>${escapeHtml(customerNote)}</strong></div>` : ''}
           ${productionNote ? `<div><span>Production Note</span><strong>${escapeHtml(productionNote)}</strong></div>` : ''}
         </div>
@@ -4144,17 +4179,54 @@ function getStaffOrderItemsMarkup(record, items) {
           <div class="staff-order-detail-row">
             <span>People & Pets Order</span>
             ${Array.isArray(item.personalization_order) && item.personalization_order.length
-              ? `<ul class="staff-order-detail-list">${item.personalization_order.map((entry) => `<li>${escapeHtml(formatStaffPersonalizationEntry(entry))}</li>`).join('')}</ul>`
-              : '<p>No people or pets were added.</p>'}
+              ? buildStaffPersonalizationGridMarkup(item.personalization_order)
+              : ''}
           </div>
         ` : ''}
+        ${flags.length ? `
         <div class="staff-order-detail-row">
           <span>Item Open Flags</span>
-          ${flags.length ? `<ul class="staff-order-detail-list">${flags.map((flag) => `<li>${escapeHtml(flag.message || flag.code || 'Open flag')}</li>`).join('')}</ul>` : '<p>No item open flags.</p>'}
-        </div>
+          <ul class="staff-order-detail-list">${flags.map((flag) => `<li>${escapeHtml(flag.message || flag.code || 'Open flag')}</li>`).join('')}</ul>
+        </div>` : ''}
       </article>
     `;
   }).join('');
+}
+
+function buildStaffPersonalizationGridMarkup(entries) {
+  const source = Array.isArray(entries) ? entries : [];
+  return `
+    <div class="staff-personalization-grid" role="table" aria-label="People and pets order">
+      <div class="staff-personalization-grid-header" role="row">
+        <span role="columnheader">#</span>
+        <span role="columnheader">Name</span>
+        <span role="columnheader">Type</span>
+        <span role="columnheader">Icon / Request</span>
+      </div>
+      ${source.map((entry, index) => `
+        <div class="staff-personalization-grid-row" role="row">
+          <span role="cell">${escapeHtml(String(index + 1))}</span>
+          <span role="cell">${escapeHtml(entry?.name || 'Unnamed')}</span>
+          <span role="cell">${escapeHtml(entry?.type === 'pet' ? 'Pet' : 'Person')}</span>
+          <span role="cell">${escapeHtml(formatStaffPersonalizationRequest(entry))}</span>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function formatStaffPersonalizationRequest(entry) {
+  if (entry?.type !== 'pet') {
+    return '—';
+  }
+
+  if (entry?.custom_icon_description) {
+    return `Custom Icon: ${entry.custom_icon_description}`;
+  }
+  if (entry?.icon) {
+    return entry.icon.replace(/_/g, ' ');
+  }
+  return '—';
 }
 
 function buildStaffItemDetailRows(item) {
@@ -4169,7 +4241,6 @@ function buildStaffItemDetailRows(item) {
   );
   const familyFieldLabel = getFamilyFieldLabel(productDefinitionId);
   const rows = [
-    { label: 'Product', value: sanitizeText(item?.product_display_name || item?.product_definition_id || '') },
     { label: 'Fulfillment', value: formatFulfillmentMethodLabel(attributes.fulfillment_method) },
     { label: 'Size', value: sanitizeText(attributes.size || configurationSnapshot.size || '') },
     { label: 'Tree Color', value: sanitizeText(attributes.tree_color || configurationSnapshot.treeColor || configurationSnapshot.tree_color || '') },
@@ -4215,17 +4286,6 @@ function usesPeopleAndPetsPersonalization(item) {
     : {};
   const personalizationOrder = Array.isArray(item?.personalization_order) ? item.personalization_order : [];
   return personalizationOrder.length > 0 || Number(attributes.people_count || 0) > 0 || Number(attributes.pet_count || 0) > 0;
-}
-
-function formatStaffPersonalizationEntry(entry) {
-  const parts = [entry.name || 'Unnamed', entry.type === 'pet' ? 'Pet' : 'Person'];
-  if (entry.icon) {
-    parts.push(entry.icon.replace(/_/g, ' '));
-  }
-  if (entry.custom_icon_description) {
-    parts.push(`Custom icon: ${entry.custom_icon_description}`);
-  }
-  return parts.join(' / ');
 }
 
 function getPayloadPreviewFocusableElements() {
