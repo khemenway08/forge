@@ -2148,6 +2148,24 @@ h1 {
   gap: 12px;
 }
 
+.staff-ready-list {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  align-content: start;
+  align-items: start;
+  grid-auto-rows: max-content;
+}
+
+[data-screen="ready-to-pack"] .staff-orders-shell {
+  min-height: auto;
+  align-content: start;
+  gap: 14px;
+}
+
+[data-screen="ready-to-pack"] .staff-panel-surface {
+  align-self: start;
+  gap: 10px;
+}
+
 .staff-batch-card,
 .staff-order-card,
 .staff-order-detail-section,
@@ -2193,6 +2211,56 @@ h1 {
   padding: 16px 19px;
   display: grid;
   gap: 12px;
+}
+
+.staff-ready-card {
+  gap: 14px;
+}
+
+.staff-ready-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.staff-ready-card-tray {
+  color: var(--staff-text);
+  font-size: clamp(24px, 3vw, 34px);
+  font-weight: 900;
+  letter-spacing: .04em;
+}
+
+.staff-ready-card-body {
+  display: grid;
+  gap: 6px;
+}
+
+.staff-ready-card-customer,
+.staff-ready-card-timestamp {
+  margin: 0;
+}
+
+.staff-ready-card-customer {
+  color: var(--staff-text);
+  font-weight: 700;
+}
+
+.staff-ready-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  color: var(--staff-muted);
+}
+
+.staff-ready-card-meta strong {
+  color: var(--staff-text);
+}
+
+.staff-ready-card-timestamp {
+  color: var(--staff-muted);
+  font-size: 14px;
 }
 
 .staff-order-card-badges {
@@ -2849,6 +2917,8 @@ h1 {
   .staff-orders-header,
   .staff-orders-brand,
   .staff-order-card-header,
+  .staff-ready-card-header,
+  .staff-ready-card-meta,
   .staff-order-card-meta,
   .staff-order-card-actions,
   .staff-item-progress-row,
@@ -2897,6 +2967,7 @@ h1 {
   .staff-orders-summary,
   .staff-orders-filters,
   .staff-orders-grid,
+  .staff-ready-list,
   .staff-order-detail-grid,
   .staff-order-detail-meta,
   .staff-order-card-meta--primary,

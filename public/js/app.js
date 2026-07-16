@@ -43,6 +43,8 @@ const staffOrdersFilters = document.querySelector('[data-staff-orders-filters]')
 const staffBatchGroups = document.querySelector('[data-staff-batch-groups]');
 const staffOrdersList = document.querySelector('[data-staff-orders-list]');
 const staffOrdersStatus = document.querySelector('[data-staff-orders-status]');
+const readyToPackCount = document.querySelector('[data-ready-to-pack-count]');
+const readyToPackList = document.querySelector('[data-ready-to-pack-list]');
 const addConfirmationBackdrop = document.querySelector('[data-add-confirmation-backdrop]');
 const addConfirmationDialog = document.querySelector('[data-add-confirmation-dialog]');
 const addConfirmationItem = document.querySelector('[data-add-confirmation-item]');
@@ -612,7 +614,7 @@ function showScreen(name) {
   screens.forEach((screen) => {
     screen.classList.toggle('active', screen.dataset.screen === name);
   });
-  const isStaffScreen = name === 'staff-orders';
+  const isStaffScreen = name === 'staff-orders' || name === 'ready-to-pack';
   document.body.classList.toggle('is-staff-screen', isStaffScreen);
   appShell?.classList.toggle('is-staff-screen', isStaffScreen);
   appState.currentScreen = name;
@@ -1255,9 +1257,21 @@ function openStaffOrdersScreen() {
   ensureStaffOrderDetailUi();
   ensureStaffTrayAssignmentUi();
   renderStaffOrdersQueue();
+  renderReadyToPackQueue();
   loadStaffOrdersQueue();
   closeStaffPanel();
   showScreen('staff-orders');
+}
+
+function openReadyToPackScreen() {
+  staffOrdersState.enabled = true;
+  ensureStaffOrderDetailUi();
+  ensureStaffTrayAssignmentUi();
+  renderStaffOrdersQueue();
+  renderReadyToPackQueue();
+  loadStaffOrdersQueue();
+  closeStaffPanel();
+  showScreen('ready-to-pack');
 }
 
 function resetActiveOrderSession({ clearCart = true, goToWelcome = true } = {}) {
@@ -3506,6 +3520,11 @@ function buildStaffNoticeMarkup(message, tone = 'success') {
   `;
 }
 
+function getReadyToPackCountLabel(records) {
+  const count = Array.isArray(records) ? records.length : 0;
+  return `${count} ${count === 1 ? 'order' : 'orders'} ready`;
+}
+
 function renderStaffOrdersQueue() {
   if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled) || !staffOrdersSummary || !staffOrdersFilters || !staffBatchGroups || !staffOrdersList || !staffOrdersStatus) {
     return;
@@ -3582,6 +3601,69 @@ function renderStaffOrdersQueue() {
           <p>Adjust the search or clear filters to see the saved local orders on this device.</p>
         </div>
       `}
+  `;
+}
+
+function renderReadyToPackQueue() {
+  if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled) || !readyToPackCount || !readyToPackList) {
+    return;
+  }
+
+  if (staffOrdersState.loading) {
+    readyToPackCount.textContent = 'Loading ready orders...';
+    readyToPackList.innerHTML = '';
+    return;
+  }
+
+  if (staffOrdersState.error) {
+    readyToPackCount.textContent = 'Ready-to-pack queue unavailable';
+    readyToPackList.innerHTML = buildStaffNoticeMarkup(staffOrdersState.error, 'error');
+    return;
+  }
+
+  const readyRecords = forgeLocalOrdersQueue.filterReadyToPackOrders(staffOrdersState.records);
+  readyToPackCount.textContent = getReadyToPackCountLabel(readyRecords);
+  readyToPackList.innerHTML = readyRecords.length
+    ? readyRecords.map((record) => buildReadyToPackCardMarkup(record)).join('')
+    : `
+      <div class="staff-empty-state">
+        <h3>No orders are ready to pack</h3>
+        <p>Orders will appear here automatically after every required piece is complete and no blocking issue remains.</p>
+      </div>
+    `;
+}
+
+function buildReadyToPackCardMarkup(record) {
+  const payload = record.payload || {};
+  const itemSummaries = forgeLocalOrdersQueue.buildReadyToPackItemSummaries(record);
+  const readyTimestamp = record.ready_to_pack_at
+    ? `Ready since ${formatReadableDateTime(record.ready_to_pack_at)}`
+    : `Ready since ${formatReadableDateTime(record.submitted_at || record.local_saved_at || '')}`;
+  const fulfillmentMethod = payload.fulfillment?.method === 'pickup' ? 'Pickup' : 'Shipping';
+
+  return `
+    <article class="staff-order-card staff-ready-card">
+      <div class="staff-ready-card-header">
+        <div class="staff-ready-card-tray">${escapeHtml(getOrderTrayLabel(record))}</div>
+        <span class="staff-status-badge ${escapeHtml(getOrderProductionStatusBadgeClass(record))}">${escapeHtml(getOrderProductionStatusLabel(record))}</span>
+      </div>
+      <div class="staff-ready-card-body">
+        <div class="staff-order-ref">${escapeHtml(getOrderShortReference(record))}</div>
+        <p class="staff-ready-card-customer">${escapeHtml(payload.customer?.full_name || 'Unknown customer')}</p>
+        <div class="staff-ready-card-meta">
+          <strong>${escapeHtml(getOrderCompletionSummary(record))}</strong>
+          <span>${escapeHtml(fulfillmentMethod)}</span>
+        </div>
+      </div>
+      <div class="staff-order-products">
+        <span>Items</span>
+        <ul>${itemSummaries.map((line) => `<li><span>${escapeHtml(line)}</span></li>`).join('')}</ul>
+      </div>
+      <p class="staff-ready-card-timestamp">${escapeHtml(readyTimestamp)}</p>
+      <div class="staff-order-card-actions">
+        <button class="secondary-button" type="button" data-action="staff-view-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">View Order</button>
+      </div>
+    </article>
   `;
 }
 
@@ -3688,6 +3770,7 @@ async function loadStaffOrdersQueue() {
   } finally {
     staffOrdersState.loading = false;
     renderStaffOrdersQueue();
+    renderReadyToPackQueue();
   }
 }
 
@@ -5067,10 +5150,11 @@ if (treeForm) {
   renderDebugOrderTools();
   renderPlaceOrderButton();
   renderStaffOrdersQueue();
+  renderReadyToPackQueue();
 
   if (staffOrdersState.enabled) {
     loadStaffOrdersQueue();
-    showScreen('staff-orders');
+    showScreen(appState.currentScreen === 'ready-to-pack' ? 'ready-to-pack' : 'staff-orders');
   } else if (appState.currentScreen === 'tree-customization') {
     showScreen('tree-customization');
   } else if (appState.currentScreen === 'tree-review') {
@@ -5109,6 +5193,11 @@ if (treeForm) {
 
     if (action === 'staff-open-orders') {
       openStaffOrdersScreen();
+      return;
+    }
+
+    if (action === 'staff-open-ready-to-pack') {
+      openReadyToPackScreen();
       return;
     }
 
@@ -5732,6 +5821,12 @@ if (treeForm) {
       return;
     }
 
+    if (action === 'staff-open-ready-to-pack') {
+      staffOrdersState.notice = '';
+      openReadyToPackScreen();
+      return;
+    }
+
     if (action === 'staff-return-welcome') {
       staffOrdersState.notice = '';
       closeStaffTrayAssignment();
@@ -5745,6 +5840,38 @@ if (treeForm) {
       staffOrdersState.searchTerm = '';
       staffOrdersState.filters = forgeLocalOrdersQueue.createEmptyOrderFilters();
       renderStaffOrdersQueue();
+      return;
+    }
+
+    if (action === 'staff-view-order' && orderUuid) {
+      openStaffOrderDetail(orderUuid);
+    }
+  });
+
+  document.querySelector('[data-screen="ready-to-pack"]')?.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    const orderUuid = event.target.closest('[data-order-uuid]')?.dataset.orderUuid;
+    if (!action) {
+      return;
+    }
+
+    if (action === 'staff-refresh-ready-to-pack') {
+      staffOrdersState.notice = '';
+      loadStaffOrdersQueue();
+      return;
+    }
+
+    if (action === 'staff-open-orders') {
+      staffOrdersState.notice = '';
+      showScreen('staff-orders');
+      return;
+    }
+
+    if (action === 'staff-return-welcome') {
+      staffOrdersState.notice = '';
+      closeStaffTrayAssignment();
+      closeStaffOrderDetail();
+      showScreen('welcome');
       return;
     }
 

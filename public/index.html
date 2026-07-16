@@ -21,6 +21,7 @@
           <p class="staff-panel-copy">Open Staff Orders or reset this shared kiosk before the next customer begins.</p>
           <div class="staff-panel-actions" data-staff-actions="default">
             <button class="secondary-button" type="button" data-action="staff-open-orders">Staff Orders</button>
+            <button class="secondary-button" type="button" data-action="staff-open-ready-to-pack">Ready to Pack</button>
             <button class="secondary-button" type="button" data-action="staff-reset-kiosk">Reset Kiosk</button>
             <button class="secondary-button" type="button" data-action="close-staff-panel">Cancel</button>
           </div>
@@ -61,6 +62,7 @@
               </div>
             </div>
             <div class="staff-orders-header-actions">
+              <button class="secondary-button" type="button" data-action="staff-open-ready-to-pack">Ready to Pack</button>
               <button class="secondary-button" type="button" data-action="staff-refresh-orders">Refresh Queue</button>
               <button class="secondary-button" type="button" data-action="staff-return-welcome">Return to Welcome</button>
             </div>
@@ -101,6 +103,37 @@
               <div class="staff-orders-list" data-staff-orders-list></div>
             </section>
           </div>
+        </div>
+      </section>
+
+      <section class="screen staff-orders-screen" data-screen="ready-to-pack">
+        <div class="staff-orders-shell">
+          <header class="staff-orders-header">
+            <div class="staff-orders-brand">
+              <img class="staff-orders-logo" src="assets/brand/forge-logo.png" alt="Forge">
+              <div>
+                <p class="eyebrow staff-orders-eyebrow">Development Only</p>
+                <h1>Ready to Pack</h1>
+                <p class="lead">Completed orders waiting for packing verification.</p>
+              </div>
+            </div>
+            <div class="staff-orders-header-actions">
+              <button class="secondary-button" type="button" data-action="staff-open-orders">All Staff Orders</button>
+              <button class="secondary-button" type="button" data-action="staff-refresh-ready-to-pack">Refresh Queue</button>
+              <button class="secondary-button" type="button" data-action="staff-return-welcome">Return to Welcome</button>
+            </div>
+          </header>
+
+          <section class="staff-panel-surface">
+            <div class="staff-section-heading">
+              <div>
+                <p class="eyebrow staff-orders-eyebrow">Packing Queue</p>
+                <h2>Orders Ready to Pack</h2>
+              </div>
+              <p class="staff-orders-status" data-ready-to-pack-count aria-live="polite"></p>
+            </div>
+            <div class="staff-orders-list staff-ready-list" data-ready-to-pack-list></div>
+          </section>
         </div>
       </section>
 

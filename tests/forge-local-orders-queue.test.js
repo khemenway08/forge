@@ -321,6 +321,143 @@ function createRecords() {
   ];
 }
 
+function createReadyRecord(overrides = {}) {
+  return createRecord({
+    forge_order_uuid: 'order-ready-1',
+    production_status: 'ready_to_pack',
+    current_tray_number: 1,
+    total_item_count: 3,
+    completed_item_count: 3,
+    ready_to_pack_at: '2026-07-16T12:16:00.000Z',
+    has_open_flags: false,
+    payload: {
+      forge_order_uuid: 'order-ready-1',
+      customer: {
+        full_name: 'Kyle Hemenway',
+        email: 'kmhemenway22@gmail.com',
+        phone: '(303) 507-1567',
+        preferred_contact: 'Text'
+      },
+      fulfillment: {
+        method: 'shipping',
+        needed_by: '2026-12-01',
+        shipping_address: {
+          address_1: '123 Main Street',
+          address_2: '',
+          city: 'Denver',
+          state: 'CO',
+          postal_code: '80202',
+          country: 'United States'
+        }
+      },
+      pricing: {
+        estimated_total_cents: 5600
+      },
+      open_flags: [],
+      has_open_flags: false,
+      items: [
+        {
+          line_id: 'tree-line',
+          quantity: 1,
+          completed_quantity: 1,
+          completed_at: '2026-07-16T12:00:00.000Z',
+          production_status: 'complete',
+          product_definition_id: 'tree_ornament',
+          product_display_name: 'Tree Ornament',
+          structured_attributes: {
+            product_definition_id: 'tree_ornament',
+            production_status: 'complete',
+            fulfillment_method: 'shipping',
+            has_open_flags: false
+          },
+          open_flags: []
+        },
+        {
+          line_id: 'reindeer-line',
+          quantity: 2,
+          completed_quantity: 2,
+          completed_at: '2026-07-16T12:05:00.000Z',
+          production_status: 'complete',
+          product_definition_id: 'little_reindeer_letter',
+          product_display_name: 'Little Reindeer Letter Ornament',
+          structured_attributes: {
+            product_definition_id: 'little_reindeer_letter',
+            production_status: 'complete',
+            fulfillment_method: 'shipping',
+            has_open_flags: false
+          },
+          open_flags: []
+        }
+      ]
+    },
+    ...overrides,
+    payload: {
+      ...createRecord().payload,
+      ...{
+        forge_order_uuid: 'order-ready-1',
+        customer: {
+          full_name: 'Kyle Hemenway',
+          email: 'kmhemenway22@gmail.com',
+          phone: '(303) 507-1567',
+          preferred_contact: 'Text'
+        },
+        fulfillment: {
+          method: 'shipping',
+          needed_by: '2026-12-01',
+          shipping_address: {
+            address_1: '123 Main Street',
+            address_2: '',
+            city: 'Denver',
+            state: 'CO',
+            postal_code: '80202',
+            country: 'United States'
+          }
+        },
+        pricing: {
+          estimated_total_cents: 5600
+        },
+        open_flags: [],
+        has_open_flags: false,
+        items: [
+          {
+            line_id: 'tree-line',
+            quantity: 1,
+            completed_quantity: 1,
+            completed_at: '2026-07-16T12:00:00.000Z',
+            production_status: 'complete',
+            product_definition_id: 'tree_ornament',
+            product_display_name: 'Tree Ornament',
+            structured_attributes: {
+              product_definition_id: 'tree_ornament',
+              production_status: 'complete',
+              fulfillment_method: 'shipping',
+              has_open_flags: false
+            },
+            open_flags: []
+          },
+          {
+            line_id: 'reindeer-line',
+            quantity: 2,
+            completed_quantity: 2,
+            completed_at: '2026-07-16T12:05:00.000Z',
+            production_status: 'complete',
+            product_definition_id: 'little_reindeer_letter',
+            product_display_name: 'Little Reindeer Letter Ornament',
+            structured_attributes: {
+              product_definition_id: 'little_reindeer_letter',
+              production_status: 'complete',
+              fulfillment_method: 'shipping',
+              has_open_flags: false
+            },
+            open_flags: []
+          }
+        ]
+      },
+      ...(overrides.payload || {})
+    }
+  });
+}
+
 test('orders sort newest first and short reference is deterministic', () => {
   const records = createRecords();
   const sorted = queueHelpers.sortLocalOrdersNewestFirst(records);
@@ -454,4 +591,211 @@ test('standard mode does not request staff UI creation and only forgeDebug=order
   assert.equal(queueHelpers.isLocalOrdersQueueEnabled('?forgeDebug=orders'), true);
   assert.equal(queueHelpers.shouldCreateStaffOrdersUi(false), false);
   assert.equal(queueHelpers.shouldCreateStaffOrdersUi(true), true);
+});
+
+test('valid ready-to-pack orders are eligible and concise item summaries preserve quantity and readable names', () => {
+  const record = createReadyRecord();
+
+  assert.equal(queueHelpers.isOrderEligibleForReadyToPack(record), true);
+  assert.deepEqual(queueHelpers.filterReadyToPackOrders([record]).map((entry) => entry.forge_order_uuid), ['order-ready-1']);
+  assert.deepEqual(queueHelpers.buildReadyToPackItemSummaries(record), [
+    '1 × Tree Ornament',
+    '2 × Little Reindeer Letter Ornament'
+  ]);
+});
+
+test('submitted, tray-assigned, and in-production orders are excluded from ready-to-pack', () => {
+  const submitted = createReadyRecord({ forge_order_uuid: 'submitted-order', production_status: 'submitted' });
+  const trayAssigned = createReadyRecord({ forge_order_uuid: 'tray-order', production_status: 'tray_assigned' });
+  const inProduction = createReadyRecord({ forge_order_uuid: 'production-order', production_status: 'in_production' });
+
+  assert.equal(queueHelpers.isOrderEligibleForReadyToPack(submitted), false);
+  assert.equal(queueHelpers.isOrderEligibleForReadyToPack(trayAssigned), false);
+  assert.equal(queueHelpers.isOrderEligibleForReadyToPack(inProduction), false);
+});
+
+test('incomplete or inconsistent ready-to-pack records are excluded', () => {
+  const incompletePieces = createReadyRecord({
+    forge_order_uuid: 'incomplete-pieces',
+    completed_item_count: 2,
+    payload: {
+      items: [
+        {
+          line_id: 'tree-line',
+          quantity: 1,
+          completed_quantity: 1,
+          production_status: 'complete',
+          product_definition_id: 'tree_ornament',
+          product_display_name: 'Tree Ornament',
+          structured_attributes: { product_definition_id: 'tree_ornament', production_status: 'complete', has_open_flags: false },
+          open_flags: []
+        },
+        {
+          line_id: 'reindeer-line',
+          quantity: 2,
+          completed_quantity: 1,
+          production_status: 'in_production',
+          product_definition_id: 'little_reindeer_letter',
+          product_display_name: 'Little Reindeer Letter Ornament',
+          structured_attributes: { product_definition_id: 'little_reindeer_letter', production_status: 'in_production', has_open_flags: false },
+          open_flags: []
+        }
+      ]
+    }
+  });
+  const mismatchedTotals = createReadyRecord({
+    forge_order_uuid: 'mismatched-totals',
+    total_item_count: 4
+  });
+
+  assert.equal(queueHelpers.isOrderEligibleForReadyToPack(incompletePieces), false);
+  assert.equal(queueHelpers.isOrderEligibleForReadyToPack(mismatchedTotals), false);
+});
+
+test('orders without trays, with zero required items, or only cancelled items are excluded', () => {
+  const noTray = createReadyRecord({ forge_order_uuid: 'no-tray', current_tray_number: null });
+  const zeroItems = createReadyRecord({
+    forge_order_uuid: 'zero-items',
+    total_item_count: 0,
+    completed_item_count: 0,
+    payload: { items: [] }
+  });
+  const onlyCancelled = createReadyRecord({
+    forge_order_uuid: 'cancelled-only',
+    total_item_count: 0,
+    completed_item_count: 0,
+    payload: {
+      items: [
+        {
+          line_id: 'cancelled-line',
+          quantity: 2,
+          completed_quantity: 2,
+          production_status: 'cancelled',
+          product_definition_id: 'tree_ornament',
+          product_display_name: 'Tree Ornament',
+          structured_attributes: { product_definition_id: 'tree_ornament', production_status: 'cancelled', has_open_flags: false },
+          open_flags: []
+        }
+      ]
+    }
+  });
+
+  assert.equal(queueHelpers.isOrderEligibleForReadyToPack(noTray), false);
+  assert.equal(queueHelpers.isOrderEligibleForReadyToPack(zeroItems), false);
+  assert.equal(queueHelpers.isOrderEligibleForReadyToPack(onlyCancelled), false);
+});
+
+test('order-level and item-level blocking flags exclude otherwise complete orders', () => {
+  const orderFlag = createReadyRecord({
+    forge_order_uuid: 'order-flag',
+    has_open_flags: true,
+    payload: {
+      has_open_flags: true,
+      open_flags: [{ code: 'waiting_on_material', message: 'Waiting on material' }]
+    }
+  });
+  const itemFlag = createReadyRecord({
+    forge_order_uuid: 'item-flag',
+    payload: {
+      items: [
+        {
+          line_id: 'tree-line',
+          quantity: 1,
+          completed_quantity: 1,
+          production_status: 'complete',
+          product_definition_id: 'tree_ornament',
+          product_display_name: 'Tree Ornament',
+          structured_attributes: { product_definition_id: 'tree_ornament', production_status: 'complete', has_open_flags: true },
+          open_flags: [{ code: 'custom_icon', message: 'Custom icon requested' }]
+        }
+      ]
+    }
+  });
+
+  assert.equal(queueHelpers.isOrderEligibleForReadyToPack(orderFlag), false);
+  assert.equal(queueHelpers.isOrderEligibleForReadyToPack(itemFlag), false);
+});
+
+test('packed, shipped, picked up, and cancelled orders are excluded', () => {
+  assert.equal(queueHelpers.isOrderEligibleForReadyToPack(createReadyRecord({ forge_order_uuid: 'packed-order', production_status: 'packed' })), false);
+  assert.equal(queueHelpers.isOrderEligibleForReadyToPack(createReadyRecord({ forge_order_uuid: 'shipped-order', production_status: 'shipped' })), false);
+  assert.equal(queueHelpers.isOrderEligibleForReadyToPack(createReadyRecord({ forge_order_uuid: 'picked-up-order', production_status: 'picked_up' })), false);
+  assert.equal(queueHelpers.isOrderEligibleForReadyToPack(createReadyRecord({ forge_order_uuid: 'cancelled-order', production_status: 'cancelled' })), false);
+});
+
+test('cancelled items do not inflate required quantity and quantity-greater-than-one completion is evaluated correctly', () => {
+  const record = createReadyRecord({
+    forge_order_uuid: 'mixed-counts',
+    total_item_count: 3,
+    completed_item_count: 3,
+    payload: {
+      items: [
+        {
+          line_id: 'tree-line',
+          quantity: 1,
+          completed_quantity: 1,
+          production_status: 'complete',
+          product_definition_id: 'tree_ornament',
+          product_display_name: 'Tree Ornament',
+          structured_attributes: { product_definition_id: 'tree_ornament', production_status: 'complete', has_open_flags: false },
+          open_flags: []
+        },
+        {
+          line_id: 'reindeer-line',
+          quantity: 2,
+          completed_quantity: 2,
+          production_status: 'complete',
+          product_definition_id: 'little_reindeer_letter',
+          product_display_name: 'Little Reindeer Letter Ornament',
+          structured_attributes: { product_definition_id: 'little_reindeer_letter', production_status: 'complete', has_open_flags: false },
+          open_flags: []
+        },
+        {
+          line_id: 'cancelled-line',
+          quantity: 5,
+          completed_quantity: 0,
+          production_status: 'cancelled',
+          product_definition_id: 'present_stack',
+          product_display_name: 'Present Stack Ornament',
+          structured_attributes: { product_definition_id: 'present_stack', production_status: 'cancelled', has_open_flags: false },
+          open_flags: []
+        }
+      ]
+    }
+  });
+
+  assert.equal(queueHelpers.isOrderEligibleForReadyToPack(record), true);
+  assert.deepEqual(queueHelpers.buildReadyToPackItemSummaries(record), [
+    '1 × Tree Ornament',
+    '2 × Little Reindeer Letter Ornament'
+  ]);
+});
+
+test('ready count and ready ordering use one eligibility definition with oldest-ready-first and submitted-at fallback', () => {
+  const newestReady = createReadyRecord({
+    forge_order_uuid: 'ready-newer',
+    ready_to_pack_at: '2026-07-16T13:00:00.000Z'
+  });
+  const oldestReady = createReadyRecord({
+    forge_order_uuid: 'ready-oldest',
+    ready_to_pack_at: '2026-07-16T12:00:00.000Z'
+  });
+  const fallbackReady = createReadyRecord({
+    forge_order_uuid: 'ready-fallback',
+    submitted_at: '2026-07-16T11:30:00.000Z',
+    ready_to_pack_at: null
+  });
+  const excluded = createReadyRecord({
+    forge_order_uuid: 'not-ready',
+    production_status: 'in_production'
+  });
+
+  const readyRecords = queueHelpers.filterReadyToPackOrders([newestReady, excluded, oldestReady, fallbackReady]);
+
+  assert.equal(readyRecords.length, 3);
+  assert.deepEqual(readyRecords.map((record) => record.forge_order_uuid), [
+    'ready-fallback',
+    'ready-oldest',
+    'ready-newer'
+  ]);
 });

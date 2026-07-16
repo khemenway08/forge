@@ -167,6 +167,62 @@
     };
   }
 
+  function isOrderEligibleForReadyToPack(record) {
+    const normalizedRecord = record && typeof record === 'object' ? record : null;
+    if (!normalizedRecord) {
+      return false;
+    }
+
+    if (normalizeLifecycleStatus(normalizedRecord.production_status) !== 'ready_to_pack') {
+      return false;
+    }
+
+    if (!hasActiveTrayAssignment(normalizedRecord)) {
+      return false;
+    }
+
+    if (recordHasAnyOpenFlags(normalizedRecord)) {
+      return false;
+    }
+
+    const counts = deriveReadyToPackCounts(normalizedRecord);
+    if (counts.totalItemCount <= 0) {
+      return false;
+    }
+    if (counts.completedItemCount !== counts.totalItemCount) {
+      return false;
+    }
+    if (!counts.allRequiredItemsComplete) {
+      return false;
+    }
+
+    const storedTotal = normalizeOptionalCount(normalizedRecord.total_item_count);
+    const storedCompleted = normalizeOptionalCount(normalizedRecord.completed_item_count);
+    if (storedTotal != null && storedTotal !== counts.totalItemCount) {
+      return false;
+    }
+    if (storedCompleted != null && storedCompleted !== counts.completedItemCount) {
+      return false;
+    }
+
+    return true;
+  }
+
+  function filterReadyToPackOrders(records) {
+    return sortReadyToPackOrders((Array.isArray(records) ? records : []).filter((record) => isOrderEligibleForReadyToPack(record)));
+  }
+
+  function sortReadyToPackOrders(records) {
+    const normalizedRecords = Array.isArray(records) ? [...records] : [];
+    return normalizedRecords.sort(compareReadyToPackOrders);
+  }
+
+  function buildReadyToPackItemSummaries(record) {
+    return getRecordItems(record)
+      .filter((item) => normalizeItemProductionStatus(item) !== 'cancelled')
+      .map((item) => `${normalizeQuantity(item.quantity)} × ${asTrimmedString(item.product_display_name || item.product_definition_id || 'Custom Item')}`);
+  }
+
   function getMatchingOrderItems(record, filters = {}) {
     const normalizedFilters = normalizeFilters(filters);
     const items = getRecordItems(record);
@@ -384,7 +440,10 @@
   }
 
   function itemHasAnyOpenFlags(item) {
-    return Array.isArray(item && item.open_flags) && item.open_flags.length > 0;
+    if (Array.isArray(item && item.open_flags) && item.open_flags.length > 0) {
+      return true;
+    }
+    return Boolean(item && item.structured_attributes && item.structured_attributes.has_open_flags);
   }
 
   function itemHasCustomIconFlag(item) {
@@ -575,6 +634,78 @@
     return Number.isInteger(value) && value > 0 ? value : 1;
   }
 
+  function normalizeOptionalCount(value) {
+    return Number.isInteger(value) && value >= 0 ? value : null;
+  }
+
+  function deriveReadyToPackCounts(record) {
+    return getRecordItems(record).reduce((summary, item) => {
+      const itemStatus = normalizeItemProductionStatus(item);
+      if (itemStatus === 'cancelled') {
+        return summary;
+      }
+
+      const quantity = normalizeQuantity(item.quantity);
+      const completedQuantity = normalizeCompletedQuantity(item.completed_quantity, quantity, itemStatus);
+
+      summary.totalItemCount += quantity;
+      summary.completedItemCount += completedQuantity;
+      if (itemStatus === 'blocked' || completedQuantity !== quantity || itemHasAnyOpenFlags(item)) {
+        summary.allRequiredItemsComplete = false;
+      }
+      return summary;
+    }, {
+      totalItemCount: 0,
+      completedItemCount: 0,
+      allRequiredItemsComplete: true
+    });
+  }
+
+  function normalizeCompletedQuantity(value, quantity, explicitStatus = '') {
+    if (Number.isInteger(value)) {
+      return Math.max(0, Math.min(value, quantity));
+    }
+    return normalizeItemProductionStatus(explicitStatus) === 'complete' ? quantity : 0;
+  }
+
+  function hasActiveTrayAssignment(record) {
+    return normalizeTrayNumber(record && record.current_tray_number) > 0;
+  }
+
+  function normalizeTrayNumber(value) {
+    const parsed = Number.parseInt(asTrimmedString(value), 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+  }
+
+  function normalizeLifecycleStatus(value) {
+    return asTrimmedString(value).toLowerCase();
+  }
+
+  function normalizeItemProductionStatus(item) {
+    const rawStatus = asTrimmedString(item && (item.production_status || item.structured_attributes?.production_status)).toLowerCase();
+    if (rawStatus === 'not_started') {
+      return 'pending';
+    }
+    return rawStatus || 'pending';
+  }
+
+  function getReadyTimestamp(record) {
+    const readyAt = Date.parse(record?.ready_to_pack_at || '');
+    if (Number.isFinite(readyAt) && readyAt > 0) {
+      return readyAt;
+    }
+    return Date.parse(record?.submitted_at || '') || 0;
+  }
+
+  function compareReadyToPackOrders(left, right) {
+    const leftTimestamp = getReadyTimestamp(left);
+    const rightTimestamp = getReadyTimestamp(right);
+    if (leftTimestamp !== rightTimestamp) {
+      return leftTimestamp - rightTimestamp;
+    }
+    return getShortOrderReference(left).localeCompare(getShortOrderReference(right));
+  }
+
   function asTrimmedString(value) {
     return value == null ? '' : String(value).trim();
   }
@@ -585,14 +716,18 @@
   }
 
   return {
+    buildReadyToPackItemSummaries,
     buildProductionBatchGroups,
     createEmptyOrderFilters,
     createOrderSearchDocument,
     filterLocalOrders,
+    filterReadyToPackOrders,
     getAvailableOrderFilters,
     getMatchingOrderItems,
     getShortOrderReference,
     isLocalOrdersQueueEnabled,
+    isOrderEligibleForReadyToPack,
+    sortReadyToPackOrders,
     shouldCreateStaffOrdersUi,
     sortLocalOrdersNewestFirst,
     summarizeLocalOrders
