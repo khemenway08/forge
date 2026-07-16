@@ -87,6 +87,7 @@ const staffOrdersState = {
   detailOpen: false,
   detailOrderUuid: '',
   detailRecord: null,
+  detailPackingVerification: null,
   detailLoading: false,
   detailError: '',
   detailSavingLineId: '',
@@ -97,7 +98,16 @@ const staffOrdersState = {
   trayDialogSaving: false,
   trayDialogError: '',
   trayDialogSelectedTrayNumber: null,
-  trayDialogAvailableTrays: []
+  trayDialogAvailableTrays: [],
+  packingDialogOpen: false,
+  packingDialogOrderUuid: '',
+  packingDialogRecord: null,
+  packingDialogPackingVerification: null,
+  packingDialogLoading: false,
+  packingDialogSaving: false,
+  packingDialogError: '',
+  packingDialogNote: '',
+  packingDialogCheckedLineIds: []
 };
 
 if (!forgeProductCatalog) {
@@ -570,6 +580,9 @@ let lastStaffOrderDetailFocusTarget = null;
 let staffTrayAssignmentBackdrop = null;
 let staffTrayAssignmentDialog = null;
 let lastStaffTrayAssignmentFocusTarget = null;
+let staffPackingBackdrop = null;
+let staffPackingDialog = null;
+let lastStaffPackingFocusTarget = null;
 const payloadPreviewContextStore = forgeOrderPayloadPreview.createPayloadPreviewContextStore();
 const orderStore = forgeOrderStore.createOrderStore();
 const submissionContextManager = forgeOrderSubmission.createSubmissionContextManager({
@@ -889,7 +902,7 @@ function clearCustomerFormErrors() {
 }
 
 function sanitizeText(value) {
-  return value.replace(/\s+/g, ' ').trim();
+  return value == null ? '' : String(value).replace(/\s+/g, ' ').trim();
 }
 
 function createId() {
@@ -3313,6 +3326,76 @@ function ensureStaffTrayAssignmentUi() {
   });
 }
 
+function ensureStaffPackingUi() {
+  if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled) || staffPackingDialog) {
+    return;
+  }
+
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="staff-order-detail-backdrop staff-packing-backdrop" data-staff-packing-backdrop hidden>
+      <div class="staff-order-detail-dialog staff-packing-dialog" data-staff-packing-dialog role="dialog" aria-modal="true" aria-labelledby="staff-packing-title" tabindex="-1" hidden></div>
+    </div>
+  `);
+
+  staffPackingBackdrop = document.querySelector('[data-staff-packing-backdrop]');
+  staffPackingDialog = document.querySelector('[data-staff-packing-dialog]');
+
+  staffPackingDialog?.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    if (!action) {
+      return;
+    }
+
+    if (action === 'close-staff-packing') {
+      closeStaffPackingDialog();
+      return;
+    }
+
+    if (action === 'staff-retry-packing-load') {
+      retryStaffPackingDialogLoad();
+      return;
+    }
+
+    if (action === 'staff-pack-order-confirm') {
+      submitStaffPackingVerification();
+    }
+  });
+
+  staffPackingDialog?.addEventListener('change', (event) => {
+    const checkbox = event.target.closest('[data-packing-line-id]');
+    if (!(checkbox instanceof HTMLInputElement) || checkbox.type !== 'checkbox' || staffOrdersState.packingDialogSaving) {
+      return;
+    }
+    const lineId = String(checkbox.dataset.packingLineId || '').trim();
+    if (!lineId) {
+      return;
+    }
+    const checkedIds = new Set(staffOrdersState.packingDialogCheckedLineIds);
+    if (checkbox.checked) {
+      checkedIds.add(lineId);
+    } else {
+      checkedIds.delete(lineId);
+    }
+    staffOrdersState.packingDialogCheckedLineIds = [...checkedIds];
+    staffOrdersState.packingDialogError = '';
+    renderStaffPackingDialog();
+  });
+
+  staffPackingDialog?.addEventListener('input', (event) => {
+    const noteField = event.target.closest('[data-staff-packing-note]');
+    if (!(noteField instanceof HTMLTextAreaElement) || staffOrdersState.packingDialogSaving) {
+      return;
+    }
+    staffOrdersState.packingDialogNote = noteField.value.slice(0, 500);
+  });
+
+  staffPackingBackdrop?.addEventListener('click', (event) => {
+    if (event.target === staffPackingBackdrop && !staffOrdersState.packingDialogSaving) {
+      closeStaffPackingDialog();
+    }
+  });
+}
+
 function getOrderShortReference(record) {
   return forgeLocalOrdersQueue.getShortOrderReference(record) || 'No Ref';
 }
@@ -3378,11 +3461,23 @@ function getOrderTrayNumber(record) {
 
 function getOrderTrayLabel(record) {
   const trayNumber = getOrderTrayNumber(record);
-  return trayNumber ? `TRAY ${trayNumber}` : 'NO TRAY ASSIGNED';
+  if (trayNumber) {
+    return `TRAY ${trayNumber}`;
+  }
+  if (getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.packed && record?.packed_at) {
+    return 'TRAY RELEASED';
+  }
+  return 'NO TRAY ASSIGNED';
 }
 
 function getOrderTrayBadgeClass(record) {
-  return getOrderTrayNumber(record) ? 'staff-tray-badge--assigned' : 'staff-tray-badge--unassigned';
+  if (getOrderTrayNumber(record)) {
+    return 'staff-tray-badge--assigned';
+  }
+  if (getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.packed && record?.packed_at) {
+    return 'staff-tray-badge--released';
+  }
+  return 'staff-tray-badge--unassigned';
 }
 
 function canAssignTrayToOrder(record) {
@@ -3525,6 +3620,50 @@ function getReadyToPackCountLabel(records) {
   return `${count} ${count === 1 ? 'order' : 'orders'} ready`;
 }
 
+function getOrderActivePackingItems(record) {
+  const items = Array.isArray(record?.payload?.items) ? record.payload.items : [];
+  return items.filter((item) => getStaffItemProductionStatus(item) !== forgeOrderStore.ITEM_PRODUCTION_STATUSES?.cancelled);
+}
+
+function getOrderVerifiedPieceCounts(record, checkedLineIds = []) {
+  const activeItems = getOrderActivePackingItems(record);
+  const checkedSet = new Set((Array.isArray(checkedLineIds) ? checkedLineIds : []).map((value) => String(value || '').trim()).filter(Boolean));
+  return activeItems.reduce((summary, item) => {
+    const quantity = Number.isInteger(item?.quantity) && item.quantity > 0 ? item.quantity : 1;
+    summary.totalPieces += quantity;
+    if (checkedSet.has(String(item?.line_id || '').trim())) {
+      summary.verifiedPieces += quantity;
+    }
+    return summary;
+  }, { verifiedPieces: 0, totalPieces: 0 });
+}
+
+function getStaffPackingItemIdentifier(item) {
+  const attributes = item?.structured_attributes && typeof item.structured_attributes === 'object'
+    ? item.structured_attributes
+    : {};
+  const configurationSnapshot = item?.configuration_snapshot && typeof item.configuration_snapshot === 'object'
+    ? item.configuration_snapshot
+    : {};
+
+  const candidates = [
+    attributes.family_name,
+    configurationSnapshot.familyName,
+    configurationSnapshot.family_name,
+    configurationSnapshot.babyName,
+    configurationSnapshot.baby_name,
+    configurationSnapshot.lastName,
+    configurationSnapshot.last_name,
+    configurationSnapshot.name,
+    configurationSnapshot.edgeText,
+    configurationSnapshot.edge_text,
+    attributes.year,
+    configurationSnapshot.year
+  ].map((value) => sanitizeText(value)).filter(Boolean);
+
+  return candidates[0] || '';
+}
+
 function renderStaffOrdersQueue() {
   if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled) || !staffOrdersSummary || !staffOrdersFilters || !staffBatchGroups || !staffOrdersList || !staffOrdersStatus) {
     return;
@@ -3624,8 +3763,12 @@ function renderReadyToPackQueue() {
   const readyRecords = forgeLocalOrdersQueue.filterReadyToPackOrders(staffOrdersState.records);
   readyToPackCount.textContent = getReadyToPackCountLabel(readyRecords);
   readyToPackList.innerHTML = readyRecords.length
-    ? readyRecords.map((record) => buildReadyToPackCardMarkup(record)).join('')
+    ? `
+      ${buildStaffNoticeMarkup(staffOrdersState.notice, staffOrdersState.noticeTone)}
+      ${readyRecords.map((record) => buildReadyToPackCardMarkup(record)).join('')}
+    `
     : `
+      ${buildStaffNoticeMarkup(staffOrdersState.notice, staffOrdersState.noticeTone)}
       <div class="staff-empty-state">
         <h3>No orders are ready to pack</h3>
         <p>Orders will appear here automatically after every required piece is complete and no blocking issue remains.</p>
@@ -3662,6 +3805,7 @@ function buildReadyToPackCardMarkup(record) {
       <p class="staff-ready-card-timestamp">${escapeHtml(readyTimestamp)}</p>
       <div class="staff-order-card-actions">
         <button class="secondary-button" type="button" data-action="staff-view-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">View Order</button>
+        <button class="primary-button" type="button" data-action="staff-pack-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Pack Order</button>
       </div>
     </article>
   `;
@@ -3705,6 +3849,7 @@ function buildStaffOrderCardMarkup(record, filters) {
   const completionSummary = getOrderCompletionSummary(record);
   const syncStatusLabel = getStaffSyncStatusLabel(record);
   const syncStatusBadgeClass = getStaffSyncStatusBadgeClass(record);
+  const canPackOrder = forgeLocalOrdersQueue.isOrderEligibleForReadyToPack(record);
 
   return `
     <article class="staff-order-card">
@@ -3737,6 +3882,7 @@ function buildStaffOrderCardMarkup(record, filters) {
       </div>
       <div class="staff-order-card-actions">
         <button class="secondary-button" type="button" data-action="staff-view-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">View Order</button>
+        ${canPackOrder ? `<button class="primary-button" type="button" data-action="staff-pack-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Pack Order</button>` : ''}
       </div>
     </article>
   `;
@@ -3777,6 +3923,7 @@ async function loadStaffOrdersQueue() {
 async function openStaffOrderDetail(forgeOrderUuid) {
   ensureStaffOrderDetailUi();
   ensureStaffTrayAssignmentUi();
+  ensureStaffPackingUi();
   if (!staffOrderDetailDialog) {
     return;
   }
@@ -3787,15 +3934,20 @@ async function openStaffOrderDetail(forgeOrderUuid) {
   staffOrdersState.detailSavingLineId = '';
   staffOrdersState.detailOrderUuid = forgeOrderUuid;
   staffOrdersState.detailRecord = null;
+  staffOrdersState.detailPackingVerification = null;
   lastStaffOrderDetailFocusTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   renderStaffOrderDetail();
 
   try {
-    const record = await orderStore.getOrder(forgeOrderUuid);
+    const [record, packingVerification] = await Promise.all([
+      orderStore.getOrder(forgeOrderUuid),
+      orderStore.getPackingVerificationForOrder(forgeOrderUuid)
+    ]);
     if (!record) {
       staffOrdersState.detailError = 'That saved order could not be found.';
     } else {
       staffOrdersState.detailRecord = record;
+      staffOrdersState.detailPackingVerification = packingVerification;
     }
   } catch (error) {
     console.error('Forge staff order detail failed to load', error);
@@ -3813,10 +3965,14 @@ function closeStaffOrderDetail() {
   if (staffOrdersState.trayDialogOpen) {
     closeStaffTrayAssignment();
   }
+  if (staffOrdersState.packingDialogOpen) {
+    closeStaffPackingDialog({ restoreFocus: false });
+  }
   staffOrdersState.detailOpen = false;
   staffOrdersState.detailLoading = false;
   staffOrdersState.detailOrderUuid = '';
   staffOrdersState.detailRecord = null;
+  staffOrdersState.detailPackingVerification = null;
   staffOrdersState.detailError = '';
   staffOrdersState.detailSavingLineId = '';
   renderStaffOrderDetail();
@@ -3872,6 +4028,7 @@ function renderStaffOrderDetail() {
   }
 
   const record = staffOrdersState.detailRecord;
+  const packingVerification = staffOrdersState.detailPackingVerification;
   const payload = record.payload || {};
   const customer = payload.customer || {};
   const fulfillment = payload.fulfillment || {};
@@ -3884,6 +4041,7 @@ function renderStaffOrderDetail() {
   const completionCounts = getOrderCompletionCounts(record);
   const completionSummary = getOrderCompletionSummary(record);
   const showNoTrayMessage = !getOrderTrayNumber(record);
+  const isPackedOrder = getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.packed;
   const syncStatusLabel = getStaffSyncStatusLabel(record);
   const syncStatusBadgeClass = getStaffSyncStatusBadgeClass(record);
   const showOpenFlagProgressNote = getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.inProduction
@@ -3964,9 +4122,31 @@ function renderStaffOrderDetail() {
       ` : '<p>Local pickup order.</p>'}
     </section>
 
+    ${packingVerification ? `
+      <section class="staff-order-detail-section">
+        <h3>Packing</h3>
+        <div class="staff-order-detail-grid">
+          <div><span>Status</span><strong>Packed</strong></div>
+          <div><span>Packed At</span><strong>${escapeHtml(formatReadableDateTime(packingVerification.verified_at || record.packed_at || ''))}</strong></div>
+          <div><span>Tray Used</span><strong>${escapeHtml(`Tray ${packingVerification.tray_number}`)}</strong></div>
+          <div><span>Verified Items</span><strong>${escapeHtml(String(Array.isArray(packingVerification.verified_item_ids) ? packingVerification.verified_item_ids.length : 0))}</strong></div>
+        </div>
+        ${packingVerification.packing_note ? `
+          <div class="staff-order-detail-row">
+            <span>Packing Note</span>
+            <strong>${escapeHtml(packingVerification.packing_note)}</strong>
+          </div>
+        ` : ''}
+      </section>
+    ` : ''}
+
     <section class="staff-order-detail-section staff-order-detail-items">
       <h3>Items</h3>
-      ${showNoTrayMessage ? '<p class="staff-order-detail-note">Assign a tray before marking any finished piece complete.</p>' : '<p class="staff-order-detail-note">Mark complete only after the finished piece has been placed in the assigned tray.</p>'}
+      ${isPackedOrder
+        ? '<p class="staff-order-detail-note">Packing has been verified and the assigned tray has already been released.</p>'
+        : (showNoTrayMessage
+          ? '<p class="staff-order-detail-note">Assign a tray before marking any finished piece complete.</p>'
+          : '<p class="staff-order-detail-note">Mark complete only after the finished piece has been placed in the assigned tray.</p>')}
       ${getStaffOrderItemsMarkup(record, payload.items || [])}
     </section>
   `;
@@ -4203,6 +4383,285 @@ function renderStaffTrayAssignment() {
   `;
 }
 
+async function openStaffPackingDialog(forgeOrderUuid) {
+  ensureStaffPackingUi();
+  if (!staffPackingDialog) {
+    return;
+  }
+
+  staffOrdersState.packingDialogOpen = true;
+  staffOrdersState.packingDialogOrderUuid = forgeOrderUuid;
+  lastStaffPackingFocusTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  await retryStaffPackingDialogLoad();
+}
+
+function closeStaffPackingDialog(options = {}) {
+  const restoreFocus = options.restoreFocus !== false;
+  staffOrdersState.packingDialogOpen = false;
+  staffOrdersState.packingDialogLoading = false;
+  staffOrdersState.packingDialogSaving = false;
+  staffOrdersState.packingDialogError = '';
+  staffOrdersState.packingDialogOrderUuid = '';
+  staffOrdersState.packingDialogRecord = null;
+  staffOrdersState.packingDialogPackingVerification = null;
+  staffOrdersState.packingDialogCheckedLineIds = [];
+  staffOrdersState.packingDialogNote = '';
+  renderStaffPackingDialog();
+  if (restoreFocus && lastStaffPackingFocusTarget) {
+    lastStaffPackingFocusTarget.focus();
+  }
+  lastStaffPackingFocusTarget = null;
+}
+
+async function retryStaffPackingDialogLoad() {
+  if (!staffOrdersState.packingDialogOpen || !staffOrdersState.packingDialogOrderUuid) {
+    return;
+  }
+
+  staffOrdersState.packingDialogLoading = true;
+  staffOrdersState.packingDialogSaving = false;
+  staffOrdersState.packingDialogError = '';
+  staffOrdersState.packingDialogRecord = null;
+  staffOrdersState.packingDialogPackingVerification = null;
+  staffOrdersState.packingDialogCheckedLineIds = [];
+  staffOrdersState.packingDialogNote = '';
+  renderStaffPackingDialog();
+
+  try {
+    const result = await loadStaffPackingDialogData(staffOrdersState.packingDialogOrderUuid);
+    if (!result.record) {
+      throw new Error('That saved order could not be found.');
+    }
+    staffOrdersState.packingDialogRecord = result.record;
+    staffOrdersState.packingDialogPackingVerification = result.packingVerification;
+  } catch (error) {
+    console.error('Forge packing dialog failed to load', error);
+    staffOrdersState.packingDialogError = formatStaffPackingLoadError(error);
+  } finally {
+    staffOrdersState.packingDialogLoading = false;
+    renderStaffPackingDialog();
+    window.setTimeout(() => {
+      (getStaffPackingFocusableElements()[0] || staffPackingDialog)?.focus();
+    }, 0);
+  }
+}
+
+async function loadStaffPackingDialogData(forgeOrderUuid) {
+  const orderUuid = sanitizeText(forgeOrderUuid);
+  if (!orderUuid) {
+    throw new Error('Packing verification requires a saved order.');
+  }
+
+  const [record, packingVerification] = await Promise.all([
+    orderStore.getOrder(orderUuid),
+    orderStore.getPackingVerificationForOrder(orderUuid)
+  ]);
+
+  return {
+    record,
+    packingVerification: packingVerification || null
+  };
+}
+
+function formatStaffPackingLoadError(error) {
+  const message = sanitizeText(error?.message || '');
+  if (/blocked by another open tab|open in another tab/i.test(message)) {
+    return 'Forge storage is open in another tab. Close other Forge tabs, then select Retry.';
+  }
+  if (/could not be found/i.test(message)) {
+    return 'That saved order could not be found.';
+  }
+  return 'Packing verification could not be loaded on this device.';
+}
+
+function renderStaffPackingDialogErrorState(message) {
+  if (!staffPackingDialog) {
+    return;
+  }
+
+  const errorMessage = escapeHtml(message || 'Packing verification is unavailable.');
+  staffPackingDialog.innerHTML = `
+    <div class="staff-order-detail-header">
+      <div>
+        <p class="eyebrow staff-orders-eyebrow">Packing Verification</p>
+        <h2 id="staff-packing-title">Packing Unavailable</h2>
+      </div>
+      <button class="text-button" type="button" data-action="close-staff-packing">Cancel</button>
+    </div>
+    <div class="staff-empty-state">
+      <h3>Unable to open this packing checklist</h3>
+      <p>${errorMessage}</p>
+      <div class="staff-order-card-actions staff-empty-actions">
+        <button class="primary-button" type="button" data-action="staff-retry-packing-load">Retry</button>
+        <button class="secondary-button" type="button" data-action="close-staff-packing">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderStaffPackingDialog() {
+  ensureStaffPackingUi();
+  if (!staffPackingBackdrop || !staffPackingDialog) {
+    return;
+  }
+
+  staffPackingBackdrop.hidden = !staffOrdersState.packingDialogOpen;
+  staffPackingDialog.hidden = !staffOrdersState.packingDialogOpen;
+
+  if (!staffOrdersState.packingDialogOpen) {
+    staffPackingDialog.innerHTML = '';
+    return;
+  }
+
+  if (staffOrdersState.packingDialogLoading) {
+    staffPackingDialog.innerHTML = `
+      <div class="staff-order-detail-header">
+        <div>
+          <p class="eyebrow staff-orders-eyebrow">Packing Verification</p>
+          <h2 id="staff-packing-title">Loading Packing Checklist</h2>
+        </div>
+        <button class="text-button" type="button" data-action="close-staff-packing">Cancel</button>
+      </div>
+      <p class="staff-orders-status">Loading the assigned tray and expected items...</p>
+    `;
+    return;
+  }
+
+  if (staffOrdersState.packingDialogError || !staffOrdersState.packingDialogRecord) {
+    renderStaffPackingDialogErrorState(staffOrdersState.packingDialogError || 'Packing verification is unavailable.');
+    return;
+  }
+
+  try {
+    const record = staffOrdersState.packingDialogRecord;
+    const payload = record.payload || {};
+    const customerName = payload.customer?.full_name || 'Unknown customer';
+    const trayNumber = getOrderTrayNumber(record);
+    const activeItems = getOrderActivePackingItems(record);
+    const checkedIds = new Set(staffOrdersState.packingDialogCheckedLineIds);
+    const verificationCounts = getOrderVerifiedPieceCounts(record, staffOrdersState.packingDialogCheckedLineIds);
+    const allVerified = activeItems.length > 0 && activeItems.every((item) => checkedIds.has(String(item.line_id || '').trim()));
+    const disableSubmit = !allVerified || staffOrdersState.packingDialogSaving;
+    const fulfillmentMethod = payload.fulfillment?.method === 'pickup' ? 'Pickup' : 'Shipping';
+
+    staffPackingDialog.innerHTML = `
+      <div class="staff-order-detail-header">
+        <div>
+          <p class="eyebrow staff-orders-eyebrow">Packing Verification</p>
+          <h2 id="staff-packing-title">Pack Order</h2>
+          <p>${escapeHtml(getOrderShortReference(record))} • ${escapeHtml(customerName)}</p>
+        </div>
+        <button class="text-button" type="button" data-action="close-staff-packing"${staffOrdersState.packingDialogSaving ? ' disabled' : ''}>Cancel</button>
+      </div>
+
+      ${staffOrdersState.packingDialogError ? buildStaffNoticeMarkup(staffOrdersState.packingDialogError, 'error') : ''}
+
+      <section class="staff-order-detail-section">
+        <div class="staff-order-detail-grid">
+          <div><span>Order Reference</span><strong>${escapeHtml(getOrderShortReference(record))}</strong></div>
+          <div><span>Customer</span><strong>${escapeHtml(customerName)}</strong></div>
+          <div><span>Assigned Tray</span><strong>${escapeHtml(`Tray ${trayNumber}`)}</strong></div>
+          <div><span>Fulfillment</span><strong>${escapeHtml(fulfillmentMethod)}</strong></div>
+          <div><span>Production Progress</span><strong>${escapeHtml(getOrderCompletionSummary(record))}</strong></div>
+          <div><span>Status</span><strong>${escapeHtml(getOrderProductionStatusLabel(record))}</strong></div>
+        </div>
+        <p class="staff-order-detail-note">Verify every item in the assigned tray before packing.</p>
+        <p class="staff-order-detail-note">Packing this order will mark it Packed and release Tray ${escapeHtml(String(trayNumber || ''))}.</p>
+      </section>
+
+      <section class="staff-order-detail-section staff-packing-section">
+        <div class="staff-section-heading">
+          <div>
+            <p class="eyebrow staff-orders-eyebrow">Tray Checklist</p>
+            <h3>Verify Physical Items</h3>
+          </div>
+          <p class="staff-orders-status">${escapeHtml(`${verificationCounts.verifiedPieces} of ${verificationCounts.totalPieces} pieces verified`)}</p>
+        </div>
+        <div class="staff-packing-list">
+          ${activeItems.map((item, index) => {
+            const lineId = String(item.line_id || '').trim();
+            const checkboxId = `staff-packing-item-${escapeHtml(lineId)}`;
+            const itemIdentifier = getStaffPackingItemIdentifier(item);
+            const quantity = Number.isInteger(item.quantity) && item.quantity > 0 ? item.quantity : 1;
+            return `
+              <label class="staff-packing-item${checkedIds.has(lineId) ? ' is-checked' : ''}" for="${checkboxId}">
+                <input
+                  id="${checkboxId}"
+                  type="checkbox"
+                  data-packing-line-id="${escapeHtml(lineId)}"
+                  ${checkedIds.has(lineId) ? 'checked' : ''}
+                  ${staffOrdersState.packingDialogSaving ? 'disabled' : ''}
+                >
+                <span class="staff-packing-item-order">${escapeHtml(String(index + 1))}.</span>
+                <span class="staff-packing-item-body">
+                  <strong>${escapeHtml(`${quantity} × ${item.product_display_name || item.product_definition_id || 'Custom Item'}`)}</strong>
+                  ${itemIdentifier ? `<span>${escapeHtml(itemIdentifier)}</span>` : ''}
+                </span>
+              </label>
+            `;
+          }).join('')}
+        </div>
+      </section>
+
+      <section class="staff-order-detail-section">
+        <label class="staff-field-label" for="staff-packing-note">Packing Note (Optional)</label>
+        <textarea id="staff-packing-note" class="staff-packing-note" data-staff-packing-note maxlength="500" rows="4" placeholder="Add an optional internal packing note"${staffOrdersState.packingDialogSaving ? ' disabled' : ''}>${escapeHtml(staffOrdersState.packingDialogNote)}</textarea>
+      </section>
+
+      <div class="staff-order-card-actions">
+        <button class="primary-button" type="button" data-action="staff-pack-order-confirm"${disableSubmit ? ' disabled' : ''}>
+          ${staffOrdersState.packingDialogSaving ? 'Packing Order...' : 'Pack Order & Release Tray'}
+        </button>
+        <button class="secondary-button" type="button" data-action="close-staff-packing"${staffOrdersState.packingDialogSaving ? ' disabled' : ''}>Cancel</button>
+      </div>
+    `;
+  } catch (error) {
+    console.error('Forge packing dialog render failed', error);
+    staffOrdersState.packingDialogError = 'Packing checklist could not be rendered on this device.';
+    renderStaffPackingDialogErrorState(staffOrdersState.packingDialogError);
+  }
+}
+
+async function submitStaffPackingVerification() {
+  if (
+    staffOrdersState.packingDialogSaving
+    || !staffOrdersState.packingDialogRecord
+  ) {
+    return;
+  }
+
+  staffOrdersState.packingDialogSaving = true;
+  staffOrdersState.packingDialogError = '';
+  renderStaffPackingDialog();
+
+  try {
+    const record = staffOrdersState.packingDialogRecord;
+    const result = await orderStore.completePackingVerification(
+      record.forge_order_uuid,
+      staffOrdersState.packingDialogCheckedLineIds,
+      staffOrdersState.packingDialogNote
+    );
+
+    staffOrdersState.notice = `Order ${getOrderShortReference(result.order)} packed. Tray ${result.packingVerification.tray_number} is now available.`;
+    staffOrdersState.noticeTone = 'success';
+    closeStaffPackingDialog({ restoreFocus: false });
+    await loadStaffOrdersQueue();
+
+    if (staffOrdersState.detailOpen && staffOrdersState.detailOrderUuid === result.order.forge_order_uuid) {
+      staffOrdersState.detailRecord = await orderStore.getOrder(result.order.forge_order_uuid);
+      staffOrdersState.detailPackingVerification = await orderStore.getPackingVerificationForOrder(result.order.forge_order_uuid);
+      renderStaffOrderDetail();
+    }
+  } catch (error) {
+    console.error('Forge packing verification failed', error);
+    staffOrdersState.notice = '';
+    staffOrdersState.noticeTone = 'error';
+    staffOrdersState.packingDialogError = error?.message || 'Packing verification could not be saved.';
+    staffOrdersState.packingDialogSaving = false;
+    renderStaffPackingDialog();
+  }
+}
+
 function getStaffOrderItemsMarkup(record, items) {
   if (!Array.isArray(items) || items.length === 0) {
     return '<div class="staff-empty-state"><h3>No items</h3><p>No normalized line items were stored for this record.</p></div>';
@@ -4404,6 +4863,15 @@ function getStaffTrayAssignmentFocusableElements() {
   }
 
   return [...staffTrayAssignmentDialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter((element) => !element.hasAttribute('disabled'));
+}
+
+function getStaffPackingFocusableElements() {
+  if (!staffPackingDialog) {
+    return [];
+  }
+
+  return [...staffPackingDialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
     .filter((element) => !element.hasAttribute('disabled'));
 }
 
@@ -5231,6 +5699,35 @@ if (treeForm) {
   });
 
   document.addEventListener('keydown', (event) => {
+    if (staffOrdersState.packingDialogOpen && event.key === 'Tab') {
+      const focusable = getStaffPackingFocusableElements();
+      if (focusable.length === 0) {
+        event.preventDefault();
+        staffPackingDialog?.focus();
+        return;
+      }
+
+      const currentIndex = focusable.indexOf(document.activeElement);
+      if (event.shiftKey) {
+        if (currentIndex <= 0) {
+          event.preventDefault();
+          focusable[focusable.length - 1].focus();
+        }
+      } else if (currentIndex === focusable.length - 1 || currentIndex === -1) {
+        event.preventDefault();
+        focusable[0].focus();
+      }
+      return;
+    }
+
+    if (staffOrdersState.packingDialogOpen && event.key === 'Escape') {
+      event.preventDefault();
+      if (!staffOrdersState.packingDialogSaving) {
+        closeStaffPackingDialog();
+      }
+      return;
+    }
+
     if (staffOrdersState.trayDialogOpen && event.key === 'Tab') {
       const focusable = getStaffTrayAssignmentFocusableElements();
       if (focusable.length === 0) {
@@ -5829,6 +6326,7 @@ if (treeForm) {
 
     if (action === 'staff-return-welcome') {
       staffOrdersState.notice = '';
+      closeStaffPackingDialog({ restoreFocus: false });
       closeStaffTrayAssignment();
       closeStaffOrderDetail();
       showScreen('welcome');
@@ -5845,6 +6343,11 @@ if (treeForm) {
 
     if (action === 'staff-view-order' && orderUuid) {
       openStaffOrderDetail(orderUuid);
+    }
+
+    if (action === 'staff-pack-order' && orderUuid) {
+      staffOrdersState.notice = '';
+      openStaffPackingDialog(orderUuid);
     }
   });
 
@@ -5869,6 +6372,7 @@ if (treeForm) {
 
     if (action === 'staff-return-welcome') {
       staffOrdersState.notice = '';
+      closeStaffPackingDialog({ restoreFocus: false });
       closeStaffTrayAssignment();
       closeStaffOrderDetail();
       showScreen('welcome');

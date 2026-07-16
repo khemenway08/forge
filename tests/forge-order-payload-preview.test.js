@@ -8,6 +8,40 @@ const { buildForgeOrderPayload } = require('../public/js/forge-order-payload-bui
 
 const appSource = fs.readFileSync(path.join(__dirname, '../public/js/app.js'), 'utf8');
 
+function extractNamedFunction(source, functionName) {
+  const signature = `function ${functionName}`;
+  const start = source.indexOf(signature);
+  if (start === -1) {
+    throw new Error(`Unable to find ${functionName} in app.js`);
+  }
+
+  const bodyStart = source.indexOf('{', start);
+  if (bodyStart === -1) {
+    throw new Error(`Unable to find ${functionName} body in app.js`);
+  }
+
+  let depth = 0;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === '{') {
+      depth += 1;
+    } else if (character === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(start, index + 1);
+      }
+    }
+  }
+
+  throw new Error(`Unable to parse ${functionName} in app.js`);
+}
+
+const sanitizeText = new Function(`${extractNamedFunction(appSource, 'sanitizeText')}; return sanitizeText;`)();
+const getStaffPackingItemIdentifier = new Function(
+  'sanitizeText',
+  `${extractNamedFunction(appSource, 'getStaffPackingItemIdentifier')}; return getStaffPackingItemIdentifier;`
+)(sanitizeText);
+
 function createEntry(position, kind, name, extra = {}) {
   return {
     position,
@@ -109,6 +143,22 @@ test('preview identity generation occurs outside the payload builder', () => {
 
   assert.equal(context.forgeOrderUuid, 'preview-uuid-generated-outside-builder');
   assert.equal(payload.forge_order_uuid, 'preview-uuid-generated-outside-builder');
+});
+
+test('shared sanitizeText helper safely normalizes persisted numeric values for packing checklist rendering', () => {
+  assert.equal(sanitizeText(2026), '2026');
+  assert.equal(sanitizeText(null), '');
+  assert.equal(sanitizeText('  Baby   Name  '), 'Baby Name');
+});
+
+test('packing checklist item identifier tolerates numeric year snapshots without throwing', () => {
+  const identifier = getStaffPackingItemIdentifier({
+    configuration_snapshot: {
+      year: 2026
+    }
+  });
+
+  assert.equal(identifier, '2026');
 });
 
 test('current-order adapter passes the real app-style state shape to the builder without mutation or network access', () => {

@@ -443,3 +443,856 @@ test('incrementOrderItemCompletion rejects missing trays and blocked items and d
   assert.equal(alreadyComplete.item.completed_quantity, 1);
   assert.equal(alreadyComplete.order.completed_item_count, 1);
 });
+
+function createReadyToPackRecord(overrides = {}) {
+  return createRecord({
+    forge_order_uuid: 'ready-order',
+    production_status: orderStoreModule.PRODUCTION_STATUSES.readyToPack,
+    current_tray_number: 1,
+    updated_at: '2026-07-16T22:00:00.000Z',
+    total_item_count: 3,
+    completed_item_count: 3,
+    ready_to_pack_at: '2026-07-16T22:00:00.000Z',
+    payload: {
+      forge_order_uuid: 'ready-order',
+      customer: { full_name: 'Ready Customer' },
+      fulfillment: { method: 'shipping' },
+      pricing: { estimated_total_cents: 9000 },
+      items: [
+        {
+          line_number: 1,
+          line_id: 'tree-line',
+          product_display_name: 'Tree Ornament',
+          quantity: 1,
+          completed_quantity: 1,
+          completed_at: '2026-07-16T21:50:00.000Z',
+          production_status: orderStoreModule.ITEM_PRODUCTION_STATUSES.complete,
+          structured_attributes: { family_name: 'Hemenway', year: '2026' },
+          configuration_snapshot: { familyName: 'Hemenway', year: 2026 }
+        },
+        {
+          line_number: 2,
+          line_id: 'reindeer-line',
+          product_display_name: 'Reindeer Ornament',
+          quantity: 2,
+          completed_quantity: 2,
+          completed_at: '2026-07-16T22:00:00.000Z',
+          production_status: orderStoreModule.ITEM_PRODUCTION_STATUSES.complete,
+          structured_attributes: { family_name: 'Scout', year: '2026' },
+          configuration_snapshot: { familyName: 'Scout', year: 2026 }
+        }
+      ]
+    },
+    ...overrides
+  });
+}
+
+function createAssignedTrayRecord(overrides = {}) {
+  return {
+    tray_number: 1,
+    tray_status: orderStoreModule.TRAY_STATUSES.assigned,
+    current_order_uuid: 'ready-order',
+    assigned_at: '2026-07-16T20:00:00.000Z',
+    updated_at: '2026-07-16T20:00:00.000Z',
+    ...overrides
+  };
+}
+
+function createActiveAssignmentHistoryRecord(overrides = {}) {
+  return {
+    tray_assignment_id: 'assignment-ready-order',
+    tray_number: 1,
+    forge_order_uuid: 'ready-order',
+    assigned_at: '2026-07-16T20:00:00.000Z',
+    released_at: null,
+    release_reason: null,
+    ...overrides
+  };
+}
+
+function createReadyPackingStore(options = {}) {
+  return orderStoreModule.createInMemoryOrderStore({
+    now: options.now || (() => new Date('2026-07-16T22:30:00.000Z')),
+    randomUUID: options.randomUUID || (() => 'packing-verification-1'),
+    initialOrders: [createReadyToPackRecord(options.orderOverrides)],
+    initialTrays: [createAssignedTrayRecord(options.trayOverrides)],
+    initialTrayAssignmentHistory: [createActiveAssignmentHistoryRecord(options.historyOverrides)],
+    initialPackingVerifications: options.initialPackingVerifications || []
+  });
+}
+
+class FakeIndexedDBFactory {
+  constructor() {
+    this.databases = new Map();
+  }
+
+  seedDatabase(name, version, seed) {
+    const databaseState = {
+      version,
+      stores: new Map()
+    };
+    Object.entries(seed).forEach(([storeName, config]) => {
+      const state = {
+        keyPath: config.keyPath,
+        data: new Map(),
+        indexes: new Map()
+      };
+      (config.indexes || []).forEach((index) => {
+        state.indexes.set(index.name, { keyPath: index.keyPath, unique: Boolean(index.unique) });
+      });
+      (config.records || []).forEach((record) => {
+        state.data.set(record[config.keyPath], JSON.parse(JSON.stringify(record)));
+      });
+      databaseState.stores.set(storeName, state);
+    });
+    this.databases.set(name, databaseState);
+  }
+
+  getDatabaseState(name) {
+    return this.databases.get(name);
+  }
+
+  open(name, version) {
+    const request = {
+      result: null,
+      error: null,
+      transaction: null,
+      onsuccess: null,
+      onerror: null,
+      onblocked: null,
+      onupgradeneeded: null
+    };
+
+    setTimeout(() => {
+      let databaseState = this.databases.get(name);
+      if (!databaseState) {
+        databaseState = { version: 0, stores: new Map() };
+        this.databases.set(name, databaseState);
+      }
+
+      const targetVersion = Number.isInteger(version) ? version : (databaseState.version || 1);
+      const oldVersion = databaseState.version || 0;
+      const needsUpgrade = oldVersion < targetVersion;
+      const db = new FakeIDBDatabase(name, databaseState);
+      request.result = db;
+
+      if (needsUpgrade) {
+        databaseState.version = targetVersion;
+        const upgradeTransaction = new FakeIDBTransaction(databaseState, [...databaseState.stores.keys()]);
+        request.transaction = upgradeTransaction;
+        if (typeof request.onupgradeneeded === 'function') {
+          request.onupgradeneeded({ oldVersion, newVersion: targetVersion, target: request });
+        }
+      }
+
+      if (typeof request.onsuccess === 'function') {
+        request.onsuccess({ target: request });
+      }
+    }, 0);
+
+    return request;
+  }
+}
+
+class BlockThenSucceedIndexedDBFactory {
+  constructor(baseFactory) {
+    this.baseFactory = baseFactory;
+    this.openCount = 0;
+  }
+
+  open(name, version) {
+    this.openCount += 1;
+    if (this.openCount === 1) {
+      const request = {
+        result: null,
+        error: null,
+        transaction: null,
+        onsuccess: null,
+        onerror: null,
+        onblocked: null,
+        onupgradeneeded: null
+      };
+      setTimeout(() => {
+        if (typeof request.onblocked === 'function') {
+          request.onblocked({ target: request });
+        }
+      }, 0);
+      return request;
+    }
+    return this.baseFactory.open(name, version);
+  }
+}
+
+class FakeIDBDatabase {
+  constructor(name, state) {
+    this.name = name;
+    this._state = state;
+    this.onversionchange = null;
+    this.objectStoreNames = {
+      contains: (storeName) => this._state.stores.has(storeName)
+    };
+  }
+
+  createObjectStore(name, options = {}) {
+    const storeState = {
+      keyPath: options.keyPath,
+      data: new Map(),
+      indexes: new Map()
+    };
+    this._state.stores.set(name, storeState);
+    return new FakeIDBObjectStore(null, storeState);
+  }
+
+  transaction(storeNames, mode) {
+    return new FakeIDBTransaction(this._state, Array.isArray(storeNames) ? storeNames : [storeNames], mode);
+  }
+
+  close() {}
+}
+
+class FakeIDBTransaction {
+  constructor(databaseState, storeNames, mode = 'readonly') {
+    this._databaseState = databaseState;
+    this._storeNames = storeNames;
+    this.mode = mode;
+    this.error = null;
+    this.oncomplete = null;
+    this.onerror = null;
+    this.onabort = null;
+    this._pending = 0;
+    this._aborted = false;
+  }
+
+  objectStore(name) {
+    const storeState = this._databaseState.stores.get(name);
+    if (!storeState) {
+      throw new Error(`Unknown object store: ${name}`);
+    }
+    return new FakeIDBObjectStore(this, storeState);
+  }
+
+  _queueRequest(executor) {
+    const request = { result: undefined, error: null, onsuccess: null, onerror: null };
+    this._pending += 1;
+    setTimeout(() => {
+      if (this._aborted) {
+        return;
+      }
+      try {
+        request.result = cloneFakeIdbValue(executor());
+        if (typeof request.onsuccess === 'function') {
+          request.onsuccess({ target: request });
+        }
+      } catch (error) {
+        request.error = error;
+        if (typeof request.onerror === 'function') {
+          request.onerror({ target: request });
+        }
+      } finally {
+        this._pending -= 1;
+        this._scheduleComplete();
+      }
+    }, 0);
+    return request;
+  }
+
+  _scheduleComplete() {
+    setTimeout(() => {
+      if (this._aborted || this._pending > 0) {
+        return;
+      }
+      if (typeof this.oncomplete === 'function') {
+        this.oncomplete({ target: this });
+      }
+    }, 0);
+  }
+
+  abort() {
+    if (this._aborted) {
+      return;
+    }
+    this._aborted = true;
+    if (typeof this.onabort === 'function') {
+      setTimeout(() => this.onabort({ target: this }), 0);
+    }
+  }
+}
+
+class FakeIDBObjectStore {
+  constructor(transaction, state) {
+    this.transaction = transaction;
+    this._state = state;
+    this.keyPath = state.keyPath;
+    this.indexNames = {
+      contains: (indexName) => this._state.indexes.has(indexName)
+    };
+  }
+
+  createIndex(name, keyPath, options = {}) {
+    this._state.indexes.set(name, { keyPath, unique: Boolean(options.unique) });
+    return new FakeIDBIndex(this.transaction, this._state, this._state.indexes.get(name));
+  }
+
+  index(name) {
+    const config = this._state.indexes.get(name);
+    if (!config) {
+      throw new Error(`Unknown index: ${name}`);
+    }
+    return new FakeIDBIndex(this.transaction, this._state, config);
+  }
+
+  get(key) {
+    return this.transaction._queueRequest(() => this._state.data.get(key));
+  }
+
+  getAll() {
+    return this.transaction._queueRequest(() => [...this._state.data.values()]);
+  }
+
+  add(record) {
+    return this.transaction._queueRequest(() => this._write(record, true));
+  }
+
+  put(record) {
+    return this.transaction._queueRequest(() => this._write(record, false));
+  }
+
+  _write(record, failIfExists) {
+    const clone = cloneFakeIdbValue(record);
+    const key = clone[this.keyPath];
+    if (failIfExists && this._state.data.has(key)) {
+      const error = new Error('ConstraintError');
+      error.name = 'ConstraintError';
+      throw error;
+    }
+    for (const [indexName, config] of this._state.indexes.entries()) {
+      if (!config.unique) {
+        continue;
+      }
+      const nextValue = clone[config.keyPath];
+      for (const [existingKey, existingRecord] of this._state.data.entries()) {
+        if (existingKey !== key && existingRecord[config.keyPath] === nextValue) {
+          const error = new Error(`ConstraintError: ${indexName}`);
+          error.name = 'ConstraintError';
+          throw error;
+        }
+      }
+    }
+    this._state.data.set(key, clone);
+    return clone;
+  }
+}
+
+class FakeIDBIndex {
+  constructor(transaction, storeState, config) {
+    this.transaction = transaction;
+    this._storeState = storeState;
+    this._config = config;
+  }
+
+  get(query) {
+    return this.transaction._queueRequest(() => [...this._storeState.data.values()].find((record) => record[this._config.keyPath] === query));
+  }
+
+  getAll(query) {
+    return this.transaction._queueRequest(() => {
+      const records = [...this._storeState.data.values()];
+      if (typeof query === 'undefined') {
+        return records;
+      }
+      return records.filter((record) => record[this._config.keyPath] === query);
+    });
+  }
+
+  count(query) {
+    return this.transaction._queueRequest(() => this.getAllSync(query).length);
+  }
+
+  getAllSync(query) {
+    const records = [...this._storeState.data.values()];
+    if (typeof query === 'undefined') {
+      return records;
+    }
+    return records.filter((record) => record[this._config.keyPath] === query);
+  }
+}
+
+function cloneFakeIdbValue(value) {
+  return typeof value === 'undefined' ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+test('version-2 database upgrades to version 3 without losing orders, trays, or assignment history and creates packing verification storage', async () => {
+  const indexedDB = new FakeIndexedDBFactory();
+  indexedDB.seedDatabase('forge-upgrade-test', 2, {
+    orders: {
+      keyPath: 'forge_order_uuid',
+      indexes: [
+        { name: 'submitted_at', keyPath: 'submitted_at' },
+        { name: 'local_saved_at', keyPath: 'local_saved_at' },
+        { name: 'status', keyPath: 'status' },
+        { name: 'sync_status', keyPath: 'sync_status' },
+        { name: 'event_id', keyPath: 'event_id' },
+        { name: 'has_open_flags', keyPath: 'has_open_flags' },
+        { name: 'production_status', keyPath: 'production_status' },
+        { name: 'current_tray_number', keyPath: 'current_tray_number' }
+      ],
+      records: [createReadyToPackRecord()]
+    },
+    production_trays: {
+      keyPath: 'tray_number',
+      indexes: [
+        { name: 'tray_status', keyPath: 'tray_status' },
+        { name: 'current_order_uuid', keyPath: 'current_order_uuid' },
+        { name: 'updated_at', keyPath: 'updated_at' }
+      ],
+      records: [createAssignedTrayRecord()]
+    },
+    tray_assignment_history: {
+      keyPath: 'tray_assignment_id',
+      indexes: [
+        { name: 'forge_order_uuid', keyPath: 'forge_order_uuid' },
+        { name: 'tray_number', keyPath: 'tray_number' },
+        { name: 'released_at', keyPath: 'released_at' },
+        { name: 'assigned_at', keyPath: 'assigned_at' }
+      ],
+      records: [createActiveAssignmentHistoryRecord()]
+    }
+  });
+
+  const store = orderStoreModule.createOrderStore({
+    indexedDB,
+    databaseName: 'forge-upgrade-test'
+  });
+
+  await store.openOrderStore();
+  const orders = await store.listOrders();
+  const trays = await store.listTrays();
+  const history = await store.listTrayAssignmentHistory();
+  const packingVerifications = await store.listPackingVerifications();
+  const databaseState = indexedDB.getDatabaseState('forge-upgrade-test');
+
+  assert.equal(databaseState.version, orderStoreModule.DATABASE_VERSION);
+  assert.equal(databaseState.stores.has(orderStoreModule.OBJECT_STORE_NAMES.packingVerifications), true);
+  assert.equal(databaseState.stores.get(orderStoreModule.OBJECT_STORE_NAMES.packingVerifications).indexes.has(orderStoreModule.INDEX_NAMES.packingVerifications.forgeOrderUuid), true);
+  assert.equal(databaseState.stores.get(orderStoreModule.OBJECT_STORE_NAMES.packingVerifications).indexes.has(orderStoreModule.INDEX_NAMES.packingVerifications.trayNumber), true);
+  assert.equal(databaseState.stores.get(orderStoreModule.OBJECT_STORE_NAMES.packingVerifications).indexes.has(orderStoreModule.INDEX_NAMES.packingVerifications.verifiedAt), true);
+  assert.equal(orders.length, 1);
+  assert.equal(trays.length >= 1, true);
+  assert.equal(history.length, 1);
+  assert.equal(packingVerifications.length, 0);
+  assert.equal(orders[0].forge_order_uuid, 'ready-order');
+  assert.equal(trays.find((tray) => tray.tray_number === 1).current_order_uuid, 'ready-order');
+  assert.equal(history[0].forge_order_uuid, 'ready-order');
+});
+
+test('getPackingVerificationForOrder resolves null when no record exists and the unique index miss does not hang', async () => {
+  const store = createReadyPackingStore();
+  const verification = await store.getPackingVerificationForOrder('ready-order');
+
+  assert.equal(verification, null);
+});
+
+test('database-open failures reject cleanly and blocked opens can be retried after the cached promise resets', async () => {
+  const failingIndexedDB = {
+    open() {
+      const request = {
+        result: null,
+        error: new Error('Open failed'),
+        transaction: null,
+        onsuccess: null,
+        onerror: null,
+        onblocked: null,
+        onupgradeneeded: null
+      };
+      setTimeout(() => {
+        if (typeof request.onerror === 'function') {
+          request.onerror({ target: request });
+        }
+      }, 0);
+      return request;
+    }
+  };
+
+  const failingStore = orderStoreModule.createOrderStore({
+    indexedDB: failingIndexedDB,
+    databaseName: 'forge-open-failure'
+  });
+  await assert.rejects(() => failingStore.getOrder('ready-order'), /unable to open the forge order database|open failed/i);
+  await assert.rejects(() => failingStore.getPackingVerificationForOrder('ready-order'), /unable to open the forge order database|open failed/i);
+
+  const baseIndexedDB = new FakeIndexedDBFactory();
+  baseIndexedDB.seedDatabase('forge-block-retry', 3, {
+    orders: {
+      keyPath: 'forge_order_uuid',
+      indexes: [
+        { name: 'submitted_at', keyPath: 'submitted_at' },
+        { name: 'local_saved_at', keyPath: 'local_saved_at' },
+        { name: 'status', keyPath: 'status' },
+        { name: 'sync_status', keyPath: 'sync_status' },
+        { name: 'event_id', keyPath: 'event_id' },
+        { name: 'has_open_flags', keyPath: 'has_open_flags' },
+        { name: 'production_status', keyPath: 'production_status' },
+        { name: 'current_tray_number', keyPath: 'current_tray_number' }
+      ],
+      records: [createReadyToPackRecord()]
+    },
+    production_trays: {
+      keyPath: 'tray_number',
+      indexes: [
+        { name: 'tray_status', keyPath: 'tray_status' },
+        { name: 'current_order_uuid', keyPath: 'current_order_uuid' },
+        { name: 'updated_at', keyPath: 'updated_at' }
+      ],
+      records: [createAssignedTrayRecord()]
+    },
+    tray_assignment_history: {
+      keyPath: 'tray_assignment_id',
+      indexes: [
+        { name: 'forge_order_uuid', keyPath: 'forge_order_uuid' },
+        { name: 'tray_number', keyPath: 'tray_number' },
+        { name: 'released_at', keyPath: 'released_at' },
+        { name: 'assigned_at', keyPath: 'assigned_at' }
+      ],
+      records: [createActiveAssignmentHistoryRecord()]
+    },
+    packing_verifications: {
+      keyPath: 'packing_verification_id',
+      indexes: [
+        { name: 'forge_order_uuid', keyPath: 'forge_order_uuid', unique: true },
+        { name: 'tray_number', keyPath: 'tray_number' },
+        { name: 'verified_at', keyPath: 'verified_at' }
+      ],
+      records: []
+    }
+  });
+
+  const blockedIndexedDB = new BlockThenSucceedIndexedDBFactory(baseIndexedDB);
+  const retryStore = orderStoreModule.createOrderStore({
+    indexedDB: blockedIndexedDB,
+    databaseName: 'forge-block-retry'
+  });
+
+  await assert.rejects(() => retryStore.getOrder('ready-order'), /blocked by another open tab/i);
+  const order = await retryStore.getOrder('ready-order');
+  const verification = await retryStore.getPackingVerificationForOrder('ready-order');
+
+  assert.equal(order.forge_order_uuid, 'ready-order');
+  assert.equal(verification, null);
+});
+
+test('completePackingVerification packs a valid ready order, records packing verification history, and releases the tray for reuse', async () => {
+  const timestamps = [
+    new Date('2026-07-16T22:30:00.000Z'),
+    new Date('2026-07-16T23:00:00.000Z')
+  ];
+  let nowIndex = 0;
+  const store = createReadyPackingStore({
+    now: () => timestamps[Math.min(nowIndex++, timestamps.length - 1)],
+    randomUUID: (() => {
+      let count = 0;
+      return () => `packing-verification-${++count}`;
+    })()
+  });
+
+  const result = await store.completePackingVerification('ready-order', ['tree-line', 'reindeer-line'], '  Packed and sealed.  ');
+  const packedOrder = await store.getOrder('ready-order');
+  const tray = await store.getTray(1);
+  const history = await store.listTrayAssignmentHistory();
+  const packingVerification = await store.getPackingVerificationForOrder('ready-order');
+  const packingVerifications = await store.listPackingVerifications();
+
+  assert.equal(result.order.production_status, orderStoreModule.PRODUCTION_STATUSES.packed);
+  assert.equal(result.order.current_tray_number, null);
+  assert.equal(result.order.ready_to_pack_at, '2026-07-16T22:00:00.000Z');
+  assert.equal(result.order.packed_at, '2026-07-16T22:30:00.000Z');
+  assert.equal(result.packingVerification.verified_at, '2026-07-16T22:30:00.000Z');
+  assert.equal(result.packingVerification.packing_note, 'Packed and sealed.');
+  assert.deepEqual(result.packingVerification.verified_item_ids, ['tree-line', 'reindeer-line']);
+  assert.equal(packedOrder.production_status, orderStoreModule.PRODUCTION_STATUSES.packed);
+  assert.equal(packedOrder.current_tray_number, null);
+  assert.equal(packedOrder.completed_item_count, 3);
+  assert.equal(tray.tray_status, orderStoreModule.TRAY_STATUSES.available);
+  assert.equal(tray.current_order_uuid, null);
+  assert.equal(tray.assigned_at, null);
+  assert.equal(history[0].released_at, '2026-07-16T22:30:00.000Z');
+  assert.equal(history[0].release_reason, 'packed');
+  assert.equal(packingVerification.tray_number, 1);
+  assert.equal(packingVerification.packing_note, 'Packed and sealed.');
+  assert.equal(packingVerifications.length, 1);
+
+  await store.saveNewOrder(createRecord({
+    forge_order_uuid: 'next-order',
+    payload: {
+      forge_order_uuid: 'next-order',
+      customer: { full_name: 'Next Customer' },
+      items: [{ quantity: 1 }],
+      pricing: { estimated_total_cents: 2800 }
+    }
+  }));
+  const reassignment = await store.assignTrayToOrder('next-order', 1);
+  const updatedHistory = await store.listTrayAssignmentHistory();
+  const verificationAfterReuse = await store.getPackingVerificationForOrder('ready-order');
+
+  assert.equal(reassignment.tray.tray_number, 1);
+  assert.equal(reassignment.order.current_tray_number, 1);
+  assert.equal(updatedHistory.length, 2);
+  assert.equal(updatedHistory.find((record) => record.tray_assignment_id === 'assignment-ready-order').release_reason, 'packed');
+  assert.deepEqual(verificationAfterReuse.verified_item_ids, ['tree-line', 'reindeer-line']);
+});
+
+test('completePackingVerification trims optional notes, stores null for blank notes, and retrieves the verification by order UUID', async () => {
+  const store = createReadyPackingStore({
+    now: () => new Date('2026-07-16T22:45:00.000Z'),
+    randomUUID: () => 'packing-verification-note-test'
+  });
+
+  await store.completePackingVerification('ready-order', ['tree-line', 'reindeer-line'], '   ');
+  const verification = await store.getPackingVerificationForOrder('ready-order');
+
+  assert.equal(verification.packing_note, null);
+  assert.equal(verification.verified_at, '2026-07-16T22:45:00.000Z');
+  assert.deepEqual(verification.verified_item_ids, ['tree-line', 'reindeer-line']);
+});
+
+test('completePackingVerification rejects non-ready lifecycle states and duplicate packing attempts', async () => {
+  const submittedStore = createReadyPackingStore({
+    orderOverrides: { production_status: orderStoreModule.PRODUCTION_STATUSES.submitted, current_tray_number: null }
+  });
+  await assert.rejects(() => submittedStore.completePackingVerification('ready-order', ['tree-line', 'reindeer-line']), /only ready-to-pack orders can be packed|no longer has an assigned tray/i);
+
+  const trayAssignedStore = createReadyPackingStore({
+    orderOverrides: {
+      production_status: orderStoreModule.PRODUCTION_STATUSES.trayAssigned,
+      completed_item_count: 0,
+      total_item_count: 3,
+      payload: {
+        ...createReadyToPackRecord().payload,
+        items: [
+          {
+            ...createReadyToPackRecord().payload.items[0],
+            completed_quantity: 0,
+            completed_at: null,
+            production_status: orderStoreModule.ITEM_PRODUCTION_STATUSES.pending
+          }
+        ]
+      }
+    }
+  });
+  await assert.rejects(() => trayAssignedStore.completePackingVerification('ready-order', ['tree-line']), /every required item must be complete|only ready-to-pack orders can be packed/i);
+
+  const inProductionStore = createReadyPackingStore({
+    orderOverrides: {
+      production_status: orderStoreModule.PRODUCTION_STATUSES.inProduction,
+      payload: {
+        ...createReadyToPackRecord().payload,
+        items: [
+          {
+            ...createReadyToPackRecord().payload.items[0],
+            completed_quantity: 0,
+            completed_at: null,
+            production_status: orderStoreModule.ITEM_PRODUCTION_STATUSES.pending
+          }
+        ]
+      }
+    }
+  });
+  await assert.rejects(() => inProductionStore.completePackingVerification('ready-order', ['tree-line']), /every required item must be complete|only ready-to-pack orders can be packed/i);
+
+  const packedStore = createReadyPackingStore({
+    orderOverrides: { production_status: orderStoreModule.PRODUCTION_STATUSES.packed, packed_at: '2026-07-16T22:10:00.000Z', current_tray_number: null }
+  });
+  await assert.rejects(() => packedStore.completePackingVerification('ready-order', ['tree-line', 'reindeer-line']), /already been packed/i);
+
+  const shippedStore = createReadyPackingStore({
+    orderOverrides: { production_status: orderStoreModule.PRODUCTION_STATUSES.shipped, packed_at: '2026-07-16T22:10:00.000Z', current_tray_number: null }
+  });
+  await assert.rejects(() => shippedStore.completePackingVerification('ready-order', ['tree-line', 'reindeer-line']), /shipped orders cannot be packed again/i);
+
+  const pickedUpStore = createReadyPackingStore({
+    orderOverrides: { production_status: orderStoreModule.PRODUCTION_STATUSES.pickedUp, packed_at: '2026-07-16T22:10:00.000Z', current_tray_number: null }
+  });
+  await assert.rejects(() => pickedUpStore.completePackingVerification('ready-order', ['tree-line', 'reindeer-line']), /picked-up orders cannot be packed again/i);
+
+  const cancelledStore = createReadyPackingStore({
+    orderOverrides: { production_status: orderStoreModule.PRODUCTION_STATUSES.cancelled, current_tray_number: null }
+  });
+  await assert.rejects(() => cancelledStore.completePackingVerification('ready-order', ['tree-line', 'reindeer-line']), /cancelled orders cannot be packed/i);
+
+  const duplicateStore = createReadyPackingStore({
+    initialPackingVerifications: [{
+      packing_verification_id: 'existing-packing-verification',
+      forge_order_uuid: 'ready-order',
+      tray_number: 1,
+      verified_item_ids: ['tree-line', 'reindeer-line'],
+      verified_at: '2026-07-16T22:15:00.000Z',
+      packing_note: null
+    }]
+  });
+  await assert.rejects(() => duplicateStore.completePackingVerification('ready-order', ['tree-line', 'reindeer-line']), /already been packed/i);
+});
+
+test('completePackingVerification rejects incomplete, flagged, zero-item, missing-tray, tray-mismatch, and missing-history scenarios without mutating state', async () => {
+  const incompleteStore = createReadyPackingStore({
+    orderOverrides: {
+      payload: {
+        forge_order_uuid: 'ready-order',
+        customer: { full_name: 'Ready Customer' },
+        fulfillment: { method: 'shipping' },
+        pricing: { estimated_total_cents: 9000 },
+        items: [
+          {
+            line_number: 1,
+            line_id: 'tree-line',
+            product_display_name: 'Tree Ornament',
+            quantity: 1,
+            completed_quantity: 0,
+            production_status: orderStoreModule.ITEM_PRODUCTION_STATUSES.pending,
+            structured_attributes: {}
+          }
+        ]
+      }
+    }
+  });
+  await assert.rejects(() => incompleteStore.completePackingVerification('ready-order', ['tree-line']), /only ready-to-pack orders can be packed|every required item must be complete/i);
+  assert.equal((await incompleteStore.getOrder('ready-order')).current_tray_number, 1);
+  assert.equal((await incompleteStore.getTray(1)).tray_status, orderStoreModule.TRAY_STATUSES.assigned);
+  assert.equal((await incompleteStore.listPackingVerifications()).length, 0);
+
+  const flaggedStore = createReadyPackingStore({
+    orderOverrides: {
+      has_open_flags: true,
+      payload: {
+        forge_order_uuid: 'ready-order',
+        customer: { full_name: 'Ready Customer' },
+        fulfillment: { method: 'shipping' },
+        open_flags: [{ code: 'needs_check', message: 'Needs check' }],
+        pricing: { estimated_total_cents: 9000 },
+        items: createReadyToPackRecord().payload.items
+      }
+    }
+  });
+  await assert.rejects(() => flaggedStore.completePackingVerification('ready-order', ['tree-line', 'reindeer-line']), /resolve open flags/i);
+
+  const noTrayStore = createReadyPackingStore({
+    orderOverrides: { current_tray_number: null }
+  });
+  await assert.rejects(() => noTrayStore.completePackingVerification('ready-order', ['tree-line', 'reindeer-line']), /only ready-to-pack orders can be packed|no longer has an assigned tray/i);
+
+  const trayMismatchStore = createReadyPackingStore({
+    trayOverrides: { current_order_uuid: 'different-order' }
+  });
+  await assert.rejects(() => trayMismatchStore.completePackingVerification('ready-order', ['tree-line', 'reindeer-line']), /assigned to a different order/i);
+
+  const missingHistoryStore = orderStoreModule.createInMemoryOrderStore({
+    initialOrders: [createReadyToPackRecord()],
+    initialTrays: [createAssignedTrayRecord()]
+  });
+  await assert.rejects(() => missingHistoryStore.completePackingVerification('ready-order', ['tree-line', 'reindeer-line']), /active assignment record/i);
+
+  const zeroItemStore = createReadyPackingStore({
+    orderOverrides: {
+      payload: {
+        forge_order_uuid: 'ready-order',
+        customer: { full_name: 'Ready Customer' },
+        fulfillment: { method: 'shipping' },
+        pricing: { estimated_total_cents: 0 },
+        items: [
+          {
+            line_number: 1,
+            line_id: 'cancelled-line',
+            product_display_name: 'Cancelled Item',
+            quantity: 1,
+            completed_quantity: 1,
+            production_status: orderStoreModule.ITEM_PRODUCTION_STATUSES.cancelled,
+            structured_attributes: {}
+          }
+        ]
+      }
+    }
+  });
+  await assert.rejects(() => zeroItemStore.completePackingVerification('ready-order', []), /no active items to verify/i);
+});
+
+test('completePackingVerification rejects missing, unknown, and duplicate verified line ids and excludes cancelled items from required verification', async () => {
+  const store = createReadyPackingStore({
+    orderOverrides: {
+      payload: {
+        ...createReadyToPackRecord().payload,
+        items: [
+          ...createReadyToPackRecord().payload.items,
+          {
+            line_number: 3,
+            line_id: 'cancelled-line',
+            product_display_name: 'Cancelled Ornament',
+            quantity: 1,
+            completed_quantity: 1,
+            production_status: orderStoreModule.ITEM_PRODUCTION_STATUSES.cancelled,
+            structured_attributes: {}
+          }
+        ]
+      }
+    }
+  });
+
+  await assert.rejects(() => store.completePackingVerification('ready-order', ['tree-line']), /verify every required item/i);
+  await assert.rejects(() => store.completePackingVerification('ready-order', ['tree-line', 'reindeer-line', 'unknown-line']), /only expected tray items can be verified/i);
+  await assert.rejects(() => store.completePackingVerification('ready-order', ['tree-line', 'tree-line', 'reindeer-line']), /only be submitted once/i);
+
+  const result = await store.completePackingVerification('ready-order', ['tree-line', 'reindeer-line'], null);
+  assert.deepEqual(result.packingVerification.verified_item_ids, ['tree-line', 'reindeer-line']);
+});
+
+test('quantity-two lines must be fully complete before packing and checked line ids verify whole physical quantities', async () => {
+  const incompleteQuantityStore = createReadyPackingStore({
+    orderOverrides: {
+      payload: {
+        ...createReadyToPackRecord().payload,
+        items: [
+          {
+            line_number: 1,
+            line_id: 'reindeer-line',
+            product_display_name: 'Reindeer Ornament',
+            quantity: 2,
+            completed_quantity: 1,
+            production_status: orderStoreModule.ITEM_PRODUCTION_STATUSES.inProduction,
+            structured_attributes: {}
+          }
+        ]
+      },
+      total_item_count: 2,
+      completed_item_count: 1
+    }
+  });
+
+  await assert.rejects(() => incompleteQuantityStore.completePackingVerification('ready-order', ['reindeer-line']), /only ready-to-pack orders can be packed|every required item must be complete/i);
+
+  const completeQuantityStore = createReadyPackingStore({
+    orderOverrides: {
+      payload: {
+        forge_order_uuid: 'ready-order',
+        customer: { full_name: 'Ready Customer' },
+        fulfillment: { method: 'pickup' },
+        pricing: { estimated_total_cents: 2600 },
+        items: [
+          {
+            line_number: 1,
+            line_id: 'reindeer-line',
+            product_display_name: 'Reindeer Ornament',
+            quantity: 2,
+            completed_quantity: 2,
+            production_status: orderStoreModule.ITEM_PRODUCTION_STATUSES.complete,
+            completed_at: '2026-07-16T22:00:00.000Z',
+            structured_attributes: {}
+          }
+        ]
+      },
+      total_item_count: 2,
+      completed_item_count: 2
+    }
+  });
+
+  const result = await completeQuantityStore.completePackingVerification('ready-order', ['reindeer-line'], null);
+  assert.deepEqual(result.packingVerification.verified_item_ids, ['reindeer-line']);
+  assert.equal(result.order.completed_item_count, 2);
+  assert.equal(result.order.total_item_count, 2);
+});

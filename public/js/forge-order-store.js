@@ -8,11 +8,12 @@
   }
 }(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const DATABASE_NAME = 'forge-orders';
-  const DATABASE_VERSION = 2;
+  const DATABASE_VERSION = 3;
   const OBJECT_STORE_NAMES = {
     orders: 'orders',
     trays: 'production_trays',
-    trayAssignmentHistory: 'tray_assignment_history'
+    trayAssignmentHistory: 'tray_assignment_history',
+    packingVerifications: 'packing_verifications'
   };
   const INDEX_NAMES = {
     orders: {
@@ -35,8 +36,14 @@
       trayNumber: 'tray_number',
       releasedAt: 'released_at',
       assignedAt: 'assigned_at'
+    },
+    packingVerifications: {
+      forgeOrderUuid: 'forge_order_uuid',
+      trayNumber: 'tray_number',
+      verifiedAt: 'verified_at'
     }
   };
+  const PACKING_NOTE_MAX_LENGTH = 500;
   const PRODUCTION_STATUSES = {
     submitted: 'submitted',
     trayAssigned: 'tray_assigned',
@@ -67,7 +74,8 @@
     const objectStoreNames = {
       orders: options.objectStoreName || options.objectStoreNames?.orders || OBJECT_STORE_NAMES.orders,
       trays: options.objectStoreNames?.trays || OBJECT_STORE_NAMES.trays,
-      trayAssignmentHistory: options.objectStoreNames?.trayAssignmentHistory || OBJECT_STORE_NAMES.trayAssignmentHistory
+      trayAssignmentHistory: options.objectStoreNames?.trayAssignmentHistory || OBJECT_STORE_NAMES.trayAssignmentHistory,
+      packingVerifications: options.objectStoreNames?.packingVerifications || OBJECT_STORE_NAMES.packingVerifications
     };
     const trayInventoryConfig = normalizeTrayInventoryConfig(options.trayInventory || DEFAULT_TRAY_INVENTORY);
     const getNow = typeof options.now === 'function' ? options.now : () => new Date();
@@ -96,6 +104,9 @@
           const trayAssignmentHistoryStore = db.objectStoreNames.contains(objectStoreNames.trayAssignmentHistory)
             ? transaction.objectStore(objectStoreNames.trayAssignmentHistory)
             : db.createObjectStore(objectStoreNames.trayAssignmentHistory, { keyPath: 'tray_assignment_id' });
+          const packingVerificationStore = db.objectStoreNames.contains(objectStoreNames.packingVerifications)
+            ? transaction.objectStore(objectStoreNames.packingVerifications)
+            : db.createObjectStore(objectStoreNames.packingVerifications, { keyPath: 'packing_verification_id' });
 
           ensureIndex(orderStore, INDEX_NAMES.orders.submittedAt, 'submitted_at');
           ensureIndex(orderStore, INDEX_NAMES.orders.localSavedAt, 'local_saved_at');
@@ -114,6 +125,10 @@
           ensureIndex(trayAssignmentHistoryStore, INDEX_NAMES.trayAssignmentHistory.trayNumber, 'tray_number');
           ensureIndex(trayAssignmentHistoryStore, INDEX_NAMES.trayAssignmentHistory.releasedAt, 'released_at');
           ensureIndex(trayAssignmentHistoryStore, INDEX_NAMES.trayAssignmentHistory.assignedAt, 'assigned_at');
+
+          ensureIndex(packingVerificationStore, INDEX_NAMES.packingVerifications.forgeOrderUuid, 'forge_order_uuid', { unique: true });
+          ensureIndex(packingVerificationStore, INDEX_NAMES.packingVerifications.trayNumber, 'tray_number');
+          ensureIndex(packingVerificationStore, INDEX_NAMES.packingVerifications.verifiedAt, 'verified_at');
         };
         request.onsuccess = async () => {
           try {
@@ -242,6 +257,32 @@
       return Array.isArray(records)
         ? records.map((record) => normalizeTrayAssignmentHistoryRecord(record)).sort(compareTrayAssignmentsNewestFirst)
         : [];
+    }
+
+    async function listPackingVerifications() {
+      const db = await openOrderStore();
+      const records = await runRequest(db, 'readonly', objectStoreNames.packingVerifications, (store) => {
+        if (typeof store.getAll === 'function') {
+          return store.getAll();
+        }
+        return openCursorCollection(store);
+      });
+      return Array.isArray(records)
+        ? records.map((record) => normalizePackingVerificationRecord(record)).sort(comparePackingVerificationsNewestFirst)
+        : [];
+    }
+
+    async function getPackingVerificationForOrder(forgeOrderUuid) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      if (!orderUuid) {
+        return null;
+      }
+      const db = await openOrderStore();
+      const record = await runRequest(db, 'readonly', objectStoreNames.packingVerifications, (store) => {
+        const index = store.index(INDEX_NAMES.packingVerifications.forgeOrderUuid);
+        return index.get(orderUuid);
+      });
+      return record ? normalizePackingVerificationRecord(record) : null;
     }
 
     async function assignTrayToOrder(forgeOrderUuid, trayNumber) {
@@ -460,6 +501,145 @@
       });
     }
 
+    async function completePackingVerification(forgeOrderUuid, verifiedItemIds, packingNote) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      if (!orderUuid) {
+        throw new Error('Packing verification requires a Forge order UUID.');
+      }
+
+      const db = await openOrderStore();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(
+          [
+            objectStoreNames.orders,
+            objectStoreNames.trays,
+            objectStoreNames.trayAssignmentHistory,
+            objectStoreNames.packingVerifications
+          ],
+          'readwrite'
+        );
+        const ordersStore = transaction.objectStore(objectStoreNames.orders);
+        const traysStore = transaction.objectStore(objectStoreNames.trays);
+        const trayAssignmentHistoryStore = transaction.objectStore(objectStoreNames.trayAssignmentHistory);
+        const packingVerificationsStore = transaction.objectStore(objectStoreNames.packingVerifications);
+        const timestamp = normalizeDateValue(getNow()).toISOString();
+        let packingResult = null;
+
+        transaction.oncomplete = () => resolve(packingResult);
+        transaction.onerror = () => reject(transaction.__forgeError || transaction.error || new Error('Packing verification failed.'));
+        transaction.onabort = () => reject(transaction.__forgeError || transaction.error || new Error('Packing verification was aborted.'));
+
+        const orderRequest = ordersStore.get(orderUuid);
+        orderRequest.onerror = () => abortTransaction(transaction, orderRequest.error || new Error('The selected order could not be loaded.'));
+        orderRequest.onsuccess = () => {
+          const storedOrder = orderRequest.result;
+          if (!storedOrder) {
+            abortTransaction(transaction, new Error('That saved order could not be found.'));
+            return;
+          }
+
+          const normalizedOrder = normalizeOrderRecordForRead(storedOrder);
+          const orderValidation = validateOrderPackingEligibility(normalizedOrder);
+          if (!orderValidation.ok) {
+            abortTransaction(transaction, new Error(orderValidation.error));
+            return;
+          }
+
+          const trayNumber = orderValidation.trayNumber;
+          const trayRequest = traysStore.get(trayNumber);
+          trayRequest.onerror = () => abortTransaction(transaction, trayRequest.error || new Error('The assigned tray could not be loaded.'));
+          trayRequest.onsuccess = () => {
+            const storedTray = trayRequest.result;
+            if (!storedTray) {
+              abortTransaction(transaction, new Error(`Tray ${trayNumber} could not be found.`));
+              return;
+            }
+
+            const normalizedTray = normalizeTrayRecord(storedTray);
+            if (normalizedTray.tray_status !== TRAY_STATUSES.assigned) {
+              abortTransaction(transaction, new Error(`Tray ${trayNumber} is no longer assigned.`));
+              return;
+            }
+            if (asTrimmedString(normalizedTray.current_order_uuid) !== orderUuid) {
+              abortTransaction(transaction, new Error(`Tray ${trayNumber} is assigned to a different order.`));
+              return;
+            }
+
+            const historyIndex = trayAssignmentHistoryStore.index(INDEX_NAMES.trayAssignmentHistory.forgeOrderUuid);
+            const historyRequest = historyIndex.getAll(orderUuid);
+            historyRequest.onerror = () => abortTransaction(transaction, historyRequest.error || new Error('Tray assignment history could not be loaded.'));
+            historyRequest.onsuccess = () => {
+              const historyRecords = Array.isArray(historyRequest.result) ? historyRequest.result : [];
+              const activeHistoryRecord = historyRecords
+                .map((record) => normalizeTrayAssignmentHistoryRecord(record))
+                .find((record) => record.tray_number === trayNumber && !record.released_at);
+
+              if (!activeHistoryRecord) {
+                abortTransaction(transaction, new Error(`Tray ${trayNumber} does not have an active assignment record for this order.`));
+                return;
+              }
+
+              const verificationValidation = validatePackingVerificationSubmission(normalizedOrder, verifiedItemIds);
+              if (!verificationValidation.ok) {
+                abortTransaction(transaction, new Error(verificationValidation.error));
+                return;
+              }
+
+              const packingVerificationRecord = createPackingVerificationRecord({
+                packing_verification_id: getRandomUuid(),
+                forge_order_uuid: orderUuid,
+                tray_number: trayNumber,
+                verified_item_ids: verificationValidation.verifiedItemIds,
+                verified_at: timestamp,
+                packing_note: packingNote
+              });
+              const updatedOrder = normalizeLocalOrderRecord({
+                ...deepCloneValue(normalizedOrder),
+                updated_at: timestamp,
+                production_status: PRODUCTION_STATUSES.packed,
+                current_tray_number: null,
+                packed_at: timestamp,
+                ready_to_pack_at: normalizedOrder.ready_to_pack_at
+              });
+              const updatedTray = createTrayRecord({
+                ...deepCloneValue(normalizedTray),
+                tray_number: trayNumber,
+                tray_status: TRAY_STATUSES.available,
+                current_order_uuid: null,
+                assigned_at: null,
+                updated_at: timestamp
+              });
+              const releasedHistoryRecord = createTrayAssignmentHistoryRecord({
+                ...deepCloneValue(activeHistoryRecord),
+                released_at: timestamp,
+                release_reason: 'packed'
+              });
+
+              const putOrderRequest = ordersStore.put(deepCloneValue(updatedOrder));
+              putOrderRequest.onerror = () => abortTransaction(transaction, putOrderRequest.error || new Error('The order could not be marked packed.'));
+
+              const putTrayRequest = traysStore.put(deepCloneValue(updatedTray));
+              putTrayRequest.onerror = () => abortTransaction(transaction, putTrayRequest.error || new Error('The assigned tray could not be released.'));
+
+              const putHistoryRequest = trayAssignmentHistoryStore.put(deepCloneValue(releasedHistoryRecord));
+              putHistoryRequest.onerror = () => abortTransaction(transaction, putHistoryRequest.error || new Error('Tray release history could not be saved.'));
+
+              const addVerificationRequest = packingVerificationsStore.add(deepCloneValue(packingVerificationRecord));
+              addVerificationRequest.onerror = () => abortTransaction(transaction, addVerificationRequest.error || new Error('The packing verification record could not be saved.'));
+
+              packingResult = {
+                ok: true,
+                order: normalizeOrderRecordForRead(updatedOrder),
+                tray: normalizeTrayRecord(updatedTray),
+                assignmentHistoryRecord: normalizeTrayAssignmentHistoryRecord(releasedHistoryRecord),
+                packingVerification: normalizePackingVerificationRecord(packingVerificationRecord)
+              };
+            };
+          };
+        };
+      });
+    }
+
     return {
       openOrderStore,
       saveNewOrder,
@@ -469,8 +649,11 @@
       listTrays,
       getTray,
       listTrayAssignmentHistory,
+      listPackingVerifications,
+      getPackingVerificationForOrder,
       assignTrayToOrder,
-      incrementOrderItemCompletion
+      incrementOrderItemCompletion,
+      completePackingVerification
     };
   }
 
@@ -481,9 +664,27 @@
     const records = new Map();
     const trays = new Map();
     const trayAssignmentHistory = new Map();
+    const packingVerifications = new Map();
 
     trayInventoryConfig.initialTrayNumbers.forEach((trayNumber) => {
       trays.set(trayNumber, createTrayRecord({ tray_number: trayNumber }));
+    });
+
+    (Array.isArray(options.initialOrders) ? options.initialOrders : []).forEach((record) => {
+      const normalizedRecord = normalizeLocalOrderRecord(record);
+      records.set(normalizedRecord.forge_order_uuid, deepCloneValue(normalizedRecord));
+    });
+    (Array.isArray(options.initialTrays) ? options.initialTrays : []).forEach((tray) => {
+      const normalizedTray = createTrayRecord(tray);
+      trays.set(normalizedTray.tray_number, deepCloneValue(normalizedTray));
+    });
+    (Array.isArray(options.initialTrayAssignmentHistory) ? options.initialTrayAssignmentHistory : []).forEach((record) => {
+      const normalizedRecord = createTrayAssignmentHistoryRecord(record);
+      trayAssignmentHistory.set(normalizedRecord.tray_assignment_id, deepCloneValue(normalizedRecord));
+    });
+    (Array.isArray(options.initialPackingVerifications) ? options.initialPackingVerifications : []).forEach((record) => {
+      const normalizedRecord = createPackingVerificationRecord(record);
+      packingVerifications.set(normalizedRecord.packing_verification_id, deepCloneValue(normalizedRecord));
     });
 
     return {
@@ -529,6 +730,18 @@
       },
       async listTrayAssignmentHistory() {
         return [...trayAssignmentHistory.values()].map((record) => normalizeTrayAssignmentHistoryRecord(record)).sort(compareTrayAssignmentsNewestFirst);
+      },
+      async listPackingVerifications() {
+        return [...packingVerifications.values()].map((record) => normalizePackingVerificationRecord(record)).sort(comparePackingVerificationsNewestFirst);
+      },
+      async getPackingVerificationForOrder(forgeOrderUuid) {
+        const orderUuid = asTrimmedString(forgeOrderUuid);
+        for (const record of packingVerifications.values()) {
+          if (asTrimmedString(record.forge_order_uuid) === orderUuid) {
+            return normalizePackingVerificationRecord(record);
+          }
+        }
+        return null;
       },
       async assignTrayToOrder(forgeOrderUuid, trayNumber) {
         const orderUuid = asTrimmedString(forgeOrderUuid);
@@ -666,13 +879,104 @@
           order: updatedOrder,
           item: deepCloneValue(updatedItem)
         };
+      },
+      async completePackingVerification(forgeOrderUuid, verifiedItemIds, packingNote) {
+        const orderUuid = asTrimmedString(forgeOrderUuid);
+        if (!orderUuid) {
+          throw new Error('Packing verification requires a Forge order UUID.');
+        }
+
+        const storedOrder = records.get(orderUuid);
+        if (!storedOrder) {
+          throw new Error('That saved order could not be found.');
+        }
+
+        const normalizedOrder = normalizeOrderRecordForRead(storedOrder);
+        const orderValidation = validateOrderPackingEligibility(normalizedOrder);
+        if (!orderValidation.ok) {
+          throw new Error(orderValidation.error);
+        }
+
+        const trayNumber = orderValidation.trayNumber;
+        const storedTray = trays.get(trayNumber);
+        if (!storedTray) {
+          throw new Error(`Tray ${trayNumber} could not be found.`);
+        }
+
+        const normalizedTray = normalizeTrayRecord(storedTray);
+        if (normalizedTray.tray_status !== TRAY_STATUSES.assigned) {
+          throw new Error(`Tray ${trayNumber} is no longer assigned.`);
+        }
+        if (asTrimmedString(normalizedTray.current_order_uuid) !== orderUuid) {
+          throw new Error(`Tray ${trayNumber} is assigned to a different order.`);
+        }
+
+        const activeHistoryRecord = [...trayAssignmentHistory.values()]
+          .map((record) => normalizeTrayAssignmentHistoryRecord(record))
+          .find((record) => record.forge_order_uuid === orderUuid && record.tray_number === trayNumber && !record.released_at);
+        if (!activeHistoryRecord) {
+          throw new Error(`Tray ${trayNumber} does not have an active assignment record for this order.`);
+        }
+
+        const verificationValidation = validatePackingVerificationSubmission(normalizedOrder, verifiedItemIds);
+        if (!verificationValidation.ok) {
+          throw new Error(verificationValidation.error);
+        }
+
+        const timestamp = normalizeDateValue(getNow()).toISOString();
+        const packingVerificationRecord = createPackingVerificationRecord({
+          packing_verification_id: getRandomUuid(),
+          forge_order_uuid: orderUuid,
+          tray_number: trayNumber,
+          verified_item_ids: verificationValidation.verifiedItemIds,
+          verified_at: timestamp,
+          packing_note: packingNote
+        });
+        if ([...packingVerifications.values()].some((record) => record.forge_order_uuid === orderUuid)) {
+          throw new Error('This order has already been packed.');
+        }
+
+        const updatedOrder = normalizeLocalOrderRecord({
+          ...deepCloneValue(normalizedOrder),
+          updated_at: timestamp,
+          production_status: PRODUCTION_STATUSES.packed,
+          current_tray_number: null,
+          packed_at: timestamp,
+          ready_to_pack_at: normalizedOrder.ready_to_pack_at
+        });
+        const updatedTray = createTrayRecord({
+          ...deepCloneValue(normalizedTray),
+          tray_number: trayNumber,
+          tray_status: TRAY_STATUSES.available,
+          current_order_uuid: null,
+          assigned_at: null,
+          updated_at: timestamp
+        });
+        const releasedHistoryRecord = createTrayAssignmentHistoryRecord({
+          ...deepCloneValue(activeHistoryRecord),
+          released_at: timestamp,
+          release_reason: 'packed'
+        });
+
+        records.set(orderUuid, deepCloneValue(updatedOrder));
+        trays.set(trayNumber, deepCloneValue(updatedTray));
+        trayAssignmentHistory.set(releasedHistoryRecord.tray_assignment_id, deepCloneValue(releasedHistoryRecord));
+        packingVerifications.set(packingVerificationRecord.packing_verification_id, deepCloneValue(packingVerificationRecord));
+
+        return {
+          ok: true,
+          order: normalizeOrderRecordForRead(updatedOrder),
+          tray: normalizeTrayRecord(updatedTray),
+          assignmentHistoryRecord: normalizeTrayAssignmentHistoryRecord(releasedHistoryRecord),
+          packingVerification: normalizePackingVerificationRecord(packingVerificationRecord)
+        };
       }
     };
   }
 
-  function ensureIndex(store, indexName, keyPath) {
+  function ensureIndex(store, indexName, keyPath, options = {}) {
     if (!store.indexNames.contains(indexName)) {
-      store.createIndex(indexName, keyPath, { unique: false });
+      store.createIndex(indexName, keyPath, { unique: Boolean(options.unique) });
     }
   }
 
@@ -1039,6 +1343,12 @@
     return rightAssignedAt - leftAssignedAt;
   }
 
+  function comparePackingVerificationsNewestFirst(left, right) {
+    const leftVerifiedAt = Date.parse(left?.verified_at || '') || 0;
+    const rightVerifiedAt = Date.parse(right?.verified_at || '') || 0;
+    return rightVerifiedAt - leftVerifiedAt;
+  }
+
   function normalizeProductionStatus(value) {
     const normalized = asTrimmedString(value).toLowerCase();
     if (normalized === PRODUCTION_STATUSES.readyToPack) {
@@ -1137,6 +1447,153 @@
       return value == null ? null : asNullableTrimmedString(value);
     }
     return asNullableTrimmedString(value);
+  }
+
+  function createPackingVerificationRecord(record = {}) {
+    const packingVerificationId = asTrimmedString(record.packing_verification_id);
+    const forgeOrderUuid = asTrimmedString(record.forge_order_uuid);
+    const trayNumber = normalizeTrayNumber(record.tray_number);
+    const verifiedAt = asTrimmedString(record.verified_at);
+    const verifiedItemIds = normalizeVerifiedItemIds(record.verified_item_ids);
+
+    if (!packingVerificationId) {
+      throw new Error('Packing verification requires packing_verification_id.');
+    }
+    if (!forgeOrderUuid) {
+      throw new Error('Packing verification requires forge_order_uuid.');
+    }
+    if (!trayNumber) {
+      throw new Error('Packing verification requires a valid tray_number.');
+    }
+    if (!verifiedAt) {
+      throw new Error('Packing verification requires verified_at.');
+    }
+    if (!verifiedItemIds.length) {
+      throw new Error('Packing verification requires verified_item_ids.');
+    }
+
+    return deepCloneValue({
+      packing_verification_id: packingVerificationId,
+      forge_order_uuid: forgeOrderUuid,
+      tray_number: trayNumber,
+      verified_item_ids: verifiedItemIds,
+      verified_at: verifiedAt,
+      packing_note: normalizePackingNote(record.packing_note)
+    });
+  }
+
+  function normalizePackingVerificationRecord(record) {
+    return createPackingVerificationRecord(record);
+  }
+
+  function normalizePackingNote(value) {
+    const normalized = asTrimmedString(value).slice(0, PACKING_NOTE_MAX_LENGTH);
+    return normalized || null;
+  }
+
+  function normalizeVerifiedItemIds(values) {
+    return (Array.isArray(values) ? values : [])
+      .map((value) => asTrimmedString(value))
+      .filter(Boolean);
+  }
+
+  function getActiveOrderItems(record) {
+    return getNormalizedOrderItems(record).filter((item) => normalizeItemProductionStatus(item.production_status) !== ITEM_PRODUCTION_STATUSES.cancelled);
+  }
+
+  function validateOrderPackingEligibility(record) {
+    if (!record) {
+      return { ok: false, error: 'That saved order could not be found.' };
+    }
+
+    const productionStatus = normalizeProductionStatus(record.production_status);
+    if (productionStatus === PRODUCTION_STATUSES.packed) {
+      return { ok: false, error: 'This order has already been packed.' };
+    }
+    if (productionStatus === PRODUCTION_STATUSES.shipped) {
+      return { ok: false, error: 'Shipped orders cannot be packed again.' };
+    }
+    if (productionStatus === PRODUCTION_STATUSES.pickedUp) {
+      return { ok: false, error: 'Picked-up orders cannot be packed again.' };
+    }
+    if (productionStatus === PRODUCTION_STATUSES.cancelled) {
+      return { ok: false, error: 'Cancelled orders cannot be packed.' };
+    }
+    const trayNumber = normalizeNullableTrayNumber(record.current_tray_number);
+    if (!trayNumber) {
+      return { ok: false, error: 'This order no longer has an assigned tray.' };
+    }
+
+    const activeItems = getActiveOrderItems(record);
+    if (!activeItems.length) {
+      return { ok: false, error: 'This order has no active items to verify.' };
+    }
+    if (orderHasBlockingFlags(record)) {
+      return { ok: false, error: 'Resolve open flags before packing this order.' };
+    }
+
+    const incompleteItem = activeItems.find((item) => {
+      const quantity = normalizeQuantity(item.quantity);
+      const completedQuantity = Math.min(normalizeCompletedQuantity(item.completed_quantity, quantity, item.production_status), quantity);
+      return normalizeItemProductionStatus(item.production_status) !== ITEM_PRODUCTION_STATUSES.complete || completedQuantity !== quantity;
+    });
+    if (incompleteItem) {
+      return { ok: false, error: 'Every required item must be complete before packing.' };
+    }
+
+    const counts = deriveOrderCompletionCounts(activeItems);
+    if (counts.total_item_count <= 0) {
+      return { ok: false, error: 'This order has no active items to verify.' };
+    }
+    if (counts.completed_item_count !== counts.total_item_count) {
+      return { ok: false, error: 'Every required item must be complete before packing.' };
+    }
+    if (productionStatus !== PRODUCTION_STATUSES.readyToPack) {
+      return { ok: false, error: 'Only ready-to-pack orders can be packed.' };
+    }
+
+    return {
+      ok: true,
+      trayNumber,
+      activeItems,
+      totalItemCount: counts.total_item_count
+    };
+  }
+
+  function validatePackingVerificationSubmission(record, verifiedItemIds) {
+    const orderValidation = validateOrderPackingEligibility(record);
+    if (!orderValidation.ok) {
+      return orderValidation;
+    }
+
+    const submittedIds = normalizeVerifiedItemIds(verifiedItemIds);
+    const submittedIdSet = new Set(submittedIds);
+    if (!submittedIds.length) {
+      return { ok: false, error: 'Verify every required item before packing.' };
+    }
+    if (submittedIdSet.size !== submittedIds.length) {
+      return { ok: false, error: 'Each verified item may only be submitted once.' };
+    }
+
+    const requiredIds = orderValidation.activeItems.map((item) => item.line_id);
+    const requiredIdSet = new Set(requiredIds);
+    const unknownId = submittedIds.find((itemId) => !requiredIdSet.has(itemId));
+    if (unknownId) {
+      return { ok: false, error: 'Only expected tray items can be verified for packing.' };
+    }
+
+    const missingId = requiredIds.find((itemId) => !submittedIdSet.has(itemId));
+    if (missingId) {
+      return { ok: false, error: 'Verify every required item before packing.' };
+    }
+
+    return {
+      ok: true,
+      verifiedItemIds: requiredIds.slice(),
+      activeItems: orderValidation.activeItems,
+      trayNumber: orderValidation.trayNumber,
+      totalItemCount: orderValidation.totalItemCount
+    };
   }
 
   function orderHasBlockingFlags(record) {
@@ -1274,6 +1731,9 @@
     normalizeOrderItemRecord,
     normalizeTrayRecord,
     normalizeTrayAssignmentHistoryRecord,
+    normalizePackingVerificationRecord,
+    validateOrderPackingEligibility,
+    validatePackingVerificationSubmission,
     openOrderStore: (...args) => defaultOrderStore.openOrderStore(...args),
     saveNewOrder: (...args) => defaultOrderStore.saveNewOrder(...args),
     getOrder: (...args) => defaultOrderStore.getOrder(...args),
@@ -1282,7 +1742,10 @@
     listTrays: (...args) => defaultOrderStore.listTrays(...args),
     getTray: (...args) => defaultOrderStore.getTray(...args),
     listTrayAssignmentHistory: (...args) => defaultOrderStore.listTrayAssignmentHistory(...args),
+    listPackingVerifications: (...args) => defaultOrderStore.listPackingVerifications(...args),
+    getPackingVerificationForOrder: (...args) => defaultOrderStore.getPackingVerificationForOrder(...args),
     assignTrayToOrder: (...args) => defaultOrderStore.assignTrayToOrder(...args),
-    incrementOrderItemCompletion: (...args) => defaultOrderStore.incrementOrderItemCompletion(...args)
+    incrementOrderItemCompletion: (...args) => defaultOrderStore.incrementOrderItemCompletion(...args),
+    completePackingVerification: (...args) => defaultOrderStore.completePackingVerification(...args)
   };
 }));
