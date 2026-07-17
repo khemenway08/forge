@@ -60,7 +60,7 @@ try {
         ]
     );
 } catch (\Throwable $exception) {
-    forge_log_unexpected_exception($exception);
+    forge_log_unexpected_exception($exception, $bootstrapPath);
     forge_send_fallback_response(
         500,
         [
@@ -84,7 +84,7 @@ function forge_send_fallback_response(int $statusCode, array $payload): void
     echo json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 }
 
-function forge_log_unexpected_exception(\Throwable $exception): void
+function forge_log_unexpected_exception(\Throwable $exception, ?string $bootstrapPath = null): void
 {
     $segments = [];
     $current = $exception;
@@ -97,7 +97,7 @@ function forge_log_unexpected_exception(\Throwable $exception): void
             $label,
             get_class($current),
             forge_normalize_exception_code($current->getCode()),
-            forge_normalize_exception_message($current->getMessage()),
+            forge_redact_sensitive_text(forge_normalize_exception_message($current->getMessage())),
             basename((string) $current->getFile()),
             (int) $current->getLine()
         );
@@ -105,7 +105,36 @@ function forge_log_unexpected_exception(\Throwable $exception): void
         $depth++;
     }
 
-    error_log('Forge orders endpoint unexpected exception: ' . implode(' ', $segments));
+    $entry = sprintf(
+        '%s Forge orders endpoint unexpected exception: %s',
+        gmdate('c'),
+        implode(' ', $segments)
+    );
+
+    error_log($entry);
+
+    $privateLogPath = forge_resolve_private_exception_log_path($bootstrapPath);
+    if ($privateLogPath === null) {
+        return;
+    }
+
+    $privateLogDirectory = dirname($privateLogPath);
+    if (!is_dir($privateLogDirectory)) {
+        @mkdir($privateLogDirectory, 0700, true);
+    }
+
+    if (!is_dir($privateLogDirectory) || !is_writable($privateLogDirectory)) {
+        return;
+    }
+
+    if (!file_exists($privateLogPath)) {
+        @touch($privateLogPath);
+    }
+
+    @chmod($privateLogDirectory, 0700);
+    @chmod($privateLogPath, 0600);
+    @error_log($entry . PHP_EOL, 3, $privateLogPath);
+    @chmod($privateLogPath, 0600);
 }
 
 /**
@@ -132,6 +161,37 @@ function forge_normalize_exception_message(string $message): string
     }
 
     return substr($normalized, 0, 500);
+}
+
+function forge_redact_sensitive_text(string $message): string
+{
+    $redacted = preg_replace('/mysql:\S+/iu', 'mysql:[redacted]', $message);
+    if (!is_string($redacted)) {
+        $redacted = $message;
+    }
+
+    $patterns = [
+        '/\b(password|passwd|pwd)\s*[:=]\s*([^\s;,\]]+)/iu',
+        '/\b(password|passwd|pwd)\s+([^\s;,\]]+)/iu',
+    ];
+
+    foreach ($patterns as $pattern) {
+        $nextValue = preg_replace($pattern, '$1=[redacted]', $redacted);
+        if (is_string($nextValue)) {
+            $redacted = $nextValue;
+        }
+    }
+
+    return $redacted;
+}
+
+function forge_resolve_private_exception_log_path(?string $bootstrapPath): ?string
+{
+    if (!is_string($bootstrapPath) || trim($bootstrapPath) === '') {
+        return null;
+    }
+
+    return dirname($bootstrapPath) . '/logs/orders-error.log';
 }
 
 function forge_resolve_bootstrap_path(): ?string
