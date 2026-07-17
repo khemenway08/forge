@@ -167,6 +167,32 @@ test('creates custom_icon flag and preserves custom icon description', () => {
   assert.equal(payload.open_flags.length, 1);
 });
 
+test('dog bone survives payload building without creating a custom icon flag and paw remains backward-compatible', () => {
+  const item = createItem({
+    orderedEntries: [
+      { position: 1, kind: 'pet', name: 'Scout', petType: 'dog', icon: 'Dog Bone', customIconDescription: '' },
+      { position: 2, kind: 'pet', name: 'Milo', petType: 'dog', icon: 'Paw', customIconDescription: '' }
+    ],
+    configurationSnapshot: {
+      size: 'Small',
+      treeColor: 'Green',
+      bowColor: 'Red',
+      familyName: 'Hemenway',
+      year: '2026'
+    }
+  });
+
+  const payload = buildForgeOrderPayload(createOrderState([item]), createContext());
+  const line = payload.items[0];
+
+  assert.equal(line.personalization_order[0].icon, 'dog_bone');
+  assert.equal(line.personalization_order[0].custom_icon_description, null);
+  assert.equal(line.personalization_order[1].icon, 'paw');
+  assert.deepEqual(line.open_flags, []);
+  assert.deepEqual(payload.open_flags, []);
+  assert.equal(payload.has_open_flags, false);
+});
+
 test('normalizes antler, present stack, grinch tree, veteran flag, baby, and mr and mrs ornaments with shared fields', () => {
   const items = [
     createItem({

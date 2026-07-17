@@ -16,6 +16,42 @@
     little_reindeer_letter: 'reindeer',
     mr_and_mrs_christmas: 'mr_and_mrs_first_christmas'
   };
+  const PET_ICON_DEFINITIONS = deepFreeze({
+    paw: {
+      key: 'paw',
+      label: 'Paw Print'
+    },
+    dog_bone: {
+      key: 'dog_bone',
+      label: 'Dog Bone'
+    },
+    fish: {
+      key: 'fish',
+      label: 'Fish'
+    },
+    custom: {
+      key: 'custom',
+      label: 'Custom Icon',
+      requiresDescription: true,
+      createsInternalFlag: 'custom_icon'
+    },
+    none: {
+      key: 'none',
+      label: 'No Icon'
+    }
+  });
+  const LEGACY_PET_ICON_KEYS = {
+    custom_icon: 'custom',
+    no_icon: 'none',
+    paw_print: 'paw',
+    pawprint: 'paw'
+  };
+  const PRODUCT_PET_ICON_KEYS = deepFreeze({
+    tree_ornament: ['paw', 'dog_bone', 'fish', 'custom', 'none'],
+    antler_ornament: ['paw', 'dog_bone', 'fish', 'custom', 'none'],
+    present_stack: ['paw', 'dog_bone', 'fish', 'custom', 'none'],
+    grinch_tree: ['paw', 'dog_bone', 'fish', 'custom', 'none']
+  });
 
   const PRODUCT_DEFINITIONS = deepFreeze({
     tree_ornament: {
@@ -119,6 +155,36 @@
   function getUiProductDefinitionId(productDefinitionId) {
     const canonicalId = getCanonicalProductDefinitionId(productDefinitionId);
     return UI_PRODUCT_ID_ALIASES[canonicalId] || canonicalId;
+  }
+
+  function getPetIconDefinition(iconKey) {
+    const normalizedKey = normalizePetIconKey(iconKey);
+    return PET_ICON_DEFINITIONS[normalizedKey] || null;
+  }
+
+  function getPetIconLabel(iconKey) {
+    const definition = getPetIconDefinition(iconKey);
+    return definition ? definition.label : '';
+  }
+
+  function getPetIconOptions(productDefinitionId) {
+    const canonicalId = getCanonicalProductDefinitionId(productDefinitionId);
+    const optionKeys = PRODUCT_PET_ICON_KEYS[canonicalId];
+    if (!Array.isArray(optionKeys)) {
+      return [];
+    }
+
+    return optionKeys
+      .map((key) => getPetIconDefinition(key))
+      .filter(Boolean);
+  }
+
+  function normalizePetIconKey(iconKey) {
+    const normalized = asTrimmedString(iconKey).toLowerCase().replace(/\s+/g, '_');
+    if (!normalized) {
+      return '';
+    }
+    return LEGACY_PET_ICON_KEYS[normalized] || normalized;
   }
 
   function getRegularUnitPriceCents(productDefinitionId, options = {}) {
@@ -231,14 +297,19 @@
     PRODUCT_DEFINITION_VERSION,
     PRODUCT_DEFINITIONS,
     PRODUCT_ID_ALIASES,
+    PRODUCT_PET_ICON_KEYS,
     UI_PRODUCT_ID_ALIASES,
     applyCatalogPricingToItems,
     getCanonicalProductDefinitionId,
     getFinalUnitPriceCents,
     getFinalUnitPriceDollars,
+    getPetIconDefinition,
+    getPetIconLabel,
+    getPetIconOptions,
     getProductDefinition,
     getUiProductDefinitionId,
     getQualifyingOrderQuantity,
-    getRegularUnitPriceCents
+    getRegularUnitPriceCents,
+    normalizePetIconKey
   };
 }));

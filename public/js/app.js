@@ -301,7 +301,6 @@ const allowedValues = {
   treeColor: ['Green', 'Brown'],
   bowColor: ['Red', 'White'],
   personalizationMode: ['As Shown', 'Change Edge Text'],
-  petIcon: ['Paw', 'Fish', 'No Icon', 'Custom Icon'],
   preferredContact: ['Text', 'Email'],
   fulfillmentMethod: ['Shipping', 'Local Pickup']
 };
@@ -1481,7 +1480,7 @@ function normalizeEntry(entry) {
     id: typeof entry.id === 'string' && entry.id ? entry.id : createId(),
     kind: 'pet',
     name: typeof entry.name === 'string' ? entry.name : '',
-    icon: allowedValues.petIcon.includes(entry.icon) ? entry.icon : '',
+    icon: normalizePetIconLabel(entry.icon, draft.productDefinitionId),
     iconOther: typeof entry.iconOther === 'string' ? entry.iconOther : ''
   };
 }
@@ -1573,7 +1572,7 @@ function renderEntries(focusId) {
             <div class="form-group entry-icon">
               <select id="${entry.id}-icon" data-entry-field="icon" aria-label="Icon">
                 <option value="">Select an icon</option>
-                ${allowedValues.petIcon.map((option) => `<option value="${option}" ${entry.icon === option ? 'selected' : ''}>${option}</option>`).join('')}
+                ${getAllowedPetIconLabels().map((option) => `<option value="${option}" ${entry.icon === option ? 'selected' : ''}>${option}</option>`).join('')}
               </select>
             </div>
           ` : ''}
@@ -1691,6 +1690,25 @@ function getAllowedBowColors(productDefinitionId = getActiveProductDefinitionId(
   return Array.isArray(config.allowedBowColors) && config.allowedBowColors.length > 0
     ? config.allowedBowColors
     : allowedValues.bowColor;
+}
+
+function getAllowedPetIconOptions(productDefinitionId = getActiveProductDefinitionId()) {
+  return forgeProductCatalog.getPetIconOptions(resolveConfiguredProductDefinitionId(productDefinitionId));
+}
+
+function getAllowedPetIconLabels(productDefinitionId = getActiveProductDefinitionId()) {
+  return getAllowedPetIconOptions(productDefinitionId).map((option) => option.label);
+}
+
+function normalizePetIconLabel(value, productDefinitionId = getActiveProductDefinitionId()) {
+  const normalizedKey = forgeProductCatalog.normalizePetIconKey(value);
+  const matchedOption = getAllowedPetIconOptions(productDefinitionId).find((option) => option.key === normalizedKey);
+  if (matchedOption) {
+    return matchedOption.label;
+  }
+
+  const rawValue = sanitizeText(value);
+  return getAllowedPetIconLabels(productDefinitionId).includes(rawValue) ? rawValue : '';
 }
 
 function formatDisplayValue(value) {
@@ -2276,7 +2294,7 @@ function getOrnamentOrderItemValidationIssues(item) {
       issues.push(`${entry.kind === 'pet' ? 'Pet' : 'Person'} names are required.`);
     }
     if (entry.kind === 'pet') {
-      if (!allowedValues.petIcon.includes(entry.icon)) {
+      if (!getAllowedPetIconLabels(item.productDefinitionId).includes(normalizePetIconLabel(entry.icon, item.productDefinitionId))) {
         issues.push('Each pet needs an icon choice.');
       }
       if (entry.icon === 'Custom Icon' && !sanitizeText(entry.customIconDescription || '')) {
@@ -2348,10 +2366,11 @@ function formatPrice(amount) {
 }
 
 function getPetIconText(entry) {
-  if (entry.icon === 'No Icon') {
+  const label = normalizePetIconLabel(entry.icon, getActiveProductDefinitionId()) || forgeProductCatalog.getPetIconLabel(entry.icon);
+  if (label === 'No Icon') {
     return 'No Icon';
   }
-  return entry.icon || 'Not selected';
+  return label || 'Not selected';
 }
 
 function getEntryCounts(entries) {
@@ -2511,7 +2530,7 @@ function normalizeOrderItemRecord(record) {
           position: Number.isFinite(entry.position) ? entry.position : index + 1,
           kind: entry.kind,
           name: typeof entry.name === 'string' ? sanitizeText(entry.name) : '',
-          icon: typeof entry.icon === 'string' ? entry.icon : '',
+          icon: normalizePetIconLabel(entry.icon, record.productDefinitionId),
           customIconDescription: typeof entry.customIconDescription === 'string'
             ? sanitizeText(entry.customIconDescription)
             : ''
@@ -2837,7 +2856,7 @@ function buildDraftFromOrderItem(item) {
       id: createId(),
       kind: entry.kind,
       name: entry.name,
-      icon: entry.kind === 'pet' ? entry.icon : '',
+      icon: entry.kind === 'pet' ? normalizePetIconLabel(entry.icon, item.productDefinitionId) : '',
       iconOther: entry.customIconDescription || ''
     }))
   };
@@ -5067,7 +5086,7 @@ function formatStaffPersonalizationRequest(entry) {
     return `Custom Icon: ${entry.custom_icon_description}`;
   }
   if (entry?.icon) {
-    return entry.icon.replace(/_/g, ' ');
+    return forgeProductCatalog.getPetIconLabel(entry.icon) || entry.icon.replace(/_/g, ' ');
   }
   return '—';
 }
@@ -5791,10 +5810,11 @@ function updateEntryField(entryId, field, value) {
 
   saveDraft();
 
-  if (field === 'icon') {
-    renderEntries();
+    if (field === 'icon') {
+      entry.icon = normalizePetIconLabel(entry.icon);
+      renderEntries();
+    }
   }
-}
 
 function validateTreeForm() {
   clearTreeFormErrors();
@@ -5880,7 +5900,7 @@ function validateTreeForm() {
     }
 
     if (entry.kind === 'pet') {
-      if (!allowedValues.petIcon.includes(entry.icon)) {
+      if (!getAllowedPetIconLabels().includes(normalizePetIconLabel(entry.icon))) {
         messages.push('Choose an icon.');
       }
       if (entry.icon === 'Custom Icon' && !sanitizeText(entry.iconOther || '')) {

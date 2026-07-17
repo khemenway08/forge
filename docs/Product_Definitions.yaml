@@ -16,7 +16,8 @@ shared_options:
     other: {label: Other}
 
   pet_icons:
-    paw: {label: Paw}
+    paw: {label: Paw Print}
+    dog_bone: {label: Dog Bone}
     fish: {label: Fish}
     custom:
       label: Custom Icon
@@ -82,7 +83,7 @@ products:
         required: false
         type: ordered_repeatable_pet
         pet_types: [dog, cat, other]
-        pet_icons: [paw, fish, custom, none]
+        pet_icons: [paw, dog_bone, fish, custom, none]
       year: {required: true, type: year, default: 2026, editable: true}
     rules:
       customer_selects_size: true
@@ -113,7 +114,7 @@ products:
         required: false
         type: ordered_repeatable_pet
         pet_types: [dog, cat, other]
-        pet_icons: [paw, fish, custom, none]
+        pet_icons: [paw, dog_bone, fish, custom, none]
       year: {required: true, type: year, default: 2026, editable: true}
     rules:
       customer_selects_size: true
@@ -180,7 +181,7 @@ products:
         required: false
         type: ordered_repeatable_pet
         pet_types: [dog, cat, other]
-        pet_icons: [paw, fish, custom, none]
+        pet_icons: [paw, dog_bone, fish, custom, none]
       year: {required: true, type: year, default: 2026, editable: true}
     rules:
       min_total_names: 1
@@ -201,7 +202,7 @@ products:
         required: false
         type: ordered_repeatable_pet
         pet_types: [dog, cat, other]
-        pet_icons: [paw, fish, custom, none]
+        pet_icons: [paw, dog_bone, fish, custom, none]
       year: {required: true, type: year, default: 2026, editable: true}
     rules:
       min_total_names: 1

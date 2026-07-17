@@ -160,3 +160,23 @@ test('reindeer aliases and quantity discounts work with the exact app helper cal
     ]
   }), 13);
 });
+
+test('pet icon definitions preserve stable keys and approved visible labels', () => {
+  assert.equal(catalog.normalizePetIconKey('Paw'), 'paw');
+  assert.equal(catalog.normalizePetIconKey('Paw Print'), 'paw');
+  assert.equal(catalog.normalizePetIconKey('Dog Bone'), 'dog_bone');
+  assert.equal(catalog.normalizePetIconKey('dog_bone'), 'dog_bone');
+  assert.equal(catalog.getPetIconLabel('paw'), 'Paw Print');
+  assert.equal(catalog.getPetIconLabel('Paw'), 'Paw Print');
+  assert.equal(catalog.getPetIconLabel('dog_bone'), 'Dog Bone');
+  assert.equal(catalog.getPetIconLabel('Dog Bone'), 'Dog Bone');
+});
+
+test('pet-enabled products expose the approved pet icon order', () => {
+  ['tree_ornament', 'antler_ornament', 'present_stack', 'grinch_tree'].forEach((productDefinitionId) => {
+    const options = catalog.getPetIconOptions(productDefinitionId);
+
+    assert.deepEqual(options.map((option) => option.key), ['paw', 'dog_bone', 'fish', 'custom', 'none']);
+    assert.deepEqual(options.map((option) => option.label), ['Paw Print', 'Dog Bone', 'Fish', 'Custom Icon', 'No Icon']);
+  });
+});
