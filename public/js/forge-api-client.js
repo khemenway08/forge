@@ -10,6 +10,8 @@
   const DEFAULT_BASE_URL = '/api/v1';
   const DEFAULT_TIMEOUT_MS = 8000;
   const HEALTH_ENDPOINT = 'health.php';
+  const ORDERS_ENDPOINT = 'orders.php';
+  const HEX_64_PATTERN = /^[0-9a-f]{64}$/;
 
   class ForgeApiError extends Error {
     constructor(code, message, options = {}) {
@@ -31,67 +33,105 @@
     const fetchImpl = resolveFetchImplementation(options.fetchImpl);
 
     async function checkHealth() {
-      const controller = createAbortController();
-      const timeoutId = controller
-        ? setTimeout(() => controller.abort(), timeoutMs)
-        : null;
-
       try {
-        const response = await performHealthRequest(fetchImpl, baseUrl, controller);
-        const payload = await parseHealthResponse(response);
+        const response = await performJsonRequest(fetchImpl, `${baseUrl}/${HEALTH_ENDPOINT}`, timeoutMs, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json'
+          },
+          credentials: 'same-origin',
+          cache: 'no-store'
+        });
+
+        if (!response.ok) {
+          throw new ForgeApiError('http_error', 'The Forge server returned an unexpected response.', {
+            status: Number.isInteger(response.status) ? response.status : undefined
+          });
+        }
+
+        const payload = await parseJsonResponse(response);
         return normalizeHealthPayload(payload);
       } catch (error) {
         throw normalizeClientError(error);
-      } finally {
-        if (timeoutId !== null) {
-          clearTimeout(timeoutId);
+      }
+    }
+
+    async function submitOrder(orderPayload) {
+      assertPlainOrderPayload(orderPayload);
+
+      let requestBody = '';
+      try {
+        requestBody = JSON.stringify(orderPayload);
+      } catch (error) {
+        throw new ForgeApiError('invalid_request', 'The Forge order could not be prepared for upload.', { cause: error });
+      }
+
+      if (typeof requestBody !== 'string') {
+        throw new ForgeApiError('invalid_request', 'The Forge order could not be prepared for upload.');
+      }
+
+      try {
+        const response = await performJsonRequest(fetchImpl, `${baseUrl}/${ORDERS_ENDPOINT}`, timeoutMs, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json'
+          },
+          credentials: 'same-origin',
+          cache: 'no-store',
+          body: requestBody
+        });
+        const payload = await parseJsonResponse(response);
+
+        if (response.ok) {
+          return normalizeSubmitOrderSuccess(payload, orderPayload, response.status);
         }
+
+        throw buildServerOrderError(response.status, payload);
+      } catch (error) {
+        throw normalizeClientError(error);
       }
     }
 
     return {
-      checkHealth
+      checkHealth,
+      submitOrder
     };
   }
 
-  async function performHealthRequest(fetchImpl, baseUrl, controller) {
-    const requestOptions = {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json'
-      },
-      credentials: 'same-origin',
-      cache: 'no-store'
-    };
+  async function performJsonRequest(fetchImpl, url, timeoutMs, requestOptions) {
+    const controller = createAbortController();
+    const timeoutId = controller
+      ? setTimeout(() => controller.abort(), timeoutMs)
+      : null;
 
+    const resolvedOptions = { ...requestOptions };
     if (controller) {
-      requestOptions.signal = controller.signal;
+      resolvedOptions.signal = controller.signal;
     }
 
-    let response;
     try {
-      response = await fetchImpl(`${baseUrl}/${HEALTH_ENDPOINT}`, requestOptions);
+      const response = await fetchImpl(url, resolvedOptions);
+      if (!response || typeof response.ok !== 'boolean') {
+        throw new ForgeApiError('invalid_response', 'The Forge server returned an unexpected response.');
+      }
+      return response;
     } catch (error) {
       if (isAbortError(error)) {
         throw new ForgeApiError('timeout', 'The Forge server did not respond in time.', { cause: error });
       }
+      if (error instanceof ForgeApiError) {
+        throw error;
+      }
       throw new ForgeApiError('network_error', 'The Forge server could not be reached.', { cause: error });
+    } finally {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
     }
-
-    if (!response || typeof response.ok !== 'boolean') {
-      throw new ForgeApiError('invalid_response', 'The Forge server returned an unexpected response.');
-    }
-
-    if (!response.ok) {
-      throw new ForgeApiError('http_error', 'The Forge server returned an unexpected response.', {
-        status: Number.isInteger(response.status) ? response.status : undefined
-      });
-    }
-
-    return response;
   }
 
-  async function parseHealthResponse(response) {
+  async function parseJsonResponse(response) {
     if (typeof response.json !== 'function') {
       throw new ForgeApiError('invalid_response', 'The Forge server returned an unexpected response.');
     }
@@ -120,6 +160,65 @@
       status,
       serverTime
     };
+  }
+
+  function normalizeSubmitOrderSuccess(payload, orderPayload, statusCode) {
+    const application = asTrimmedString(payload && payload.application);
+    const apiVersion = asTrimmedString(payload && payload.api_version);
+    const status = asTrimmedString(payload && payload.status);
+    const data = payload && typeof payload === 'object' ? payload.data : null;
+    const forgeOrderUuid = asTrimmedString(data && data.forge_order_uuid);
+    const created = data && typeof data === 'object' ? data.created : undefined;
+    const receivedAt = asTrimmedString(data && data.received_at);
+    const payloadSha256 = asTrimmedString(data && data.payload_sha256);
+    const submittedForgeOrderUuid = asTrimmedString(orderPayload && orderPayload.forge_order_uuid);
+
+    if (
+      ![200, 201].includes(statusCode)
+      || !Number.isInteger(statusCode)
+      || application !== 'Forge'
+      || apiVersion !== '1'
+      || status !== 'ok'
+      || !forgeOrderUuid
+      || typeof created !== 'boolean'
+      || !isValidIsoDate(receivedAt)
+      || !HEX_64_PATTERN.test(payloadSha256)
+      || !submittedForgeOrderUuid
+      || forgeOrderUuid !== submittedForgeOrderUuid
+    ) {
+      throw new ForgeApiError('invalid_response', 'The Forge server returned an unexpected response.');
+    }
+
+    return {
+      ok: true,
+      forgeOrderUuid,
+      created,
+      receivedAt,
+      payloadSha256
+    };
+  }
+
+  function buildServerOrderError(httpStatus, payload) {
+    const application = asTrimmedString(payload && payload.application);
+    const apiVersion = asTrimmedString(payload && payload.api_version);
+    const status = asTrimmedString(payload && payload.status);
+    const errorEnvelope = payload && typeof payload === 'object' ? payload.error : null;
+    const code = asTrimmedString(errorEnvelope && errorEnvelope.code);
+    const message = asTrimmedString(errorEnvelope && errorEnvelope.message);
+
+    if (
+      application !== 'Forge'
+      || apiVersion !== '1'
+      || status !== 'error'
+      || !code
+      || !message
+    ) {
+      throw new ForgeApiError('invalid_response', 'The Forge server returned an unexpected response.');
+    }
+
+    return new ForgeApiError(code, message, {
+      status: Number.isInteger(httpStatus) ? httpStatus : undefined
+    });
   }
 
   function normalizeClientError(error) {
@@ -190,6 +289,20 @@
     }
     const parsed = new Date(normalized);
     return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === new Date(parsed.getTime()).toISOString();
+  }
+
+  function assertPlainOrderPayload(orderPayload) {
+    if (!orderPayload || !isPlainObject(orderPayload)) {
+      throw new ForgeApiError('invalid_request', 'A complete Forge order payload is required.');
+    }
+  }
+
+  function isPlainObject(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return false;
+    }
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
   }
 
   function asTrimmedString(value) {
