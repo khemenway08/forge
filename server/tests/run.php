@@ -477,4 +477,115 @@ $runner->run('invalid-JSON behavior', static function (): void {
     assertSame('invalid_json', $response['body']['error']['code']);
 });
 
+$runner->run('environment values override fallback config', static function (): void {
+    $resolved = \Forge\Server\DatabaseConnectionFactory::resolveConfiguration(
+        [
+            'FORGE_DB_DSN' => 'mysql:host=localhost;dbname=env_db;charset=utf8mb4',
+            'FORGE_DB_USER' => 'env_user',
+            'FORGE_DB_PASSWORD' => 'env_password',
+        ],
+        [
+            'FORGE_DB_DSN' => 'mysql:host=localhost;dbname=fallback_db;charset=utf8mb4',
+            'FORGE_DB_USER' => 'fallback_user',
+            'FORGE_DB_PASSWORD' => 'fallback_password',
+        ]
+    );
+
+    assertSame('mysql:host=localhost;dbname=env_db;charset=utf8mb4', $resolved['FORGE_DB_DSN']);
+    assertSame('env_user', $resolved['FORGE_DB_USER']);
+    assertSame('env_password', $resolved['FORGE_DB_PASSWORD']);
+});
+
+$runner->run('fallback values work when environment values are absent', static function (): void {
+    $resolved = \Forge\Server\DatabaseConnectionFactory::resolveConfiguration(
+        [
+            'FORGE_DB_DSN' => false,
+            'FORGE_DB_USER' => false,
+            'FORGE_DB_PASSWORD' => false,
+        ],
+        [
+            'FORGE_DB_DSN' => 'mysql:host=localhost;dbname=fallback_db;charset=utf8mb4',
+            'FORGE_DB_USER' => 'fallback_user',
+            'FORGE_DB_PASSWORD' => 'fallback_password',
+        ]
+    );
+
+    assertSame('mysql:host=localhost;dbname=fallback_db;charset=utf8mb4', $resolved['FORGE_DB_DSN']);
+    assertSame('fallback_user', $resolved['FORGE_DB_USER']);
+    assertSame('fallback_password', $resolved['FORGE_DB_PASSWORD']);
+});
+
+$runner->run('missing required values produce storage-unavailable behavior', static function (): void {
+    assertThrows(
+        static function (): void {
+            \Forge\Server\DatabaseConnectionFactory::resolveConfiguration(
+                [
+                    'FORGE_DB_DSN' => false,
+                    'FORGE_DB_USER' => false,
+                    'FORGE_DB_PASSWORD' => false,
+                ],
+                []
+            );
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof StorageUnavailableException);
+            assertSame('Forge order storage is currently unavailable.', $exception->getMessage());
+        }
+    );
+});
+
+$runner->run('invalid config return type fails safely', static function (): void {
+    assertThrows(
+        static function (): void {
+            \Forge\Server\normalizePrivateDatabaseConfig('not-an-array');
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof StorageUnavailableException);
+            assertSame('Forge order storage is currently unavailable.', $exception->getMessage());
+        }
+    );
+});
+
+$runner->run('unapproved config keys are ignored', static function (): void {
+    $config = \Forge\Server\normalizePrivateDatabaseConfig([
+        'FORGE_DB_DSN' => 'mysql:host=localhost;dbname=fallback_db;charset=utf8mb4',
+        'FORGE_DB_USER' => 'fallback_user',
+        'FORGE_DB_PASSWORD' => 'fallback_password',
+        'UNAPPROVED_KEY' => 'should-be-ignored',
+    ]);
+
+    assertTrue(!array_key_exists('UNAPPROVED_KEY', $config));
+    assertSame('fallback_user', $config['FORGE_DB_USER']);
+});
+
+$runner->run('safe storage exceptions do not expose configuration values', static function (): void {
+    $dsn = 'mysql:host=localhost;dbname=sensitive_db;charset=utf8mb4';
+    $user = 'sensitive_user';
+    $password = 'super-secret-password';
+
+    assertThrows(
+        static function () use ($dsn, $password): void {
+            \Forge\Server\DatabaseConnectionFactory::resolveConfiguration(
+                [
+                    'FORGE_DB_DSN' => '   ',
+                    'FORGE_DB_USER' => false,
+                    'FORGE_DB_PASSWORD' => false,
+                ],
+                [
+                    'FORGE_DB_DSN' => $dsn,
+                    'FORGE_DB_USER' => '',
+                    'FORGE_DB_PASSWORD' => $password,
+                ]
+            );
+        },
+        static function (\Throwable $exception) use ($dsn, $user, $password): void {
+            $message = $exception->getMessage();
+            assertSame('Forge order storage is currently unavailable.', $message);
+            assertNotContains($dsn, $message);
+            assertNotContains($user, $message);
+            assertNotContains($password, $message);
+        }
+    );
+});
+
 $runner->finish();

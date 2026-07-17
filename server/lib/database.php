@@ -8,11 +8,15 @@ use PDOException;
 
 final class DatabaseConnectionFactory
 {
-    public static function createFromEnvironment(): PDO
+    /**
+     * @param array{FORGE_DB_DSN?: mixed, FORGE_DB_USER?: mixed, FORGE_DB_PASSWORD?: mixed} $fallbackConfig
+     */
+    public static function createFromEnvironment(array $fallbackConfig = []): PDO
     {
-        $dsn = self::getRequiredEnvironmentValue('FORGE_DB_DSN');
-        $user = self::getRequiredEnvironmentValue('FORGE_DB_USER');
-        $password = self::getRequiredEnvironmentValue('FORGE_DB_PASSWORD', true);
+        $config = self::resolveConfiguration(self::readEnvironmentConfiguration(), $fallbackConfig);
+        $dsn = $config['FORGE_DB_DSN'];
+        $user = $config['FORGE_DB_USER'];
+        $password = $config['FORGE_DB_PASSWORD'];
 
         try {
             $options = [
@@ -30,18 +34,90 @@ final class DatabaseConnectionFactory
         }
     }
 
-    private static function getRequiredEnvironmentValue(string $name, bool $allowBlank = false): string
+    /**
+     * @param array{FORGE_DB_DSN?: mixed, FORGE_DB_USER?: mixed, FORGE_DB_PASSWORD?: mixed} $environmentConfig
+     * @param array{FORGE_DB_DSN?: mixed, FORGE_DB_USER?: mixed, FORGE_DB_PASSWORD?: mixed} $fallbackConfig
+     * @return array{FORGE_DB_DSN: string, FORGE_DB_USER: string, FORGE_DB_PASSWORD: string}
+     */
+    public static function resolveConfiguration(array $environmentConfig, array $fallbackConfig = []): array
     {
-        $value = getenv($name);
-        if ($value === false) {
-            throw new StorageUnavailableException('Forge order storage is currently unavailable.');
+        return [
+            'FORGE_DB_DSN' => self::resolveNonEmptyStringValue('FORGE_DB_DSN', $environmentConfig, $fallbackConfig),
+            'FORGE_DB_USER' => self::resolveNonEmptyStringValue('FORGE_DB_USER', $environmentConfig, $fallbackConfig),
+            'FORGE_DB_PASSWORD' => self::resolveStringValue('FORGE_DB_PASSWORD', $environmentConfig, $fallbackConfig),
+        ];
+    }
+
+    /**
+     * @return array{FORGE_DB_DSN: mixed, FORGE_DB_USER: mixed, FORGE_DB_PASSWORD: mixed}
+     */
+    private static function readEnvironmentConfiguration(): array
+    {
+        return [
+            'FORGE_DB_DSN' => getenv('FORGE_DB_DSN'),
+            'FORGE_DB_USER' => getenv('FORGE_DB_USER'),
+            'FORGE_DB_PASSWORD' => getenv('FORGE_DB_PASSWORD'),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $environmentConfig
+     * @param array<string, mixed> $fallbackConfig
+     */
+    private static function resolveNonEmptyStringValue(string $name, array $environmentConfig, array $fallbackConfig): string
+    {
+        $environmentValue = self::readStringValue($environmentConfig, $name);
+        if ($environmentValue !== null) {
+            $trimmedEnvironmentValue = trim($environmentValue);
+            if ($trimmedEnvironmentValue !== '') {
+                return $trimmedEnvironmentValue;
+            }
         }
 
-        $stringValue = trim((string) $value);
-        if ($stringValue === '' && !$allowBlank) {
-            throw new StorageUnavailableException('Forge order storage is currently unavailable.');
+        $fallbackValue = self::readStringValue($fallbackConfig, $name);
+        if ($fallbackValue !== null) {
+            $trimmedFallbackValue = trim($fallbackValue);
+            if ($trimmedFallbackValue !== '') {
+                return $trimmedFallbackValue;
+            }
         }
 
-        return $allowBlank ? (string) $value : $stringValue;
+        throw new StorageUnavailableException('Forge order storage is currently unavailable.');
+    }
+
+    /**
+     * @param array<string, mixed> $environmentConfig
+     * @param array<string, mixed> $fallbackConfig
+     */
+    private static function resolveStringValue(string $name, array $environmentConfig, array $fallbackConfig): string
+    {
+        $environmentValue = self::readStringValue($environmentConfig, $name);
+        if ($environmentValue !== null && trim($environmentValue) !== '') {
+            return $environmentValue;
+        }
+
+        $fallbackValue = self::readStringValue($fallbackConfig, $name);
+        if ($fallbackValue !== null) {
+            return $fallbackValue;
+        }
+
+        throw new StorageUnavailableException('Forge order storage is currently unavailable.');
+    }
+
+    /**
+     * @param array<string, mixed> $source
+     */
+    private static function readStringValue(array $source, string $name): ?string
+    {
+        if (!array_key_exists($name, $source)) {
+            return null;
+        }
+
+        $value = $source[$name];
+        if (!is_string($value)) {
+            return null;
+        }
+
+        return $value;
     }
 }
