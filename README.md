@@ -1,6 +1,6 @@
 # Forge Starter Build
 
-This is the first production-oriented Forge repository starter.
+This repository now includes the active Forge Version 1 customer and staff workflow foundation, including durable local order storage and production workflow tools.
 
 ## Included
 
@@ -10,21 +10,42 @@ This is the first production-oriented Forge repository starter.
 - Ornament gallery using real product photos
 - Responsive desktop, tablet, and phone layouts
 - Progressive Web App manifest and service worker
-- PHP health endpoint for Hostinger
+- Durable local order storage with IndexedDB
+- PHP health endpoint foundation for Hostinger
 - Approved project specification files
 
 ## Run Locally
 
-From the `public` folder:
+For the front-end only static experience:
 
 ```bash
-php -S localhost:8080
+npx serve public -l 3016
 ```
 
 Open:
 
 ```text
-http://localhost:8080
+http://127.0.0.1:3016
+```
+
+`npx serve` does not execute PHP, so it cannot test Forge API endpoints.
+
+For the browser app plus local PHP API endpoints:
+
+```bash
+php -S 127.0.0.1:8080 -t public
+```
+
+Open:
+
+```text
+http://127.0.0.1:8080
+```
+
+Health endpoint:
+
+```text
+http://127.0.0.1:8080/api/v1/health.php
 ```
 
 ## Hostinger Deployment
@@ -35,8 +56,8 @@ Upload the contents of `public/` into the document root for:
 forge.thehilltopshop.com
 ```
 
-Do not connect WooCommerce credentials yet. The first build is interface-only.
+Do not place WooCommerce credentials, database values, or environment secrets in this repository.
 
 ## Current Build Goal
 
-Validate the real branded customer entry experience before adding order persistence and WooCommerce synchronization.
+Durable local order storage already exists. Milestone 6 server communication is being added incrementally. Order synchronization and WooCommerce order creation are not implemented in this phase.

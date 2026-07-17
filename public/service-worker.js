@@ -1,8 +1,9 @@
-const CACHE_NAME = 'forge-starter-v9';
+const CACHE_NAME = 'forge-starter-v10';
 const ASSETS = [
   './',
   './index.html',
   './css/app.css',
+  './js/forge-api-client.js',
   './js/app.js',
   './manifest.webmanifest',
   './assets/brand/hilltop-logo.png',
