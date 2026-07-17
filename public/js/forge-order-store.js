@@ -66,6 +66,30 @@
     assigned: 'assigned',
     outOfService: 'out_of_service'
   };
+  const SERVER_UPLOAD_STATUSES = {
+    pending: 'pending',
+    uploading: 'uploading',
+    stored: 'stored',
+    failed: 'failed',
+    conflict: 'conflict'
+  };
+  const SERVER_UPLOAD_ERROR_MESSAGE_MAX_LENGTH = 160;
+  const SERVER_UPLOAD_HASH_PATTERN = /^[0-9a-f]{64}$/;
+  const SERVER_UPLOAD_ERROR_MESSAGES = {
+    uuid_conflict: 'A different Forge order is already stored on the server for this UUID.',
+    invalid_order: 'The Forge order payload was rejected by the server.',
+    invalid_json: 'The Forge server could not read the order payload.',
+    request_too_large: 'The Forge order payload was too large for the server to accept.',
+    unsupported_media_type: 'The Forge server rejected the upload format.',
+    storage_unavailable: 'Forge server storage is currently unavailable.',
+    method_not_allowed: 'The Forge server rejected this upload method.',
+    timeout: 'The Forge server did not respond in time.',
+    network_error: 'The Forge server could not be reached.',
+    invalid_response: 'The Forge server returned an unexpected response.',
+    unavailable: 'The Forge server is currently unavailable.',
+    server_error: 'The Forge server reported an internal error.',
+    server_upload_failed: 'Unable to store this order on the Forge server.'
+  };
   const DEFAULT_TRAY_INVENTORY = createDefaultTrayInventoryConfig();
   function createOrderStore(options = {}) {
     const indexedDb = options.indexedDB || (typeof globalThis !== 'undefined' ? globalThis.indexedDB : null);
@@ -220,6 +244,132 @@
       return runRequest(db, 'readonly', objectStoreNames.orders, (store) => {
         const index = store.index(INDEX_NAMES.orders.syncStatus);
         return index.count(status);
+      });
+    }
+
+    async function markOrderServerUploadAttempt(forgeOrderUuid, attemptedAt = normalizeDateValue(getNow()).toISOString()) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      if (!orderUuid) {
+        throw new Error('Server upload attempt requires a Forge order UUID.');
+      }
+
+      const db = await openOrderStore();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(objectStoreNames.orders, 'readwrite');
+        const ordersStore = transaction.objectStore(objectStoreNames.orders);
+        const timestamp = normalizeDateValue(attemptedAt).toISOString();
+        let updatedRecord = null;
+
+        transaction.oncomplete = () => resolve(updatedRecord);
+        transaction.onerror = () => reject(transaction.__forgeError || transaction.error || new Error('Server upload attempt could not be saved.'));
+        transaction.onabort = () => reject(transaction.__forgeError || transaction.error || new Error('Server upload attempt was aborted.'));
+
+        const orderRequest = ordersStore.get(orderUuid);
+        orderRequest.onerror = () => abortTransaction(transaction, orderRequest.error || new Error('The selected order could not be loaded.'));
+        orderRequest.onsuccess = () => {
+          const storedOrder = orderRequest.result;
+          if (!storedOrder) {
+            abortTransaction(transaction, new Error('That saved order could not be found.'));
+            return;
+          }
+
+          updatedRecord = normalizeLocalOrderRecord({
+            ...deepCloneValue(storedOrder),
+            updated_at: timestamp,
+            server_upload_status: SERVER_UPLOAD_STATUSES.uploading,
+            server_upload_attempt_count: getServerUploadAttemptCount(storedOrder) + 1,
+            last_server_upload_attempt_at: timestamp,
+            last_server_upload_error: null
+          });
+
+          const putRequest = ordersStore.put(deepCloneValue(updatedRecord));
+          putRequest.onerror = () => abortTransaction(transaction, putRequest.error || new Error('The server upload attempt could not be saved.'));
+        };
+      });
+    }
+
+    async function markOrderServerUploadSuccess(forgeOrderUuid, result, updatedAt = normalizeDateValue(getNow()).toISOString()) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      if (!orderUuid) {
+        throw new Error('Server upload success requires a Forge order UUID.');
+      }
+      validateServerUploadSuccessResult(orderUuid, result);
+
+      const db = await openOrderStore();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(objectStoreNames.orders, 'readwrite');
+        const ordersStore = transaction.objectStore(objectStoreNames.orders);
+        const timestamp = normalizeDateValue(updatedAt).toISOString();
+        let updatedRecord = null;
+
+        transaction.oncomplete = () => resolve(updatedRecord);
+        transaction.onerror = () => reject(transaction.__forgeError || transaction.error || new Error('Server upload success could not be saved.'));
+        transaction.onabort = () => reject(transaction.__forgeError || transaction.error || new Error('Server upload success was aborted.'));
+
+        const orderRequest = ordersStore.get(orderUuid);
+        orderRequest.onerror = () => abortTransaction(transaction, orderRequest.error || new Error('The selected order could not be loaded.'));
+        orderRequest.onsuccess = () => {
+          const storedOrder = orderRequest.result;
+          if (!storedOrder) {
+            abortTransaction(transaction, new Error('That saved order could not be found.'));
+            return;
+          }
+
+          updatedRecord = normalizeLocalOrderRecord({
+            ...deepCloneValue(storedOrder),
+            updated_at: timestamp,
+            server_upload_status: SERVER_UPLOAD_STATUSES.stored,
+            server_received_at: result.receivedAt,
+            server_payload_sha256: result.payloadSha256,
+            server_created: result.created,
+            last_server_upload_error: null
+          });
+
+          const putRequest = ordersStore.put(deepCloneValue(updatedRecord));
+          putRequest.onerror = () => abortTransaction(transaction, putRequest.error || new Error('The server upload success could not be saved.'));
+        };
+      });
+    }
+
+    async function markOrderServerUploadFailure(forgeOrderUuid, error, updatedAt = normalizeDateValue(getNow()).toISOString()) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      if (!orderUuid) {
+        throw new Error('Server upload failure requires a Forge order UUID.');
+      }
+
+      const db = await openOrderStore();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(objectStoreNames.orders, 'readwrite');
+        const ordersStore = transaction.objectStore(objectStoreNames.orders);
+        const timestamp = normalizeDateValue(updatedAt).toISOString();
+        let updatedRecord = null;
+
+        transaction.oncomplete = () => resolve(updatedRecord);
+        transaction.onerror = () => reject(transaction.__forgeError || transaction.error || new Error('Server upload failure could not be saved.'));
+        transaction.onabort = () => reject(transaction.__forgeError || transaction.error || new Error('Server upload failure was aborted.'));
+
+        const orderRequest = ordersStore.get(orderUuid);
+        orderRequest.onerror = () => abortTransaction(transaction, orderRequest.error || new Error('The selected order could not be loaded.'));
+        orderRequest.onsuccess = () => {
+          const storedOrder = orderRequest.result;
+          if (!storedOrder) {
+            abortTransaction(transaction, new Error('That saved order could not be found.'));
+            return;
+          }
+
+          const safeError = sanitizeServerUploadError(error);
+          updatedRecord = normalizeLocalOrderRecord({
+            ...deepCloneValue(storedOrder),
+            updated_at: timestamp,
+            server_upload_status: safeError.code === 'uuid_conflict'
+              ? SERVER_UPLOAD_STATUSES.conflict
+              : SERVER_UPLOAD_STATUSES.failed,
+            last_server_upload_error: safeError
+          });
+
+          const putRequest = ordersStore.put(deepCloneValue(updatedRecord));
+          putRequest.onerror = () => abortTransaction(transaction, putRequest.error || new Error('The server upload failure could not be saved.'));
+        };
       });
     }
 
@@ -646,6 +796,9 @@
       getOrder,
       listOrders,
       countOrdersBySyncStatus,
+      markOrderServerUploadAttempt,
+      markOrderServerUploadSuccess,
+      markOrderServerUploadFailure,
       listTrays,
       getTray,
       listTrayAssignmentHistory,
@@ -720,6 +873,69 @@
       async countOrdersBySyncStatus(syncStatus) {
         const targetStatus = asTrimmedString(syncStatus);
         return [...records.values()].filter((record) => asTrimmedString(record.sync_status) === targetStatus).length;
+      },
+      async markOrderServerUploadAttempt(forgeOrderUuid, attemptedAt = normalizeDateValue(getNow()).toISOString()) {
+        const orderUuid = asTrimmedString(forgeOrderUuid);
+        const storedOrder = records.get(orderUuid);
+        if (!storedOrder) {
+          throw new Error('That saved order could not be found.');
+        }
+
+        const timestamp = normalizeDateValue(attemptedAt).toISOString();
+        const updatedRecord = normalizeLocalOrderRecord({
+          ...deepCloneValue(storedOrder),
+          updated_at: timestamp,
+          server_upload_status: SERVER_UPLOAD_STATUSES.uploading,
+          server_upload_attempt_count: getServerUploadAttemptCount(storedOrder) + 1,
+          last_server_upload_attempt_at: timestamp,
+          last_server_upload_error: null
+        });
+
+        records.set(orderUuid, deepCloneValue(updatedRecord));
+        return normalizeOrderRecordForRead(updatedRecord);
+      },
+      async markOrderServerUploadSuccess(forgeOrderUuid, result, updatedAt = normalizeDateValue(getNow()).toISOString()) {
+        const orderUuid = asTrimmedString(forgeOrderUuid);
+        const storedOrder = records.get(orderUuid);
+        if (!storedOrder) {
+          throw new Error('That saved order could not be found.');
+        }
+        validateServerUploadSuccessResult(orderUuid, result);
+
+        const timestamp = normalizeDateValue(updatedAt).toISOString();
+        const updatedRecord = normalizeLocalOrderRecord({
+          ...deepCloneValue(storedOrder),
+          updated_at: timestamp,
+          server_upload_status: SERVER_UPLOAD_STATUSES.stored,
+          server_received_at: result.receivedAt,
+          server_payload_sha256: result.payloadSha256,
+          server_created: result.created,
+          last_server_upload_error: null
+        });
+
+        records.set(orderUuid, deepCloneValue(updatedRecord));
+        return normalizeOrderRecordForRead(updatedRecord);
+      },
+      async markOrderServerUploadFailure(forgeOrderUuid, error, updatedAt = normalizeDateValue(getNow()).toISOString()) {
+        const orderUuid = asTrimmedString(forgeOrderUuid);
+        const storedOrder = records.get(orderUuid);
+        if (!storedOrder) {
+          throw new Error('That saved order could not be found.');
+        }
+
+        const timestamp = normalizeDateValue(updatedAt).toISOString();
+        const safeError = sanitizeServerUploadError(error);
+        const updatedRecord = normalizeLocalOrderRecord({
+          ...deepCloneValue(storedOrder),
+          updated_at: timestamp,
+          server_upload_status: safeError.code === 'uuid_conflict'
+            ? SERVER_UPLOAD_STATUSES.conflict
+            : SERVER_UPLOAD_STATUSES.failed,
+          last_server_upload_error: safeError
+        });
+
+        records.set(orderUuid, deepCloneValue(updatedRecord));
+        return normalizeOrderRecordForRead(updatedRecord);
       },
       async listTrays() {
         return [...trays.values()].map((tray) => normalizeTrayRecord(tray)).sort(compareTraysByNumber);
@@ -1235,6 +1451,13 @@
       sync_attempt_count: Number.isInteger(record.sync_attempt_count) ? record.sync_attempt_count : 0,
       last_sync_attempt_at: record.last_sync_attempt_at == null ? null : asTrimmedString(record.last_sync_attempt_at),
       last_sync_error: record.last_sync_error == null ? null : asTrimmedString(record.last_sync_error),
+      server_upload_status: normalizeServerUploadStatus(record.server_upload_status),
+      server_upload_attempt_count: getServerUploadAttemptCount(record),
+      last_server_upload_attempt_at: asNullableIsoString(record.last_server_upload_attempt_at),
+      last_server_upload_error: sanitizeServerUploadError(record.last_server_upload_error),
+      server_received_at: asNullableIsoString(record.server_received_at),
+      server_payload_sha256: normalizeServerPayloadSha(record.server_payload_sha256),
+      server_created: record.server_created === true ? true : (record.server_created === false ? false : null),
       event_id: record.event_id == null ? null : asTrimmedString(record.event_id),
       device_id: record.device_id == null ? null : asTrimmedString(record.device_id),
       has_open_flags: hasOpenFlags,
@@ -1486,6 +1709,68 @@
     return createPackingVerificationRecord(record);
   }
 
+  function normalizeServerUploadStatus(value) {
+    const normalized = asTrimmedString(value).toLowerCase();
+    if (normalized === SERVER_UPLOAD_STATUSES.uploading) {
+      return SERVER_UPLOAD_STATUSES.uploading;
+    }
+    if (normalized === SERVER_UPLOAD_STATUSES.stored) {
+      return SERVER_UPLOAD_STATUSES.stored;
+    }
+    if (normalized === SERVER_UPLOAD_STATUSES.failed) {
+      return SERVER_UPLOAD_STATUSES.failed;
+    }
+    if (normalized === SERVER_UPLOAD_STATUSES.conflict) {
+      return SERVER_UPLOAD_STATUSES.conflict;
+    }
+    return SERVER_UPLOAD_STATUSES.pending;
+  }
+
+  function getServerUploadAttemptCount(record) {
+    return Number.isInteger(record?.server_upload_attempt_count) && record.server_upload_attempt_count >= 0
+      ? record.server_upload_attempt_count
+      : 0;
+  }
+
+  function normalizeServerPayloadSha(value) {
+    const normalized = asTrimmedString(value);
+    return SERVER_UPLOAD_HASH_PATTERN.test(normalized) ? normalized : null;
+  }
+
+  function sanitizeServerUploadError(error) {
+    if (error == null) {
+      return null;
+    }
+    const code = asTrimmedString(error?.code) || 'server_upload_failed';
+    const message = SERVER_UPLOAD_ERROR_MESSAGES[code] || SERVER_UPLOAD_ERROR_MESSAGES.server_upload_failed;
+
+    return {
+      code,
+      message: message.slice(0, SERVER_UPLOAD_ERROR_MESSAGE_MAX_LENGTH)
+    };
+  }
+
+  function asNullableIsoString(value) {
+    const normalized = asTrimmedString(value);
+    return normalized && !Number.isNaN(Date.parse(normalized)) ? normalized : null;
+  }
+
+  function validateServerUploadSuccessResult(orderUuid, result) {
+    const source = result && typeof result === 'object' ? result : {};
+    if (asTrimmedString(source.forgeOrderUuid) !== orderUuid) {
+      throw new Error('The server upload result UUID does not match the saved Forge order.');
+    }
+    if (!SERVER_UPLOAD_HASH_PATTERN.test(asTrimmedString(source.payloadSha256))) {
+      throw new Error('The server upload result requires a valid payload SHA-256 hash.');
+    }
+    if (!asNullableIsoString(source.receivedAt)) {
+      throw new Error('The server upload result requires a valid received-at timestamp.');
+    }
+    if (typeof source.created !== 'boolean') {
+      throw new Error('The server upload result requires a created flag.');
+    }
+  }
+
   function normalizePackingNote(value) {
     const normalized = asTrimmedString(value).slice(0, PACKING_NOTE_MAX_LENGTH);
     return normalized || null;
@@ -1720,6 +2005,7 @@
     PRODUCTION_STATUSES,
     ITEM_PRODUCTION_STATUSES,
     TRAY_STATUSES,
+    SERVER_UPLOAD_STATUSES,
     DEFAULT_TRAY_INVENTORY,
     createDefaultTrayInventoryConfig,
     createInMemoryOrderStore,
@@ -1739,6 +2025,9 @@
     getOrder: (...args) => defaultOrderStore.getOrder(...args),
     listOrders: (...args) => defaultOrderStore.listOrders(...args),
     countOrdersBySyncStatus: (...args) => defaultOrderStore.countOrdersBySyncStatus(...args),
+    markOrderServerUploadAttempt: (...args) => defaultOrderStore.markOrderServerUploadAttempt(...args),
+    markOrderServerUploadSuccess: (...args) => defaultOrderStore.markOrderServerUploadSuccess(...args),
+    markOrderServerUploadFailure: (...args) => defaultOrderStore.markOrderServerUploadFailure(...args),
     listTrays: (...args) => defaultOrderStore.listTrays(...args),
     getTray: (...args) => defaultOrderStore.getTray(...args),
     listTrayAssignmentHistory: (...args) => defaultOrderStore.listTrayAssignmentHistory(...args),

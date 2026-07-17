@@ -99,6 +99,237 @@ test('older orders normalize to submitted production status with no assigned tra
   assert.ok(trays.every((tray) => tray.tray_status === orderStoreModule.TRAY_STATUSES.available));
 });
 
+test('new orders receive default server-upload fields and DATABASE_VERSION remains 3', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore();
+
+  await store.saveNewOrder(createRecord({
+    forge_order_uuid: 'server-upload-defaults-order',
+    payload: {
+      forge_order_uuid: 'server-upload-defaults-order',
+      customer: { full_name: 'Upload Defaults' },
+      items: [{ quantity: 1 }],
+      pricing: { estimated_total_cents: 3000 }
+    }
+  }));
+
+  const order = await store.getOrder('server-upload-defaults-order');
+
+  assert.equal(orderStoreModule.DATABASE_VERSION, 3);
+  assert.equal(order.server_upload_status, orderStoreModule.SERVER_UPLOAD_STATUSES.pending);
+  assert.equal(order.server_upload_attempt_count, 0);
+  assert.equal(order.last_server_upload_attempt_at, null);
+  assert.equal(order.last_server_upload_error, null);
+  assert.equal(order.server_received_at, null);
+  assert.equal(order.server_payload_sha256, null);
+  assert.equal(order.server_created, null);
+});
+
+test('existing records without server-upload fields read as pending defaults without rewriting the stored source record', async () => {
+  const indexedDB = new FakeIndexedDBFactory();
+  indexedDB.seedDatabase('forge-server-upload-legacy', 3, {
+    orders: {
+      keyPath: 'forge_order_uuid',
+      records: [
+        {
+          record_type: 'forge_local_order',
+          record_version: '1.0',
+          forge_order_uuid: 'legacy-server-upload-order',
+          status: 'submitted',
+          sync_status: 'pending',
+          submitted_at: '2026-07-16T10:00:00.000Z',
+          local_saved_at: '2026-07-16T10:00:01.000Z',
+          payload: {
+            forge_order_uuid: 'legacy-server-upload-order',
+            customer: { full_name: 'Legacy Upload' },
+            items: [{ quantity: 1 }],
+            pricing: { estimated_total_cents: 2600 }
+          }
+        }
+      ]
+    }
+  });
+
+  const store = orderStoreModule.createOrderStore({
+    indexedDB,
+    databaseName: 'forge-server-upload-legacy'
+  });
+
+  const order = await store.getOrder('legacy-server-upload-order');
+  const rawStoredRecord = indexedDB.getDatabaseState('forge-server-upload-legacy').stores.get('orders').data.get('legacy-server-upload-order');
+
+  assert.equal(order.server_upload_status, orderStoreModule.SERVER_UPLOAD_STATUSES.pending);
+  assert.equal(order.server_upload_attempt_count, 0);
+  assert.equal(order.last_server_upload_attempt_at, null);
+  assert.equal(order.last_server_upload_error, null);
+  assert.equal(order.server_received_at, null);
+  assert.equal(order.server_payload_sha256, null);
+  assert.equal(order.server_created, null);
+  assert.equal(Object.prototype.hasOwnProperty.call(rawStoredRecord, 'server_upload_status'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(rawStoredRecord, 'server_upload_attempt_count'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(rawStoredRecord, 'last_server_upload_error'), false);
+});
+
+test('markOrderServerUploadAttempt increments once, records an ISO timestamp, clears prior error, and preserves payload and sync_status', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore();
+  const sourceRecord = createRecord({
+    forge_order_uuid: 'attempt-order',
+    server_upload_attempt_count: 2,
+    last_server_upload_error: {
+      code: 'network_error',
+      message: 'The Forge server could not be reached.'
+    },
+    payload: {
+      forge_order_uuid: 'attempt-order',
+      customer: { full_name: 'Attempt Customer' },
+      items: [{ quantity: 2 }],
+      pricing: { estimated_total_cents: 5200 }
+    }
+  });
+
+  await store.saveNewOrder(sourceRecord);
+  const before = await store.getOrder('attempt-order');
+  const payloadBefore = JSON.parse(JSON.stringify(before.payload));
+
+  const updated = await store.markOrderServerUploadAttempt('attempt-order', '2026-07-17T08:15:00.000Z');
+
+  assert.equal(updated.server_upload_status, orderStoreModule.SERVER_UPLOAD_STATUSES.uploading);
+  assert.equal(updated.server_upload_attempt_count, 3);
+  assert.equal(updated.last_server_upload_attempt_at, '2026-07-17T08:15:00.000Z');
+  assert.equal(updated.last_server_upload_error, null);
+  assert.equal(updated.sync_status, 'pending');
+  assert.deepEqual(updated.payload, payloadBefore);
+});
+
+test('markOrderServerUploadAttempt fails safely for a missing order', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore();
+
+  await assert.rejects(
+    () => store.markOrderServerUploadAttempt('missing-order'),
+    /could not be found/i
+  );
+});
+
+test('markOrderServerUploadSuccess stores server metadata for created and idempotent uploads while preserving payload, sync_status, production, and tray data', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore();
+
+  await store.saveNewOrder(createRecord({
+    forge_order_uuid: 'success-order',
+    production_status: orderStoreModule.PRODUCTION_STATUSES.readyToPack,
+    current_tray_number: 7,
+    server_upload_attempt_count: 1,
+    last_server_upload_attempt_at: '2026-07-17T08:00:00.000Z',
+    payload: {
+      forge_order_uuid: 'success-order',
+      customer: { full_name: 'Success Customer' },
+      items: [{
+        quantity: 1,
+        completed_quantity: 1,
+        completed_at: '2026-07-17T07:55:00.000Z',
+        production_status: orderStoreModule.ITEM_PRODUCTION_STATUSES.complete
+      }],
+      pricing: { estimated_total_cents: 3000 }
+    }
+  }));
+
+  const createdResult = await store.markOrderServerUploadSuccess('success-order', {
+    forgeOrderUuid: 'success-order',
+    created: true,
+    receivedAt: '2026-07-17T08:30:00.000Z',
+    payloadSha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  }, '2026-07-17T08:30:01.000Z');
+
+  assert.equal(createdResult.server_upload_status, orderStoreModule.SERVER_UPLOAD_STATUSES.stored);
+  assert.equal(createdResult.server_received_at, '2026-07-17T08:30:00.000Z');
+  assert.equal(createdResult.server_payload_sha256, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  assert.equal(createdResult.server_created, true);
+  assert.equal(createdResult.server_upload_attempt_count, 1);
+  assert.equal(createdResult.last_server_upload_error, null);
+  assert.equal(createdResult.sync_status, 'pending');
+  assert.equal(createdResult.production_status, orderStoreModule.PRODUCTION_STATUSES.readyToPack);
+  assert.equal(createdResult.current_tray_number, 7);
+
+  const idempotentResult = await store.markOrderServerUploadSuccess('success-order', {
+    forgeOrderUuid: 'success-order',
+    created: false,
+    receivedAt: '2026-07-17T08:30:00.000Z',
+    payloadSha256: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  }, '2026-07-17T08:31:00.000Z');
+
+  assert.equal(idempotentResult.server_created, false);
+  assert.equal(idempotentResult.server_payload_sha256, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+  assert.equal(idempotentResult.sync_status, 'pending');
+  assert.equal(idempotentResult.current_tray_number, 7);
+});
+
+test('markOrderServerUploadSuccess rejects a mismatched UUID', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore();
+
+  await store.saveNewOrder(createRecord({
+    forge_order_uuid: 'uuid-match-order',
+    payload: {
+      forge_order_uuid: 'uuid-match-order',
+      customer: { full_name: 'UUID Match' },
+      items: [{ quantity: 1 }],
+      pricing: { estimated_total_cents: 3000 }
+    }
+  }));
+
+  await assert.rejects(
+    () => store.markOrderServerUploadSuccess('uuid-match-order', {
+      forgeOrderUuid: 'different-order',
+      created: true,
+      receivedAt: '2026-07-17T08:40:00.000Z',
+      payloadSha256: 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+    }),
+    /does not match/i
+  );
+});
+
+test('markOrderServerUploadFailure records conflict or failed status, stores only safe error details, and preserves payload, sync_status, production, and tray data', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore();
+
+  await store.saveNewOrder(createRecord({
+    forge_order_uuid: 'failure-order',
+    production_status: orderStoreModule.PRODUCTION_STATUSES.inProduction,
+    current_tray_number: 4,
+    server_upload_attempt_count: 2,
+    last_server_upload_attempt_at: '2026-07-17T09:00:00.000Z',
+    payload: {
+      forge_order_uuid: 'failure-order',
+      customer: { full_name: 'Sensitive Customer' },
+      items: [{
+        quantity: 2,
+        completed_quantity: 1,
+        production_status: orderStoreModule.ITEM_PRODUCTION_STATUSES.inProduction
+      }],
+      pricing: { estimated_total_cents: 3000 }
+    }
+  }));
+
+  const conflictResult = await store.markOrderServerUploadFailure('failure-order', {
+    code: 'uuid_conflict',
+    message: 'Sensitive Customer should never persist here'
+  }, '2026-07-17T09:05:00.000Z');
+
+  assert.equal(conflictResult.server_upload_status, orderStoreModule.SERVER_UPLOAD_STATUSES.conflict);
+  assert.deepEqual(conflictResult.last_server_upload_error, {
+    code: 'uuid_conflict',
+    message: 'A different Forge order is already stored on the server for this UUID.'
+  });
+  assert.equal(conflictResult.sync_status, 'pending');
+  assert.equal(conflictResult.production_status, orderStoreModule.PRODUCTION_STATUSES.inProduction);
+  assert.equal(conflictResult.current_tray_number, 4);
+  assert.equal(conflictResult.payload.customer.full_name, 'Sensitive Customer');
+
+  const failedResult = await store.markOrderServerUploadFailure('failure-order', new Error('kmhemenway22@gmail.com raw server body'), '2026-07-17T09:10:00.000Z');
+  assert.equal(failedResult.server_upload_status, orderStoreModule.SERVER_UPLOAD_STATUSES.failed);
+  assert.deepEqual(failedResult.last_server_upload_error, {
+    code: 'server_upload_failed',
+    message: 'Unable to store this order on the Forge server.'
+  });
+  assert.doesNotMatch(JSON.stringify(failedResult.last_server_upload_error), /Sensitive Customer|kmhemenway22@gmail\.com|raw server body/i);
+});
+
 test('assignTrayToOrder updates one order and one tray and creates one active assignment history record', async () => {
   const store = orderStoreModule.createInMemoryOrderStore({
     now: () => new Date('2026-07-16T15:00:00.000Z'),
