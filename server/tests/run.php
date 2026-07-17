@@ -1,0 +1,480 @@
+<?php
+declare(strict_types=1);
+
+require_once dirname(__DIR__) . '/bootstrap.php';
+
+use Forge\Server\OrderConflictException;
+use Forge\Server\OrderHandler;
+use Forge\Server\OrderPayload;
+use Forge\Server\OrderRepositoryInterface;
+use Forge\Server\StorageUnavailableException;
+use Forge\Server\StoreOrderResult;
+
+final class InMemoryOrderRepository implements OrderRepositoryInterface
+{
+    /** @var array<string, array{payload: array, payload_sha256: string, received_at: string}> */
+    private array $records = [];
+    private ?\Throwable $nextFailure = null;
+
+    public function failOnce(\Throwable $failure): void
+    {
+        $this->nextFailure = $failure;
+    }
+
+    public function storeOrder(array $payload, string $canonicalJson, string $payloadSha256, string $receivedAt): StoreOrderResult
+    {
+        if ($this->nextFailure !== null) {
+            $failure = $this->nextFailure;
+            $this->nextFailure = null;
+            throw $failure;
+        }
+
+        $forgeOrderUuid = $payload['forge_order_uuid'];
+        if (!isset($this->records[$forgeOrderUuid])) {
+            $this->records[$forgeOrderUuid] = [
+                'payload' => json_decode($canonicalJson, true, 512, JSON_THROW_ON_ERROR),
+                'payload_sha256' => $payloadSha256,
+                'received_at' => $receivedAt,
+            ];
+
+            return new StoreOrderResult($forgeOrderUuid, true, $receivedAt, $payloadSha256);
+        }
+
+        $existing = $this->records[$forgeOrderUuid];
+        if (hash_equals($existing['payload_sha256'], $payloadSha256)) {
+            return new StoreOrderResult($forgeOrderUuid, false, $existing['received_at'], $existing['payload_sha256']);
+        }
+
+        throw new OrderConflictException('Conflict');
+    }
+
+    public function getStoredPayload(string $forgeOrderUuid): ?array
+    {
+        return $this->records[$forgeOrderUuid]['payload'] ?? null;
+    }
+}
+
+final class TestRunner
+{
+    private int $passed = 0;
+    private int $failed = 0;
+
+    public function run(string $name, callable $test): void
+    {
+        try {
+            $test();
+            $this->passed++;
+            echo "PASS {$name}\n";
+        } catch (\Throwable $exception) {
+            $this->failed++;
+            fwrite(STDERR, "FAIL {$name}: {$exception->getMessage()}\n");
+        }
+    }
+
+    public function finish(): void
+    {
+        echo "\n{$this->passed} passed, {$this->failed} failed\n";
+        exit($this->failed === 0 ? 0 : 1);
+    }
+}
+
+function assertTrue($condition, string $message = 'Assertion failed.'): void
+{
+    if (!$condition) {
+        throw new RuntimeException($message);
+    }
+}
+
+function assertSame($expected, $actual, string $message = 'Values are not identical.'): void
+{
+    if ($expected !== $actual) {
+        throw new RuntimeException($message . ' Expected ' . var_export($expected, true) . ' but received ' . var_export($actual, true) . '.');
+    }
+}
+
+function assertNotContains(string $needle, string $haystack, string $message = 'Unexpected string found.'): void
+{
+    if (strpos($haystack, $needle) !== false) {
+        throw new RuntimeException($message);
+    }
+}
+
+function assertThrows(callable $callback, callable $assertion, string $message = 'Expected exception was not thrown.'): void
+{
+    try {
+        $callback();
+    } catch (\Throwable $exception) {
+        $assertion($exception);
+        return;
+    }
+
+    throw new RuntimeException($message);
+}
+
+function createValidPayload(array $overrides = []): array
+{
+    $payload = [
+        'payload_type' => 'forge_order',
+        'schema_version' => '1.0',
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174000',
+        'forge_order_number' => null,
+        'order_status' => 'submitted',
+        'source' => 'customer_kiosk',
+        'built_at' => '2026-07-17T12:00:00+00:00',
+        'submitted_at' => '2026-07-17T12:00:01+00:00',
+        'device_id' => 'ipad-1',
+        'event' => [
+            'event_id' => 'holiday-market',
+            'event_name' => 'Holiday Market',
+        ],
+        'currency' => 'USD',
+        'customer' => [
+            'full_name' => 'Kyle Hemenway',
+            'email' => 'customer@example.com',
+        ],
+        'fulfillment' => [
+            'method' => 'shipping',
+        ],
+        'items' => [
+            [
+                'line_id' => '123e4567-e89b-42d3-a456-426614174000-line-1',
+                'line_number' => 1,
+                'quantity' => 1,
+                'product_definition_id' => 'tree_ornament',
+                'product_display_name' => 'Tree Ornament',
+                'product_category' => 'ornament',
+                'product_definition_version' => '1.0',
+                'pricing' => [
+                    'mode' => 'fixed',
+                    'final_unit_price_cents' => 2600,
+                ],
+                'configuration_snapshot' => [
+                    'familyName' => 'Hemenway',
+                    'year' => '2026',
+                ],
+                'personalization_order' => [
+                    [
+                        'position' => 1,
+                        'type' => 'person',
+                        'name' => 'Kyle',
+                    ],
+                    [
+                        'position' => 2,
+                        'type' => 'pet',
+                        'name' => 'Scout',
+                        'icon' => 'paw',
+                    ],
+                ],
+                'structured_attributes' => [
+                    'family_name' => 'Hemenway',
+                ],
+                'open_flags' => [],
+                'customer_note' => null,
+                'production_note' => null,
+            ],
+        ],
+        'pricing' => [
+            'estimated_total_cents' => 2600,
+        ],
+        'open_flags' => [],
+        'has_open_flags' => false,
+    ];
+
+    foreach ($overrides as $key => $value) {
+        $payload[$key] = $value;
+    }
+
+    return $payload;
+}
+
+function createHandler(?InMemoryOrderRepository $repository = null): array
+{
+    $repository = $repository ?? new InMemoryOrderRepository();
+    $handler = new OrderHandler(
+        $repository,
+        static function (): DateTimeImmutable {
+            return new DateTimeImmutable('2026-07-17T12:30:00+00:00');
+        }
+    );
+
+    return [$handler, $repository];
+}
+
+$runner = new TestRunner();
+
+$runner->run('valid UUID acceptance', static function (): void {
+    OrderPayload::validatePayload(createValidPayload());
+    assertTrue(true);
+});
+
+$runner->run('invalid UUID rejection', static function (): void {
+    assertThrows(
+        static function (): void {
+            OrderPayload::validatePayload(createValidPayload([
+                'forge_order_uuid' => 'NOT-A-UUID',
+            ]));
+        },
+        static function (\Throwable $exception): void {
+            assertSame('The submitted order is missing required Forge fields.', $exception->getMessage());
+        }
+    );
+});
+
+$runner->run('non-ISO submitted_at rejection', static function (): void {
+    assertThrows(
+        static function (): void {
+            OrderPayload::validatePayload(createValidPayload([
+                'submitted_at' => 'next Tuesday at noon',
+            ]));
+        },
+        static function (\Throwable $exception): void {
+            assertSame('The submitted order is missing required Forge fields.', $exception->getMessage());
+        }
+    );
+});
+
+$runner->run('missing required fields rejection', static function (): void {
+    assertThrows(
+        static function (): void {
+            $payload = createValidPayload();
+            unset($payload['customer']);
+            OrderPayload::validatePayload($payload);
+        },
+        static function (\Throwable $exception): void {
+            assertSame('The submitted order is missing required Forge fields.', $exception->getMessage());
+        }
+    );
+});
+
+$runner->run('empty items rejection', static function (): void {
+    assertThrows(
+        static function (): void {
+            OrderPayload::validatePayload(createValidPayload([
+                'items' => [],
+            ]));
+        },
+        static function (\Throwable $exception): void {
+            assertSame('The submitted order is missing required Forge fields.', $exception->getMessage());
+        }
+    );
+});
+
+$runner->run('oversized-body rejection where testable at handler level', static function (): void {
+    [$handler] = createHandler();
+    $response = $handler->handleRequest(
+        'POST',
+        'application/json',
+        '{}',
+        OrderPayload::MAX_REQUEST_BYTES + 1
+    );
+
+    assertSame(413, $response['statusCode']);
+    assertSame('request_too_large', $response['body']['error']['code']);
+});
+
+$runner->run('canonical object-key ordering produces identical hashes', static function (): void {
+    $left = createValidPayload([
+        'customer' => [
+            'email' => 'customer@example.com',
+            'full_name' => 'Kyle Hemenway',
+        ],
+    ]);
+    $right = createValidPayload([
+        'customer' => [
+            'full_name' => 'Kyle Hemenway',
+            'email' => 'customer@example.com',
+        ],
+    ]);
+
+    assertSame(
+        OrderPayload::hashCanonicalPayload($left),
+        OrderPayload::hashCanonicalPayload($right)
+    );
+});
+
+$runner->run('array-order changes produce different hashes', static function (): void {
+    $left = createValidPayload();
+    $right = createValidPayload([
+        'items' => [
+            array_merge($left['items'][0], [
+                'personalization_order' => [
+                    [
+                        'position' => 1,
+                        'type' => 'pet',
+                        'name' => 'Scout',
+                        'icon' => 'paw',
+                    ],
+                    [
+                        'position' => 2,
+                        'type' => 'person',
+                        'name' => 'Kyle',
+                    ],
+                ],
+            ]),
+        ],
+    ]);
+
+    assertTrue(
+        OrderPayload::hashCanonicalPayload($left) !== OrderPayload::hashCanonicalPayload($right),
+        'Changing array order should change the payload hash.'
+    );
+});
+
+$runner->run('personalization changes produce different hashes', static function (): void {
+    $left = createValidPayload();
+    $right = createValidPayload([
+        'items' => [
+            array_merge($left['items'][0], [
+                'personalization_order' => [
+                    [
+                        'position' => 1,
+                        'type' => 'person',
+                        'name' => 'Meagan',
+                    ],
+                    [
+                        'position' => 2,
+                        'type' => 'pet',
+                        'name' => 'Scout',
+                        'icon' => 'paw',
+                    ],
+                ],
+            ]),
+        ],
+    ]);
+
+    assertTrue(
+        OrderPayload::hashCanonicalPayload($left) !== OrderPayload::hashCanonicalPayload($right),
+        'Changing personalization data should change the payload hash.'
+    );
+});
+
+$runner->run('first create returns created true', static function (): void {
+    [$handler] = createHandler();
+    $response = $handler->handleRequest(
+        'POST',
+        'application/json',
+        json_encode(createValidPayload(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+    );
+
+    assertSame(201, $response['statusCode']);
+    assertSame(true, $response['body']['data']['created']);
+});
+
+$runner->run('identical UUID and payload returns created false', static function (): void {
+    [$handler] = createHandler();
+    $body = json_encode(createValidPayload(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+    $first = $handler->handleRequest('POST', 'application/json', $body);
+    $second = $handler->handleRequest('POST', 'application/json', $body);
+
+    assertSame(201, $first['statusCode']);
+    assertSame(200, $second['statusCode']);
+    assertSame(false, $second['body']['data']['created']);
+});
+
+$runner->run('identical retry returns the original received_at value and leaves the stored record unchanged', static function (): void {
+    [$handler, $repository] = createHandler();
+    $payload = createValidPayload();
+    $body = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+    $first = $handler->handleRequest('POST', 'application/json', $body);
+    $firstReceivedAt = $first['body']['data']['received_at'];
+    $storedAfterFirst = $repository->getStoredPayload($payload['forge_order_uuid']);
+
+    $second = $handler->handleRequest('POST', 'application/json', $body);
+    $storedAfterSecond = $repository->getStoredPayload($payload['forge_order_uuid']);
+
+    assertSame(201, $first['statusCode']);
+    assertSame(200, $second['statusCode']);
+    assertSame(false, $second['body']['data']['created']);
+    assertSame($firstReceivedAt, $second['body']['data']['received_at']);
+    assertSame($storedAfterFirst, $storedAfterSecond);
+});
+
+$runner->run('same UUID with different payload produces uuid_conflict', static function (): void {
+    [$handler] = createHandler();
+    $first = json_encode(createValidPayload(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $second = json_encode(createValidPayload([
+        'items' => [
+            array_merge(createValidPayload()['items'][0], [
+                'personalization_order' => [
+                    [
+                        'position' => 1,
+                        'type' => 'person',
+                        'name' => 'Changed Name',
+                    ],
+                ],
+            ]),
+        ],
+    ]), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+    $handler->handleRequest('POST', 'application/json', $first);
+    $response = $handler->handleRequest('POST', 'application/json', $second);
+
+    assertSame(409, $response['statusCode']);
+    assertSame('uuid_conflict', $response['body']['error']['code']);
+});
+
+$runner->run('existing payload is not overwritten during a conflict', static function (): void {
+    [$handler, $repository] = createHandler();
+    $originalPayload = createValidPayload();
+    $changedPayload = createValidPayload([
+        'customer' => [
+            'full_name' => 'Changed Customer',
+            'email' => 'changed@example.com',
+        ],
+    ]);
+
+    $handler->handleRequest('POST', 'application/json', json_encode($originalPayload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    $handler->handleRequest('POST', 'application/json', json_encode($changedPayload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+
+    $storedPayload = $repository->getStoredPayload($originalPayload['forge_order_uuid']);
+    assertSame('Kyle Hemenway', $storedPayload['customer']['full_name']);
+});
+
+$runner->run('safe errors do not expose payload contents or exception details', static function (): void {
+    [$handler, $repository] = createHandler();
+    $repository->failOnce(new StorageUnavailableException('mysql://root:secret@db-host.internal'));
+    $response = $handler->handleRequest(
+        'POST',
+        'application/json',
+        json_encode(createValidPayload([
+            'customer' => [
+                'full_name' => 'Kyle Hemenway',
+                'email' => 'hidden@example.com',
+            ],
+        ]), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+    );
+
+    $encodedResponse = json_encode($response['body'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    assertSame(503, $response['statusCode']);
+    assertNotContains('hidden@example.com', $encodedResponse);
+    assertNotContains('mysql://root:secret@db-host.internal', $encodedResponse);
+});
+
+$runner->run('method-not-allowed behavior', static function (): void {
+    [$handler] = createHandler();
+    $response = $handler->handleRequest('GET', 'application/json', '');
+
+    assertSame(405, $response['statusCode']);
+    assertSame('POST', $response['headers']['Allow']);
+    assertSame('method_not_allowed', $response['body']['error']['code']);
+});
+
+$runner->run('unsupported-content-type behavior', static function (): void {
+    [$handler] = createHandler();
+    $response = $handler->handleRequest('POST', 'text/plain', '{}');
+
+    assertSame(415, $response['statusCode']);
+    assertSame('unsupported_media_type', $response['body']['error']['code']);
+});
+
+$runner->run('invalid-JSON behavior', static function (): void {
+    [$handler] = createHandler();
+    $response = $handler->handleRequest('POST', 'application/json', '{"forge_order_uuid": ');
+
+    assertSame(422, $response['statusCode']);
+    assertSame('invalid_json', $response['body']['error']['code']);
+});
+
+$runner->finish();
