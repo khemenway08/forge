@@ -20,7 +20,22 @@ No credentials belong in Git.
 
 ## Document Root
 
-`public/` must remain the web document root. The files under `server/` are intended to stay outside the browser-addressable document root when deployed correctly.
+`public/` contents are deployed to the Forge document root. The files under `server/` must stay outside the browser-addressable `public_html` document root when deployed correctly.
+
+For deployment, use a layout similar to:
+
+```text
+<domain-root>/public_html/forge
+<domain-root>/forge_server_test
+```
+
+The private server bootstrap may be resolved through:
+
+- `FORGE_SERVER_ROOT` pointing at the private server directory
+- The current local repository sibling layout
+- A private sibling test directory such as `<domain-root>/forge_server_test`
+
+This deployment path remains for non-production testing only.
 
 ## Apply the Migration
 
