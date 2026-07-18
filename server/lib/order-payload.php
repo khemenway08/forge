@@ -133,7 +133,7 @@ final class OrderPayload
 
     public static function databaseDateTimeToIso8601(string $databaseDateTime): string
     {
-        $date = self::createDateTime($databaseDateTime);
+        $date = self::createDatabaseDateTime($databaseDateTime);
         return $date->setTimezone(new DateTimeZone('UTC'))->format(DateTimeInterface::ATOM);
     }
 
@@ -195,6 +195,38 @@ final class OrderPayload
         }
 
         return new DateTimeImmutable($normalized, new DateTimeZone('UTC'));
+    }
+
+    private static function createDatabaseDateTime($value): DateTimeImmutable
+    {
+        $normalized = self::trimmedString($value);
+        if ($normalized === '') {
+            throw new \InvalidArgumentException('A valid database date-time value is required.');
+        }
+
+        $utc = new DateTimeZone('UTC');
+        foreach (['Y-m-d H:i:s.u', 'Y-m-d H:i:s'] as $format) {
+            $date = DateTimeImmutable::createFromFormat('!' . $format, $normalized, $utc);
+            $lastErrors = DateTimeImmutable::getLastErrors();
+
+            if ($date === false) {
+                continue;
+            }
+
+            if (is_array($lastErrors)) {
+                if (($lastErrors['warning_count'] ?? 0) !== 0 || ($lastErrors['error_count'] ?? 0) !== 0) {
+                    continue;
+                }
+            }
+
+            if ($date->format($format) !== $normalized) {
+                continue;
+            }
+
+            return $date;
+        }
+
+        throw new \InvalidArgumentException('A valid database date-time value is required.');
     }
 
     private static function trimmedString($value): string

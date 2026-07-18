@@ -54,6 +54,42 @@ final class InMemoryOrderRepository implements OrderRepositoryInterface
     }
 }
 
+final class DatabaseTimestampOrderRepository implements OrderRepositoryInterface
+{
+    /** @var array<string, array{payload: array, payload_sha256: string, received_at_database: string, received_at_iso8601: string}> */
+    private array $records = [];
+
+    public function storeOrder(array $payload, string $canonicalJson, string $payloadSha256, string $receivedAt): StoreOrderResult
+    {
+        $forgeOrderUuid = $payload['forge_order_uuid'];
+        $receivedAtIso8601 = OrderPayload::normalizeIso8601Utc($receivedAt);
+        $receivedAtDatabase = OrderPayload::normalizeDatabaseDateTime($receivedAtIso8601);
+
+        if (!isset($this->records[$forgeOrderUuid])) {
+            $this->records[$forgeOrderUuid] = [
+                'payload' => json_decode($canonicalJson, true, 512, JSON_THROW_ON_ERROR),
+                'payload_sha256' => $payloadSha256,
+                'received_at_database' => $receivedAtDatabase,
+                'received_at_iso8601' => $receivedAtIso8601,
+            ];
+
+            return new StoreOrderResult($forgeOrderUuid, true, $receivedAtIso8601, $payloadSha256);
+        }
+
+        $existing = $this->records[$forgeOrderUuid];
+        if (hash_equals($existing['payload_sha256'], $payloadSha256)) {
+            return new StoreOrderResult(
+                $forgeOrderUuid,
+                false,
+                OrderPayload::databaseDateTimeToIso8601($existing['received_at_database']),
+                $existing['payload_sha256']
+            );
+        }
+
+        throw new OrderConflictException('Conflict');
+    }
+}
+
 final class TestRunner
 {
     private int $passed = 0;
@@ -273,6 +309,44 @@ $runner->run('oversized-body rejection where testable at handler level', static 
     assertSame('request_too_large', $response['body']['error']['code']);
 });
 
+$runner->run('database DATETIME(6) converts to ISO-8601 UTC correctly', static function (): void {
+    assertSame(
+        '2026-07-18T12:27:39+00:00',
+        OrderPayload::databaseDateTimeToIso8601('2026-07-18 12:27:39.123456')
+    );
+});
+
+$runner->run('database DATETIME without microseconds converts to ISO-8601 UTC correctly', static function (): void {
+    assertSame(
+        '2026-07-18T12:27:39+00:00',
+        OrderPayload::databaseDateTimeToIso8601('2026-07-18 12:27:39')
+    );
+});
+
+$runner->run('malformed database timestamp is rejected safely', static function (): void {
+    assertThrows(
+        static function (): void {
+            OrderPayload::databaseDateTimeToIso8601('2026-07-18T12:27:39Z trailing');
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof InvalidArgumentException);
+            assertSame('A valid database date-time value is required.', $exception->getMessage());
+        }
+    );
+});
+
+$runner->run('incoming ISO-8601 timestamp validation remains strict', static function (): void {
+    assertThrows(
+        static function (): void {
+            OrderPayload::normalizeIso8601Utc('2026-07-18 12:27:39');
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof InvalidArgumentException);
+            assertSame('A valid ISO-8601 date-time value is required.', $exception->getMessage());
+        }
+    );
+});
+
 $runner->run('canonical object-key ordering produces identical hashes', static function (): void {
     $left = createValidPayload([
         'customer' => [
@@ -390,6 +464,19 @@ $runner->run('identical retry returns the original received_at value and leaves 
     assertSame(false, $second['body']['data']['created']);
     assertSame($firstReceivedAt, $second['body']['data']['received_at']);
     assertSame($storedAfterFirst, $storedAfterSecond);
+});
+
+$runner->run('duplicate identical order returns HTTP 200 created false and preserves the original database-backed received_at', static function (): void {
+    [$handler] = createHandler(new DatabaseTimestampOrderRepository());
+    $body = json_encode(createValidPayload(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+    $first = $handler->handleRequest('POST', 'application/json', $body);
+    $second = $handler->handleRequest('POST', 'application/json', $body);
+
+    assertSame(201, $first['statusCode']);
+    assertSame(200, $second['statusCode']);
+    assertSame(false, $second['body']['data']['created']);
+    assertSame($first['body']['data']['received_at'], $second['body']['data']['received_at']);
 });
 
 $runner->run('same UUID with different payload produces uuid_conflict', static function (): void {
