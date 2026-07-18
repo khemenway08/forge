@@ -55,13 +55,20 @@ final class OrderHandler
     private OrderRepositoryInterface $repository;
     /** @var callable */
     private $clock;
+    /** @var null|callable */
+    private $unexpectedExceptionReporter;
 
-    public function __construct(OrderRepositoryInterface $repository, ?callable $clock = null)
+    public function __construct(
+        OrderRepositoryInterface $repository,
+        ?callable $clock = null,
+        ?callable $unexpectedExceptionReporter = null
+    )
     {
         $this->repository = $repository;
         $this->clock = $clock ?? static function (): \DateTimeImmutable {
             return new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
         };
+        $this->unexpectedExceptionReporter = $unexpectedExceptionReporter;
     }
 
     public function handleRequest(string $method, ?string $contentType, string $rawBody, ?int $contentLength = null): array
@@ -114,6 +121,7 @@ final class OrderHandler
                 ),
             ];
         } catch (Throwable $exception) {
+            $this->reportUnexpectedException($exception);
             return [
                 'statusCode' => 500,
                 'headers' => [],
@@ -122,6 +130,19 @@ final class OrderHandler
                     'The Forge server could not store this order.'
                 ),
             ];
+        }
+    }
+
+    private function reportUnexpectedException(Throwable $exception): void
+    {
+        if (!is_callable($this->unexpectedExceptionReporter)) {
+            return;
+        }
+
+        try {
+            ($this->unexpectedExceptionReporter)($exception);
+        } catch (Throwable $reportingFailure) {
+            unset($reportingFailure);
         }
     }
 

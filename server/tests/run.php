@@ -187,14 +187,15 @@ function createValidPayload(array $overrides = []): array
     return $payload;
 }
 
-function createHandler(?InMemoryOrderRepository $repository = null): array
+function createHandler(?InMemoryOrderRepository $repository = null, ?callable $unexpectedExceptionReporter = null): array
 {
     $repository = $repository ?? new InMemoryOrderRepository();
     $handler = new OrderHandler(
         $repository,
         static function (): DateTimeImmutable {
             return new DateTimeImmutable('2026-07-17T12:30:00+00:00');
-        }
+        },
+        $unexpectedExceptionReporter
     );
 
     return [$handler, $repository];
@@ -450,6 +451,129 @@ $runner->run('safe errors do not expose payload contents or exception details', 
     assertSame(503, $response['statusCode']);
     assertNotContains('hidden@example.com', $encodedResponse);
     assertNotContains('mysql://root:secret@db-host.internal', $encodedResponse);
+});
+
+$runner->run('unexpected exception invokes reporter exactly once with the original throwable', static function (): void {
+    $reportCount = 0;
+    $reportedException = null;
+    $repository = new InMemoryOrderRepository();
+    $failure = new RuntimeException('Unexpected repository failure');
+    $repository->failOnce($failure);
+
+    [$handler] = createHandler(
+        $repository,
+        static function (\Throwable $exception) use (&$reportCount, &$reportedException): void {
+            $reportCount++;
+            $reportedException = $exception;
+        }
+    );
+
+    $response = $handler->handleRequest(
+        'POST',
+        'application/json',
+        json_encode(createValidPayload(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+    );
+
+    assertSame(500, $response['statusCode']);
+    assertSame('server_error', $response['body']['error']['code']);
+    assertSame(1, $reportCount);
+    assertTrue($reportedException === $failure, 'Reporter should receive the original throwable instance.');
+});
+
+$runner->run('reporter failures do not change the safe 500 response', static function (): void {
+    $reportCount = 0;
+    $repository = new InMemoryOrderRepository();
+    $repository->failOnce(new RuntimeException('Unexpected repository failure'));
+
+    [$handler] = createHandler(
+        $repository,
+        static function (\Throwable $exception) use (&$reportCount): void {
+            $reportCount++;
+            throw new RuntimeException('Reporter failure');
+        }
+    );
+
+    $response = $handler->handleRequest(
+        'POST',
+        'application/json',
+        json_encode(createValidPayload(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+    );
+
+    assertSame(500, $response['statusCode']);
+    assertSame('server_error', $response['body']['error']['code']);
+    assertSame('The Forge server could not store this order.', $response['body']['error']['message']);
+    assertSame(1, $reportCount);
+});
+
+$runner->run('validation errors do not invoke reporter', static function (): void {
+    $reportCount = 0;
+    [$handler] = createHandler(
+        null,
+        static function (\Throwable $exception) use (&$reportCount): void {
+            $reportCount++;
+        }
+    );
+
+    $response = $handler->handleRequest('POST', 'application/json', '{"forge_order_uuid": ');
+
+    assertSame(422, $response['statusCode']);
+    assertSame('invalid_json', $response['body']['error']['code']);
+    assertSame(0, $reportCount);
+});
+
+$runner->run('storage unavailable exceptions do not invoke reporter', static function (): void {
+    $reportCount = 0;
+    $repository = new InMemoryOrderRepository();
+    $repository->failOnce(new StorageUnavailableException('Storage unavailable'));
+
+    [$handler] = createHandler(
+        $repository,
+        static function (\Throwable $exception) use (&$reportCount): void {
+            $reportCount++;
+        }
+    );
+
+    $response = $handler->handleRequest(
+        'POST',
+        'application/json',
+        json_encode(createValidPayload(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+    );
+
+    assertSame(503, $response['statusCode']);
+    assertSame('storage_unavailable', $response['body']['error']['code']);
+    assertSame(0, $reportCount);
+});
+
+$runner->run('order conflicts do not invoke reporter', static function (): void {
+    $reportCount = 0;
+    [$handler] = createHandler(
+        null,
+        static function (\Throwable $exception) use (&$reportCount): void {
+            $reportCount++;
+        }
+    );
+
+    $first = json_encode(createValidPayload(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $second = json_encode(createValidPayload([
+        'items' => [
+            array_merge(createValidPayload()['items'][0], [
+                'personalization_order' => [
+                    [
+                        'position' => 1,
+                        'type' => 'person',
+                        'name' => 'Changed Name',
+                    ],
+                ],
+            ]),
+        ],
+    ]), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+    $handler->handleRequest('POST', 'application/json', $first);
+    $response = $handler->handleRequest('POST', 'application/json', $second);
+
+    assertSame(409, $response['statusCode']);
+    assertSame('uuid_conflict', $response['body']['error']['code']);
+    assertSame(0, $reportCount);
 });
 
 $runner->run('method-not-allowed behavior', static function (): void {

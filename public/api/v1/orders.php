@@ -30,7 +30,11 @@ try {
         throw new RuntimeException('Forge bootstrap is unavailable.');
     }
 
-    $handler = \Forge\Server\buildOrderHandlerFromEnvironment();
+    $handler = \Forge\Server\buildOrderHandlerFromEnvironment(
+        static function (\Throwable $exception) use ($bootstrapPath): void {
+            forge_log_unexpected_exception($exception, $bootstrapPath);
+        }
+    );
     $rawBody = file_get_contents('php://input');
     $response = $handler->handleRequest(
         $_SERVER['REQUEST_METHOD'] ?? 'GET',

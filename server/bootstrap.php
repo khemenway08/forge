@@ -9,12 +9,12 @@ require_once __DIR__ . '/lib/order-payload.php';
 require_once __DIR__ . '/lib/database.php';
 require_once __DIR__ . '/lib/order-repository.php';
 
-function buildOrderHandlerFromEnvironment(): OrderHandler
+function buildOrderHandlerFromEnvironment(?callable $unexpectedExceptionReporter = null): OrderHandler
 {
     $pdo = DatabaseConnectionFactory::createFromEnvironment(loadPrivateDatabaseConfig());
     $repository = new PdoOrderRepository($pdo);
 
-    return new OrderHandler($repository);
+    return new OrderHandler($repository, null, $unexpectedExceptionReporter);
 }
 
 /**
