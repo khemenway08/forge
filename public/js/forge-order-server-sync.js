@@ -8,6 +8,15 @@
   }
 }(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const SAFE_MESSAGE_MAX_LENGTH = 160;
+  const NON_RETRYABLE_ERROR_CODES = new Set([
+    'invalid_order',
+    'invalid_json',
+    'request_too_large',
+    'unsupported_media_type',
+    'method_not_allowed',
+    'invalid_request',
+    'invalid_record'
+  ]);
   const SAFE_ERROR_MESSAGES = {
     invalid_request: 'A valid Forge order UUID is required.',
     not_found: 'That saved order could not be found.',
@@ -151,6 +160,134 @@
     };
   }
 
+  function createAutomaticOrderSyncCoordinator(options = {}) {
+    const orderStore = options.orderStore;
+    const syncService = options.syncService;
+    const eventTarget = options.eventTarget || null;
+    const location = options.location || (typeof globalThis !== 'undefined' ? globalThis.location : null);
+    const enabled = options.enabled === undefined
+      ? isAutomaticOrderSyncAllowed(location)
+      : Boolean(options.enabled);
+    let started = false;
+    let activeRun = null;
+    let rerunRequested = false;
+    let fullScanRequested = false;
+    const pendingOrderUuids = new Set();
+    const boundOnlineHandler = () => {
+      requestPendingSync();
+    };
+
+    if (!orderStore || typeof orderStore.listOrders !== 'function') {
+      throw new Error('Forge automatic order sync requires an orderStore with listOrders().');
+    }
+    if (!syncService || typeof syncService.syncOrderByUuid !== 'function') {
+      throw new Error('Forge automatic order sync requires a syncService with syncOrderByUuid().');
+    }
+
+    function start() {
+      if (started) {
+        return enabled ? requestPendingSync() : Promise.resolve(createSkippedResult('disabled'));
+      }
+      started = true;
+      if (!enabled) {
+        return Promise.resolve(createSkippedResult('disabled'));
+      }
+      if (eventTarget && typeof eventTarget.addEventListener === 'function') {
+        eventTarget.addEventListener('online', boundOnlineHandler);
+      }
+      return requestPendingSync();
+    }
+
+    function requestSyncForOrder(forgeOrderUuid) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      if (!enabled) {
+        return Promise.resolve(createSkippedResult('disabled'));
+      }
+      if (!orderUuid) {
+        return Promise.resolve(createSkippedResult('invalid_request'));
+      }
+      pendingOrderUuids.add(orderUuid);
+      return scheduleRun();
+    }
+
+    function requestPendingSync() {
+      if (!enabled) {
+        return Promise.resolve(createSkippedResult('disabled'));
+      }
+      fullScanRequested = true;
+      return scheduleRun();
+    }
+
+    function scheduleRun() {
+      if (activeRun) {
+        rerunRequested = true;
+        return activeRun;
+      }
+
+      activeRun = runSyncLoop().finally(() => {
+        activeRun = null;
+      });
+      return activeRun;
+    }
+
+    async function runSyncLoop() {
+      let lastResult = createSkippedResult('empty');
+
+      do {
+        rerunRequested = false;
+        const orderUuids = await collectRequestedOrderUuids();
+        if (orderUuids.length === 0) {
+          lastResult = createSkippedResult('empty');
+          continue;
+        }
+
+        const results = [];
+        for (const orderUuid of orderUuids) {
+          results.push(await syncService.syncOrderByUuid(orderUuid));
+        }
+        lastResult = {
+          ok: results.every((result) => result && result.ok !== false),
+          processedCount: results.length,
+          results
+        };
+      } while (rerunRequested || fullScanRequested || pendingOrderUuids.size > 0);
+
+      return lastResult;
+    }
+
+    async function collectRequestedOrderUuids() {
+      const explicitOrderUuids = [...pendingOrderUuids];
+      pendingOrderUuids.clear();
+
+      const orderUuids = new Set(explicitOrderUuids);
+      if (fullScanRequested) {
+        fullScanRequested = false;
+        let records = [];
+        try {
+          records = await orderStore.listOrders();
+        } catch {
+          records = [];
+        }
+        records
+          .filter((record) => isOrderEligibleForAutomaticSync(record))
+          .forEach((record) => {
+            const orderUuid = asTrimmedString(record?.forge_order_uuid);
+            if (orderUuid) {
+              orderUuids.add(orderUuid);
+            }
+          });
+      }
+
+      return [...orderUuids];
+    }
+
+    return {
+      start,
+      requestPendingSync,
+      requestSyncForOrder
+    };
+  }
+
   function isStoredRecordComplete(record) {
     return asTrimmedString(record?.server_upload_status) === 'stored'
       && typeof record?.server_created === 'boolean'
@@ -199,7 +336,65 @@
     return value == null ? '' : String(value).trim();
   }
 
+  function isAutomaticOrderSyncAllowed(location) {
+    const protocol = asTrimmedString(location?.protocol).toLowerCase();
+    const hostname = normalizeHostname(location?.hostname);
+
+    if (protocol !== 'https:') {
+      return false;
+    }
+
+    if (!hostname) {
+      return false;
+    }
+
+    return !isLocalDevelopmentHostname(hostname);
+  }
+
+  function isOrderEligibleForAutomaticSync(record) {
+    const serverUploadStatus = asTrimmedString(record?.server_upload_status).toLowerCase() || 'pending';
+    if (serverUploadStatus === 'stored' || serverUploadStatus === 'conflict') {
+      return false;
+    }
+
+    if (serverUploadStatus === 'failed') {
+      return isRetryableServerUploadErrorCode(asTrimmedString(record?.last_server_upload_error?.code).toLowerCase());
+    }
+
+    return serverUploadStatus === 'pending' || serverUploadStatus === 'uploading';
+  }
+
+  function isRetryableServerUploadErrorCode(code) {
+    const normalizedCode = asTrimmedString(code).toLowerCase();
+    if (!normalizedCode) {
+      return true;
+    }
+    return !NON_RETRYABLE_ERROR_CODES.has(normalizedCode) && normalizedCode !== 'uuid_conflict';
+  }
+
+  function normalizeHostname(hostname) {
+    return asTrimmedString(hostname).toLowerCase().replace(/^\[|\]$/g, '');
+  }
+
+  function isLocalDevelopmentHostname(hostname) {
+    return hostname === 'localhost'
+      || hostname === '127.0.0.1'
+      || hostname === '::1'
+      || hostname.endsWith('.local');
+  }
+
+  function createSkippedResult(reason) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: asTrimmedString(reason) || 'skipped'
+    };
+  }
+
   return {
-    createOrderServerSyncService
+    createAutomaticOrderSyncCoordinator,
+    createOrderServerSyncService,
+    isAutomaticOrderSyncAllowed,
+    isOrderEligibleForAutomaticSync
   };
 }));

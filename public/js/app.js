@@ -62,7 +62,9 @@ const discardPanels = [...document.querySelectorAll('[data-discard-panel]')];
 const debugOrderToolContainers = [...document.querySelectorAll('[data-debug-order-tools]')];
 const forgeProductCatalog = globalThis.ForgeProductCatalog;
 const forgeOrderPayloadPreview = globalThis.ForgeOrderPayloadPreview;
+const forgeApiClient = globalThis.ForgeApiClient;
 const forgeOrderStore = globalThis.ForgeOrderStore;
+const forgeOrderServerSync = globalThis.ForgeOrderServerSync;
 const forgeOrderSubmission = globalThis.ForgeOrderSubmission;
 const forgeLocalOrdersQueue = globalThis.ForgeLocalOrdersQueue;
 const storageKey = 'forge-tree-ornament-draft';
@@ -129,6 +131,14 @@ if (!forgeOrderPayloadPreview) {
 
 if (!forgeOrderStore) {
   throw new Error('Forge order store helpers failed to load before app.js.');
+}
+
+if (!forgeApiClient) {
+  throw new Error('Forge API client failed to load before app.js.');
+}
+
+if (!forgeOrderServerSync) {
+  throw new Error('Forge order server sync helpers failed to load before app.js.');
 }
 
 if (!forgeOrderSubmission) {
@@ -596,6 +606,17 @@ let staffPackingDialog = null;
 let lastStaffPackingFocusTarget = null;
 const payloadPreviewContextStore = forgeOrderPayloadPreview.createPayloadPreviewContextStore();
 const orderStore = forgeOrderStore.createOrderStore();
+const orderSyncApiClient = forgeApiClient.createForgeApiClient();
+const orderSyncService = forgeOrderServerSync.createOrderServerSyncService({
+  orderStore,
+  apiClient: orderSyncApiClient
+});
+const automaticOrderSync = forgeOrderServerSync.createAutomaticOrderSyncCoordinator({
+  orderStore,
+  syncService: orderSyncService,
+  eventTarget: window,
+  location: window.location
+});
 const submissionContextManager = forgeOrderSubmission.createSubmissionContextManager({
   storage: localStorage
 });
@@ -604,8 +625,12 @@ const completionReceiptManager = forgeOrderSubmission.createCompletionReceiptMan
 });
 const orderSubmissionService = forgeOrderSubmission.createOrderSubmissionService({
   orderStore,
-  contextManager: submissionContextManager
+  contextManager: submissionContextManager,
+  onRecordSaved(record) {
+    automaticOrderSync.requestSyncForOrder(record?.forge_order_uuid || '');
+  }
 });
+automaticOrderSync.start();
 
 function getProductConfig(productDefinitionId = draft.productDefinitionId) {
   const resolvedProductDefinitionId = resolveConfiguredProductDefinitionId(productDefinitionId);

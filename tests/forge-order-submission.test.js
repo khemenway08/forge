@@ -110,7 +110,8 @@ function createService(options = {}) {
     orderStore,
     contextManager,
     buildForgeOrderPayload,
-    now: () => new Date(nowValues.length > 1 ? nowValues.shift() : nowValues[0])
+    now: () => new Date(nowValues.length > 1 ? nowValues.shift() : nowValues[0]),
+    onRecordSaved: options.onRecordSaved
   });
 
   return {
@@ -148,6 +149,58 @@ test('successful submission saves one immutable local record with a normalized p
   assert.equal(savedRecord.payload.order_status, 'submitted');
   assert.equal(savedRecord.payload.fulfillment.shipping_address.address_1, '123 Main Street');
   assert.deepEqual(savedRecord.payload.items[0].personalization_order.map((entry) => entry.name), ['Kyle', 'Scout']);
+});
+
+test('successful local save triggers a background sync request with the saved record uuid', async () => {
+  let syncedUuid = '';
+  let syncCallCount = 0;
+  const { service } = createService({
+    onRecordSaved(record) {
+      syncCallCount += 1;
+      syncedUuid = record && record.forge_order_uuid;
+    }
+  });
+
+  const result = await service.submitOrder({
+    activeOrderSessionId: 'order-session-123',
+    orderState: createOrderState([createItem()])
+  });
+
+  await Promise.resolve();
+
+  assert.equal(result.ok, true);
+  assert.equal(syncCallCount, 1);
+  assert.equal(syncedUuid, 'submission-uuid-1');
+});
+
+test('submission success is not blocked by a pending background sync request and upload failures do not affect the local save result', async () => {
+  let releaseSync;
+  let syncCallCount = 0;
+  const syncStarted = new Promise((resolve) => {
+    releaseSync = resolve;
+  });
+  const { service, orderStore } = createService({
+    onRecordSaved() {
+      syncCallCount += 1;
+      return syncStarted.then(() => {
+        throw new Error('network failure');
+      });
+    }
+  });
+
+  const result = await service.submitOrder({
+    activeOrderSessionId: 'order-session-123',
+    orderState: createOrderState([createItem()])
+  });
+  const savedRecord = await orderStore.getOrder('submission-uuid-1');
+
+  assert.equal(result.ok, true);
+  assert.equal(syncCallCount, 1);
+  assert.equal(savedRecord.forge_order_uuid, 'submission-uuid-1');
+
+  releaseSync();
+  await Promise.resolve();
+  await Promise.resolve();
 });
 
 test('repeated sequential and concurrent submissions reuse the same uuid and do not overwrite the original record', async () => {

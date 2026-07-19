@@ -113,6 +113,7 @@
     const contextManager = options.contextManager || createSubmissionContextManager({
       storage: typeof localStorage !== 'undefined' ? localStorage : null
     });
+    const onRecordSaved = typeof options.onRecordSaved === 'function' ? options.onRecordSaved : null;
     const getNow = typeof options.now === 'function' ? options.now : () => new Date();
     const inFlightSubmissions = new Map();
 
@@ -197,6 +198,9 @@
         };
 
         const saveResult = await orderStore.saveNewOrder(record);
+        if (saveResult && saveResult.wasInserted && onRecordSaved) {
+          queueBackgroundRecordSaved(onRecordSaved, saveResult.record);
+        }
         return {
           ok: true,
           duplicatePrevented: Boolean(saveResult.duplicatePrevented),
@@ -210,6 +214,12 @@
           error
         };
       }
+    }
+
+    function queueBackgroundRecordSaved(callback, record) {
+      Promise.resolve()
+        .then(() => callback(deepCloneValue(record)))
+        .catch(() => {});
     }
 
     return {
