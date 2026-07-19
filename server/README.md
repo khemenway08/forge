@@ -15,10 +15,19 @@ The server-side order-storage foundation reads database configuration only from:
 - `FORGE_DB_DSN`
 - `FORGE_DB_USER`
 - `FORGE_DB_PASSWORD`
+- `FORGE_STAFF_PIN_HASH`
 
 No credentials belong in Git.
 
 Environment variables remain the preferred configuration source whenever the hosting environment supports them.
+
+`FORGE_STAFF_PIN_HASH` must contain a `password_hash()` output for the approved shared Staff PIN. The plain-text PIN must never be stored in Git, browser code, screenshots, or public API responses.
+
+Private config placeholder:
+
+```php
+'FORGE_STAFF_PIN_HASH' => '$2y$...replace-with-password-hash...',
+```
 
 For manual shared-hosting deployment, a private `config.php` fallback is also supported.
 Environment variables take precedence over `config.php` values.
@@ -91,3 +100,34 @@ curl -i \
 ```
 
 Production deployment is not approved yet.
+
+## Staff Authentication Foundation
+
+The shared Staff PIN foundation uses:
+
+- PHP sessions
+- `HttpOnly` session cookies
+- `Secure` cookies when the request is HTTPS
+- `SameSite=Strict` because the hosted Forge app and API are same-site and do not require cross-site staff login flows
+- `password_verify()` against the private `FORGE_STAFF_PIN_HASH`
+
+Authenticated staff endpoints currently include:
+
+- `POST /api/v1/staff/login.php`
+- `POST /api/v1/staff/logout.php`
+- `GET /api/v1/staff/session.php`
+- `GET /api/v1/staff/orders.php`
+
+The staff orders endpoint is intentionally not public and always requires an authenticated session.
+
+## Safe Hostinger Hash Generation
+
+Generate the staff PIN hash interactively on Hostinger without placing the chosen PIN directly into shell history:
+
+```bash
+read -s -p "Staff PIN: " FORGE_PIN; echo
+FORGE_PIN="$FORGE_PIN" php -r 'echo password_hash(getenv("FORGE_PIN"), PASSWORD_DEFAULT), PHP_EOL;'
+unset FORGE_PIN
+```
+
+Copy only the resulting hash into the private server `config.php` or private environment configuration. Do not store the plain-text PIN in shell scripts, Git, browser code, or screenshots.

@@ -799,4 +799,119 @@ $runner->run('safe storage exceptions do not expose configuration values', stati
     );
 });
 
+$runner->run('private server config preserves the approved staff pin hash key', static function (): void {
+    $config = \Forge\Server\normalizePrivateServerConfig([
+        'FORGE_DB_DSN' => 'mysql:host=localhost;dbname=fallback_db;charset=utf8mb4',
+        'FORGE_DB_USER' => 'fallback_user',
+        'FORGE_DB_PASSWORD' => 'fallback_password',
+        'FORGE_STAFF_PIN_HASH' => '$2y$10$examplehashvalue',
+        'UNAPPROVED_KEY' => 'ignored',
+    ]);
+
+    assertSame('$2y$10$examplehashvalue', $config['FORGE_STAFF_PIN_HASH']);
+    assertTrue(!array_key_exists('UNAPPROVED_KEY', $config));
+});
+
+$runner->run('staff pin hash resolves from environment or fallback config', static function (): void {
+    $resolvedFromEnvironment = \Forge\Server\resolveStaffPinHash(
+        ['FORGE_STAFF_PIN_HASH' => '$2y$10$envhashvalue'],
+        ['FORGE_STAFF_PIN_HASH' => '$2y$10$fallbackhashvalue']
+    );
+    $resolvedFromFallback = \Forge\Server\resolveStaffPinHash(
+        ['FORGE_STAFF_PIN_HASH' => false],
+        ['FORGE_STAFF_PIN_HASH' => '$2y$10$fallbackhashvalue']
+    );
+
+    assertSame('$2y$10$envhashvalue', $resolvedFromEnvironment);
+    assertSame('$2y$10$fallbackhashvalue', $resolvedFromFallback);
+});
+
+$runner->run('missing staff pin hash fails safely', static function (): void {
+    assertThrows(
+        static function (): void {
+            \Forge\Server\resolveStaffPinHash(
+                ['FORGE_STAFF_PIN_HASH' => false],
+                []
+            );
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof StorageUnavailableException);
+            assertSame('Staff authentication is currently unavailable.', $exception->getMessage());
+        }
+    );
+});
+
+$runner->run('staff pin verification uses password_verify safely', static function (): void {
+    $pinHash = password_hash('2468', PASSWORD_DEFAULT);
+
+    assertTrue(\Forge\Server\verifyStaffPin('2468', $pinHash));
+    assertTrue(!\Forge\Server\verifyStaffPin('0000', $pinHash));
+    assertTrue(!\Forge\Server\verifyStaffPin('', $pinHash));
+});
+
+$runner->run('staff session cookie parameters are secure for hosted https requests', static function (): void {
+    $params = \Forge\Server\buildStaffSessionCookieParams([
+        'HTTPS' => 'on',
+        'SERVER_PORT' => '443',
+    ]);
+
+    assertSame(true, $params['secure']);
+    assertSame(true, $params['httponly']);
+    assertSame('Strict', $params['samesite']);
+    assertSame('/', $params['path']);
+});
+
+$runner->run('staff session cookie parameters stay non-secure off https for local development', static function (): void {
+    $params = \Forge\Server\buildStaffSessionCookieParams([
+        'HTTPS' => 'off',
+        'SERVER_PORT' => '80',
+    ]);
+
+    assertSame(false, $params['secure']);
+    assertSame(true, $params['httponly']);
+    assertSame('Strict', $params['samesite']);
+});
+
+$runner->run('stored staff order records normalize payload JSON and UTC timestamps', static function (): void {
+    $record = \Forge\Server\normalizeStoredStaffOrderRecord([
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174000',
+        'record_version' => '1.0',
+        'source' => 'customer_kiosk',
+        'submitted_at' => '2026-07-19 10:00:00.123456',
+        'received_at' => '2026-07-19 10:05:00',
+        'updated_at' => '2026-07-19 10:06:00.500000',
+        'device_id' => 'ipad-1',
+        'event_id' => 'holiday-market',
+        'payload_sha256' => str_repeat('a', 64),
+        'payload_json' => json_encode(createValidPayload(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+    ]);
+
+    assertSame('2026-07-19T10:00:00+00:00', $record['submitted_at']);
+    assertSame('2026-07-19T10:05:00+00:00', $record['received_at']);
+    assertSame('2026-07-19T10:06:00+00:00', $record['updated_at']);
+    assertSame('holiday-market', $record['event_id']);
+    assertSame('123e4567-e89b-42d3-a456-426614174000', $record['payload']['forge_order_uuid']);
+});
+
+$runner->run('invalid stored staff order payload fails safely', static function (): void {
+    assertThrows(
+        static function (): void {
+            \Forge\Server\normalizeStoredStaffOrderRecord([
+                'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174000',
+                'record_version' => '1.0',
+                'source' => 'customer_kiosk',
+                'submitted_at' => '2026-07-19 10:00:00',
+                'received_at' => '2026-07-19 10:05:00',
+                'updated_at' => '2026-07-19 10:06:00',
+                'payload_sha256' => str_repeat('a', 64),
+                'payload_json' => '{invalid',
+            ]);
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof InvalidArgumentException);
+            assertSame('A valid stored staff order payload is required.', $exception->getMessage());
+        }
+    );
+});
+
 $runner->finish();

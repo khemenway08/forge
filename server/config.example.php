@@ -10,4 +10,5 @@ return [
     'FORGE_DB_DSN' => 'mysql:host=localhost;dbname=DATABASE_NAME;charset=utf8mb4',
     'FORGE_DB_USER' => 'DATABASE_USER',
     'FORGE_DB_PASSWORD' => 'DATABASE_PASSWORD',
+    'FORGE_STAFF_PIN_HASH' => '$2y$...replace-with-password-hash...',
 ];
