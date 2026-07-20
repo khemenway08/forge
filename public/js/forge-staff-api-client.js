@@ -15,6 +15,7 @@
   const ORDERS_ENDPOINT = 'orders.php';
   const TRAYS_ENDPOINT = 'trays.php';
   const ASSIGN_TRAY_ENDPOINT = 'assign-tray.php';
+  const COMPLETE_ITEM_ENDPOINT = 'complete-item.php';
   const SAFE_ERROR_MESSAGES = {
     invalid_request: 'Staff authentication could not be prepared.',
     invalid_credentials: 'Invalid staff credentials.',
@@ -30,6 +31,9 @@
     tray_not_found: 'That production tray could not be found.',
     tray_unavailable: 'That tray is no longer available. Choose another tray.',
     order_already_assigned: 'This order already has an assigned tray.',
+    item_not_found: 'That saved item could not be found.',
+    item_conflict: 'That item was already updated. Refresh the order and try again.',
+    item_not_completable: 'That item cannot be marked complete right now.',
     server_error: 'The Forge staff server is currently unavailable.',
     method_not_allowed: 'The Forge staff server rejected this request method.'
   };
@@ -250,13 +254,67 @@
       }
     }
 
+    async function completeItemQuantity(forgeOrderUuid, lineId, expectedCompletedQuantity, targetCompletedQuantity) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      const normalizedLineId = asTrimmedString(lineId);
+      const expectedQuantity = normalizeExpectedCompletedQuantity(expectedCompletedQuantity);
+      const targetQuantity = normalizeTargetCompletedQuantity(targetCompletedQuantity, expectedQuantity);
+
+      if (!orderUuid) {
+        throw new ForgeStaffApiError('invalid_request', 'A saved order is required.');
+      }
+      if (!normalizedLineId) {
+        throw new ForgeStaffApiError('invalid_request', 'A saved item is required.');
+      }
+
+      let requestBody = '';
+      try {
+        requestBody = JSON.stringify({
+          forge_order_uuid: orderUuid,
+          line_id: normalizedLineId,
+          expected_completed_quantity: expectedQuantity,
+          target_completed_quantity: targetQuantity
+        });
+      } catch (error) {
+        throw new ForgeStaffApiError('invalid_request', 'Item completion could not be prepared.', { cause: error });
+      }
+
+      try {
+        const response = await performJsonRequest(fetchImpl, `${baseUrl}/${COMPLETE_ITEM_ENDPOINT}`, timeoutMs, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json'
+          },
+          credentials: 'same-origin',
+          cache: 'no-store',
+          body: requestBody
+        });
+        const payload = await parseJsonResponse(response);
+        if (response.status === 401) {
+          return {
+            ok: false,
+            authenticated: false,
+            unauthenticated: true
+          };
+        }
+        if (!response.ok) {
+          throw buildServerError(response.status, payload);
+        }
+        return normalizeCompleteItemPayload(payload);
+      } catch (error) {
+        throw normalizeClientError(error);
+      }
+    }
+
     return {
       checkSession,
       login,
       logout,
       listOrders,
       listTrays,
-      assignTray
+      assignTray,
+      completeItemQuantity
     };
   }
 
@@ -393,6 +451,25 @@
     };
   }
 
+  function normalizeCompleteItemPayload(payload) {
+    const application = asTrimmedString(payload && payload.application);
+    const apiVersion = asTrimmedString(payload && payload.api_version);
+    const status = asTrimmedString(payload && payload.status);
+    const data = payload && typeof payload === 'object' ? payload.data : null;
+
+    if (application !== 'Forge' || apiVersion !== '1' || status !== 'ok' || !data || typeof data !== 'object') {
+      throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+    }
+
+    return {
+      ok: true,
+      authenticated: true,
+      alreadyApplied: Boolean(data.already_applied),
+      order: data.order && typeof data.order === 'object' ? data.order : null,
+      item: data.item && typeof data.item === 'object' ? data.item : null
+    };
+  }
+
   function normalizeTrayRecord(record) {
     return {
       tray_number: normalizeTrayNumber(record && record.tray_number),
@@ -486,6 +563,22 @@
     const numericValue = Number(value);
     if (!Number.isInteger(numericValue) || numericValue <= 0) {
       throw new ForgeStaffApiError('invalid_request', 'A valid production tray is required.');
+    }
+    return numericValue;
+  }
+
+  function normalizeExpectedCompletedQuantity(value) {
+    const numericValue = Number(value);
+    if (!Number.isInteger(numericValue) || numericValue < 0) {
+      throw new ForgeStaffApiError('invalid_request', 'A valid current completed quantity is required.');
+    }
+    return numericValue;
+  }
+
+  function normalizeTargetCompletedQuantity(value, expectedQuantity) {
+    const numericValue = Number(value);
+    if (!Number.isInteger(numericValue) || numericValue < 0 || numericValue !== expectedQuantity + 1) {
+      throw new ForgeStaffApiError('invalid_request', 'A valid target completed quantity is required.');
     }
     return numericValue;
   }

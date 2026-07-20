@@ -944,6 +944,136 @@ $runner->run('stored staff order records preserve later production lifecycle sta
     assertSame(null, $record['current_tray_number']);
 });
 
+$runner->run('stored staff order records default legacy item production fields to pending with zero completed quantity', static function (): void {
+    $record = \Forge\Server\normalizeStoredStaffOrderRecord([
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174000',
+        'record_version' => '1.0',
+        'source' => 'customer_kiosk',
+        'submitted_at' => '2026-07-19 10:00:00',
+        'received_at' => '2026-07-19 10:05:00',
+        'updated_at' => '2026-07-19 10:06:00',
+        'payload_sha256' => str_repeat('c', 64),
+        'payload_json' => json_encode(createValidPayload([
+            'items' => [
+                [
+                    'line_number' => 1,
+                    'quantity' => 2,
+                    'product_definition_id' => 'tree_ornament',
+                    'product_display_name' => 'Tree Ornament',
+                    'structured_attributes' => [
+                        'production_status' => 'not_started',
+                    ],
+                ],
+            ],
+        ]), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+    ]);
+
+    assertSame('123e4567-e89b-42d3-a456-426614174000-line-1', $record['payload']['items'][0]['line_id']);
+    assertSame('pending', $record['payload']['items'][0]['production_status']);
+    assertSame(0, $record['payload']['items'][0]['completed_quantity']);
+    assertSame(2, $record['total_item_count']);
+    assertSame(0, $record['completed_item_count']);
+});
+
+$runner->run('stored staff order records merge item production rows into ready-to-pack lifecycle counts', static function (): void {
+    $record = \Forge\Server\normalizeStoredStaffOrderRecord(
+        [
+            'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174000',
+            'record_version' => '1.0',
+            'source' => 'customer_kiosk',
+            'submitted_at' => '2026-07-19 10:00:00',
+            'received_at' => '2026-07-19 10:05:00',
+            'updated_at' => '2026-07-19 10:06:00',
+            'current_tray_number' => 5,
+            'ready_to_pack_at' => '2026-07-19 10:06:00.000000',
+            'payload_sha256' => str_repeat('d', 64),
+            'payload_json' => json_encode(createValidPayload([
+                'items' => [
+                    [
+                        'line_id' => 'line-a',
+                        'line_number' => 1,
+                        'quantity' => 1,
+                        'product_definition_id' => 'tree_ornament',
+                        'product_display_name' => 'Tree Ornament',
+                        'structured_attributes' => [],
+                    ],
+                    [
+                        'line_id' => 'line-b',
+                        'line_number' => 2,
+                        'quantity' => 2,
+                        'product_definition_id' => 'reindeer_ornament',
+                        'product_display_name' => 'Reindeer Ornament',
+                        'structured_attributes' => [],
+                    ],
+                ],
+            ]), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+        ],
+        [
+            [
+                'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174000',
+                'line_id' => 'line-a',
+                'required_quantity' => 1,
+                'completed_quantity' => 1,
+                'production_status' => 'complete',
+                'completed_at' => '2026-07-19 10:04:00.000000',
+                'updated_at' => '2026-07-19 10:04:00.000000',
+            ],
+            [
+                'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174000',
+                'line_id' => 'line-b',
+                'required_quantity' => 2,
+                'completed_quantity' => 2,
+                'production_status' => 'complete',
+                'completed_at' => '2026-07-19 10:06:00.000000',
+                'updated_at' => '2026-07-19 10:06:00.000000',
+            ],
+        ]
+    );
+
+    assertSame('ready_to_pack', $record['production_status']);
+    assertSame(3, $record['total_item_count']);
+    assertSame(3, $record['completed_item_count']);
+    assertSame('2026-07-19T10:06:00+00:00', $record['ready_to_pack_at']);
+    assertSame('complete', $record['payload']['items'][1]['production_status']);
+    assertSame(2, $record['payload']['items'][1]['completed_quantity']);
+});
+
+$runner->run('stored staff order records stay in production when open flags remain after all pieces are complete', static function (): void {
+    $record = \Forge\Server\normalizeStoredStaffOrderRecord(
+        [
+            'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174000',
+            'record_version' => '1.0',
+            'source' => 'customer_kiosk',
+            'submitted_at' => '2026-07-19 10:00:00',
+            'received_at' => '2026-07-19 10:05:00',
+            'updated_at' => '2026-07-19 10:06:00',
+            'current_tray_number' => 5,
+            'payload_sha256' => str_repeat('e', 64),
+            'payload_json' => json_encode(createValidPayload([
+                'has_open_flags' => true,
+                'open_flags' => [
+                    ['code' => 'needs_clarification', 'message' => 'Needs clarification'],
+                ],
+            ]), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+        ],
+        [
+            [
+                'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174000',
+                'line_id' => '123e4567-e89b-42d3-a456-426614174000-line-1',
+                'required_quantity' => 1,
+                'completed_quantity' => 1,
+                'production_status' => 'complete',
+                'completed_at' => '2026-07-19 10:06:00.000000',
+                'updated_at' => '2026-07-19 10:06:00.000000',
+            ],
+        ]
+    );
+
+    assertSame('in_production', $record['production_status']);
+    assertSame(null, $record['ready_to_pack_at']);
+    assertSame(true, $record['has_open_flags']);
+});
+
 $runner->run('configured tray numbers are deduplicated and sorted numerically', static function (): void {
     $trayNumbers = \Forge\Server\parseConfiguredTrayNumbers('12, 2, 7 2 4');
 

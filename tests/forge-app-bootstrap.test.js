@@ -379,6 +379,7 @@ function loadForgeHostedStaffAppForTrayDetail() {
   const packingDialog = createElement('div');
   let detailDialogHtml = '';
   let assignTrayButton = null;
+  let completionButtons = [];
 
   welcomeScreen.dataset.screen = 'welcome';
   staffAccessScreen.dataset.screen = 'staff-access';
@@ -465,6 +466,31 @@ function loadForgeHostedStaffAppForTrayDetail() {
       } else {
         assignTrayButton = null;
       }
+
+      if (detailDialogHtml.includes('data-action="staff-complete-item"')) {
+        const matches = [...detailDialogHtml.matchAll(/data-action="staff-complete-item"[\s\S]*?data-order-uuid="([^"]+)"[\s\S]*?data-line-id="([^"]+)"/g)];
+        completionButtons = matches.map((match) => {
+          const button = createElement('button');
+          button.dataset.action = 'staff-complete-item';
+          button.dataset.orderUuid = match[1];
+          button.dataset.lineId = match[2];
+          button.closest = (selector) => {
+            if (selector === '[data-action]') {
+              return button;
+            }
+            if (selector === '[data-order-uuid]') {
+              return button;
+            }
+            if (selector === '[data-line-id]') {
+              return button;
+            }
+            return null;
+          };
+          return button;
+        });
+      } else {
+        completionButtons = [];
+      }
     }
   });
 
@@ -472,16 +498,39 @@ function loadForgeHostedStaffAppForTrayDetail() {
     if (selector === '[data-action="staff-open-tray-assignment"]') {
       return assignTrayButton;
     }
+    if (selector === '[data-action="staff-complete-item"]') {
+      return completionButtons[0] || null;
+    }
     return null;
+  };
+  detailDialog.querySelectorAll = (selector) => {
+    if (selector === '[data-action="staff-complete-item"]') {
+      return completionButtons;
+    }
+    return [];
   };
 
   let trayLoadCount = 0;
+  let completionCallCount = 0;
   const sharedRecord = {
     forge_order_uuid: 'shared-order-1',
     payload: {
       customer: { full_name: 'Kyle Hemenway' },
       fulfillment: { method: 'shipping' },
-      items: []
+      items: [
+        {
+          line_id: 'shared-tree-line',
+          line_number: 1,
+          product_display_name: 'Tree Ornament',
+          quantity: 1,
+          completed_quantity: 0,
+          production_status: 'pending',
+          pricing: { final_unit_price_cents: 2600, line_total_cents: 2600 },
+          structured_attributes: { family_name: 'Hemenway', year: '2026' },
+          configuration_snapshot: { familyName: 'Hemenway', year: 2026 },
+          open_flags: []
+        }
+      ]
     },
     submitted_at: '2026-07-20T12:00:00Z',
     local_saved_at: '2026-07-20T12:01:00Z',
@@ -489,11 +538,12 @@ function loadForgeHostedStaffAppForTrayDetail() {
     sync_status: 'synced',
     production_status: 'submitted',
     current_tray_number: null,
-    total_item_count: 0,
+    total_item_count: 1,
     completed_item_count: 0,
     staff_data_source: 'server',
     staff_read_only: true,
-    staff_can_assign_tray: true
+    staff_can_assign_tray: true,
+    staff_can_complete_items: false
   };
 
   const context = {
@@ -608,6 +658,29 @@ function loadForgeHostedStaffAppForTrayDetail() {
         },
         async assignTrayToOrder() {
           throw new Error('assignTrayToOrder should not be called in this click-path test');
+        },
+        async completeItemQuantity(orderUuid, lineId) {
+          completionCallCount += 1;
+          assert.equal(orderUuid, 'shared-order-1');
+          assert.equal(lineId, 'shared-tree-line');
+          sharedRecord.production_status = 'ready_to_pack';
+          sharedRecord.current_tray_number = 3;
+          sharedRecord.completed_item_count = 1;
+          sharedRecord.staff_can_assign_tray = false;
+          sharedRecord.staff_can_complete_items = false;
+          sharedRecord.ready_to_pack_at = '2026-07-20T12:10:00Z';
+          sharedRecord.payload.items[0].completed_quantity = 1;
+          sharedRecord.payload.items[0].production_status = 'complete';
+          sharedRecord.payload.items[0].completed_at = '2026-07-20T12:10:00Z';
+          return {
+            ok: true,
+            authenticated: true,
+            dataSource: 'server',
+            readOnly: true,
+            alreadyApplied: false,
+            order: structuredClone(sharedRecord),
+            item: structuredClone(sharedRecord.payload.items[0])
+          };
         }
       };
     }
@@ -667,8 +740,17 @@ function loadForgeHostedStaffAppForTrayDetail() {
     getAssignTrayButton() {
       return assignTrayButton;
     },
+    getCompletionButton() {
+      return completionButtons[0] || null;
+    },
     getTrayLoadCount() {
       return trayLoadCount;
+    },
+    getCompletionCallCount() {
+      return completionCallCount;
+    },
+    setSharedRecord(overrides) {
+      Object.assign(sharedRecord, structuredClone(overrides));
     }
   };
 }
@@ -749,4 +831,40 @@ test('shared server order detail assign tray still opens when hosted state is re
   assert.equal(getTrayLoadCount(), 2);
   assert.equal(trayDialog.hidden, false);
   assert.match(trayDialog.innerHTML, /Assign Tray/);
+});
+
+test('shared server order detail completion button binds to the rendered button and saves one hosted piece exactly once', async () => {
+  const {
+    context,
+    detailDialog,
+    getCompletionButton,
+    getCompletionCallCount,
+    setSharedRecord
+  } = loadForgeHostedStaffAppForTrayDetail();
+
+  setSharedRecord({
+    production_status: 'tray_assigned',
+    current_tray_number: 3,
+    staff_can_assign_tray: false,
+    staff_can_complete_items: true
+  });
+
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+
+  let completionButton = getCompletionButton();
+  assert.ok(completionButton);
+  assert.equal(completionButton.dataset.completionHandlerBound, 'true');
+  assert.equal(typeof completionButton.onclick, 'function');
+  completionButton.dispatchEvent(new MockMouseEvent('click', { bubbles: true, cancelable: true }));
+  assert.match(String(detailDialog.innerHTML || ''), /Saving\.\.\./);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(getCompletionCallCount(), 1);
+  assert.match(String(detailDialog.innerHTML || ''), /Item completion saved\./);
+  assert.match(String(detailDialog.innerHTML || ''), /1 of 1 Complete/);
+
+  await context.openStaffOrderDetail('shared-order-1');
+  completionButton = getCompletionButton();
+  assert.equal(completionButton, null);
 });

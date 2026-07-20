@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260720-14';
+const FORGE_BUILD_VERSION = '20260720-15';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
 
@@ -1501,7 +1501,7 @@ function getStaffSourceConfig() {
       queueUnavailableLabel: 'Shared queue unavailable',
       emptyReadyHeading: 'No shared orders are ready to pack',
       emptyReadyCopy: 'Shared server orders will appear here when the hosted production workflow begins reporting ready-to-pack status.',
-      readOnlyNote: 'Shared server orders currently support tray assignment only in this build.',
+      readOnlyNote: 'Shared server orders support tray assignment and item completion in this build. Customer and order details remain read-only.',
       syncAttemptsLabel: 'Data Source',
       syncAttemptsValue: 'Shared Server'
     };
@@ -3739,9 +3739,6 @@ function ensureStaffOrderDetailUi() {
     }
 
     if (action === 'staff-complete-item' && orderUuid && !staffOrdersState.detailSavingLineId) {
-      if (staffOrdersState.readOnly) {
-        return;
-      }
       const lineId = event.target.closest('[data-line-id]')?.dataset.lineId;
       if (lineId) {
         submitStaffItemCompletion(orderUuid, lineId);
@@ -3814,6 +3811,33 @@ function bindStaffOrderDetailDirectActions(assignTrayButton) {
 
   assignTrayButton.onclick = (event) => handleStaffOpenTrayAssignment(event, assignTrayButton);
   assignTrayButton.dataset.trayHandlerBound = 'true';
+}
+
+function bindStaffOrderDetailCompletionActions(completionButtons) {
+  const buttons = Array.isArray(completionButtons) ? completionButtons : [];
+  buttons.forEach((button) => {
+    if (!button) {
+      return;
+    }
+    if (button.dataset.completionHandlerBound === 'true' && typeof button.onclick === 'function') {
+      return;
+    }
+    button.onclick = (event) => {
+      event?.preventDefault?.();
+      event?.stopPropagation?.();
+      const orderUuid = String(button?.dataset?.orderUuid || '').trim();
+      const lineId = String(button?.dataset?.lineId || '').trim();
+      if (!orderUuid || !lineId) {
+        staffOrdersState.notice = '';
+        staffOrdersState.noticeTone = 'error';
+        staffOrdersState.detailError = 'Item completion is unavailable right now.';
+        renderStaffOrderDetail();
+        return;
+      }
+      submitStaffItemCompletion(orderUuid, lineId);
+    };
+    button.dataset.completionHandlerBound = 'true';
+  });
 }
 
 function handleStaffOpenTrayAssignment(event, button) {
@@ -4144,7 +4168,7 @@ function canMarkStaffItemComplete(record, item) {
     ? Math.max(Math.min(item.completed_quantity, quantity), 0)
     : 0;
   const status = getStaffItemProductionStatus(item);
-  return !isStaffReadOnlyRecord(record)
+  return (!isStaffReadOnlyRecord(record) || record?.staff_can_complete_items === true)
     && Boolean(getOrderTrayNumber(record))
     && completedQuantity < quantity
     && status !== forgeOrderStore.ITEM_PRODUCTION_STATUSES?.blocked
@@ -4991,6 +5015,7 @@ function renderStaffOrderDetail() {
     const assignTrayButton = renderedDetailContainer.querySelector('[data-action="staff-open-tray-assignment"]');
     bindStaffOrderDetailDirectActions(assignTrayButton);
   }
+  bindStaffOrderDetailCompletionActions(Array.from(renderedDetailContainer.querySelectorAll('[data-action="staff-complete-item"]')));
 }
 
 async function submitStaffItemCompletion(forgeOrderUuid, lineId) {
@@ -4998,19 +5023,46 @@ async function submitStaffItemCompletion(forgeOrderUuid, lineId) {
     return;
   }
 
+  const detailItems = Array.isArray(staffOrdersState.detailRecord?.payload?.items)
+    ? staffOrdersState.detailRecord.payload.items
+    : [];
+  const currentItem = detailItems.find((item) => item?.line_id === lineId);
+  if (!currentItem) {
+    staffOrdersState.notice = '';
+    staffOrdersState.noticeTone = 'error';
+    staffOrdersState.detailError = 'That saved item could not be found.';
+    renderStaffOrderDetail();
+    return;
+  }
+
+  const quantity = Number.isInteger(currentItem?.quantity) && currentItem.quantity > 0 ? currentItem.quantity : 1;
+  const expectedCompletedQuantity = Number.isInteger(currentItem?.completed_quantity)
+    ? Math.max(Math.min(currentItem.completed_quantity, quantity), 0)
+    : 0;
+  const targetCompletedQuantity = expectedCompletedQuantity + 1;
+
   staffOrdersState.detailSavingLineId = lineId;
   staffOrdersState.detailError = '';
   renderStaffOrderDetail();
 
   try {
-    const result = await orderStore.incrementOrderItemCompletion(forgeOrderUuid, lineId);
-    const refreshedRecord = await orderStore.getOrder(forgeOrderUuid);
+    const result = await staffRuntime.completeItemQuantity(
+      forgeOrderUuid,
+      lineId,
+      expectedCompletedQuantity,
+      targetCompletedQuantity
+    );
+    if (!result?.ok) {
+      throw new Error(result?.errorMessage || 'Item completion could not be saved.');
+    }
+
+    await loadStaffOrdersQueue();
+    const refreshedRecord = staffOrdersState.records.find((record) => record?.forge_order_uuid === forgeOrderUuid) || null;
     staffOrdersState.detailRecord = refreshedRecord || result?.order || null;
-    staffOrdersState.notice = result?.alreadyComplete
+    staffOrdersState.notice = result?.alreadyApplied
       ? 'That piece was already recorded as complete.'
       : 'Item completion saved.';
     staffOrdersState.noticeTone = 'success';
-    await loadStaffOrdersQueue();
     renderStaffOrderDetail();
   } catch (error) {
     console.error('Forge staff item completion failed', error);
@@ -5584,7 +5636,7 @@ function getStaffOrderItemsMarkup(record, items) {
             <strong>${escapeHtml(itemProgressLabel)}</strong>
             ${item.completed_at ? `<p>Completed ${escapeHtml(formatReadableDateTime(item.completed_at))}</p>` : ''}
           </div>
-          ${isReadOnlyRecord ? '' : `
+          ${!canComplete && isReadOnlyRecord ? '' : `
             <button
               class="primary-button staff-item-complete-button"
               type="button"

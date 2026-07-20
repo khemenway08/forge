@@ -339,6 +339,63 @@ test('hosted tray assignment returns the updated server-backed order and tray st
   assert.equal(result.assignmentHistory.tray_assignment_id, 'assignment-9');
 });
 
+test('hosted item completion returns the updated shared order safely', async () => {
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'https:', hostname: 'forge.example.com' },
+    staffApiClient: {
+      async completeItemQuantity(orderUuid, lineId, expectedCompletedQuantity, targetCompletedQuantity) {
+        assert.equal(orderUuid, 'order-10');
+        assert.equal(lineId, 'line-1');
+        assert.equal(expectedCompletedQuantity, 0);
+        assert.equal(targetCompletedQuantity, 1);
+        return {
+          ok: true,
+          authenticated: true,
+          alreadyApplied: false,
+          order: {
+            forge_order_uuid: 'order-10',
+            submitted_at: '2026-07-20T10:00:00Z',
+            received_at: '2026-07-20T10:05:00Z',
+            updated_at: '2026-07-20T10:06:00Z',
+            production_status: 'ready_to_pack',
+            current_tray_number: 8,
+            total_item_count: 1,
+            completed_item_count: 1,
+            ready_to_pack_at: '2026-07-20T10:06:00Z',
+            has_open_flags: false,
+            payload: {
+              customer: { full_name: 'Kyle' },
+              items: [
+                {
+                  line_id: 'line-1',
+                  quantity: 1,
+                  completed_quantity: 1,
+                  production_status: 'complete'
+                }
+              ]
+            }
+          },
+          item: {
+            line_id: 'line-1',
+            quantity: 1,
+            completed_quantity: 1,
+            production_status: 'complete'
+          }
+        };
+      }
+    }
+  });
+
+  const result = await runtime.completeItemQuantity('order-10', 'line-1', 0, 1);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.order.production_status, 'ready_to_pack');
+  assert.equal(result.order.completed_item_count, 1);
+  assert.equal(result.order.total_item_count, 1);
+  assert.equal(result.order.staff_can_complete_items, false);
+  assert.equal(result.item.production_status, 'complete');
+});
+
 test('terminal or later production statuses remain preserved and never reopen tray assignment in hosted mode', async () => {
   const records = staffOrdersRuntime.adaptServerOrdersForQueue([
     {
@@ -379,6 +436,30 @@ test('terminal or later production statuses remain preserved and never reopen tr
     records.map((record) => record.staff_can_assign_tray),
     [false, false, false, false]
   );
+});
+
+test('localhost item completion keeps the existing IndexedDB behavior', async () => {
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'http:', hostname: 'localhost' },
+    localOrderStore: {
+      async incrementOrderItemCompletion(orderUuid, lineId) {
+        assert.equal(orderUuid, 'local-order');
+        assert.equal(lineId, 'local-line');
+        return {
+          alreadyComplete: false,
+          order: { forge_order_uuid: 'local-order', production_status: 'in_production' },
+          item: { line_id: 'local-line', completed_quantity: 1, production_status: 'in_production' }
+        };
+      }
+    }
+  });
+
+  const result = await runtime.completeItemQuantity('local-order', 'local-line', 0, 1);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.readOnly, false);
+  assert.equal(result.order.production_status, 'in_production');
+  assert.equal(result.item.completed_quantity, 1);
 });
 
 test('localhost tray assignment stays on the local order-store path without hosted requests', async () => {

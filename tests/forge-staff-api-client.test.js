@@ -220,6 +220,49 @@ test('assignTray sends POST JSON and same-origin credentials with the approved p
   });
 });
 
+test('completeItemQuantity sends POST JSON and same-origin credentials with optimistic concurrency fields', async () => {
+  const requests = [];
+  const client = staffApiClientModule.createForgeStaffApiClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return createJsonResponse(200, {
+        application: 'Forge',
+        api_version: '1',
+        status: 'ok',
+        data: {
+          already_applied: false,
+          order: {
+            forge_order_uuid: 'order-2',
+            production_status: 'in_production',
+            payload: { items: [] }
+          },
+          item: {
+            line_id: 'line-2',
+            completed_quantity: 1,
+            production_status: 'in_production'
+          }
+        }
+      });
+    }
+  });
+
+  const result = await client.completeItemQuantity('order-2', 'line-2', 0, 1);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.alreadyApplied, false);
+  assert.equal(result.item.line_id, 'line-2');
+  assert.equal(requests[0].url, '/api/v1/staff/complete-item.php');
+  assert.equal(requests[0].options.method, 'POST');
+  assert.equal(requests[0].options.credentials, 'same-origin');
+  assert.equal(requests[0].options.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    forge_order_uuid: 'order-2',
+    line_id: 'line-2',
+    expected_completed_quantity: 0,
+    target_completed_quantity: 1
+  });
+});
+
 test('401 responses are handled safely as unauthenticated results', async () => {
   const client = staffApiClientModule.createForgeStaffApiClient({
     fetchImpl: async (url) => {
@@ -251,12 +294,14 @@ test('401 responses are handled safely as unauthenticated results', async () => 
   const ordersResult = await client.listOrders();
   const traysResult = await client.listTrays();
   const assignResult = await client.assignTray('order-1', 1);
+  const completionResult = await client.completeItemQuantity('order-1', 'line-1', 0, 1);
 
   assert.deepEqual(sessionResult, { ok: false, authenticated: false, unauthenticated: true });
   assert.deepEqual(loginResult, { ok: false, authenticated: false, unauthenticated: true });
   assert.deepEqual(ordersResult, { ok: false, authenticated: false, unauthenticated: true, orders: [] });
   assert.deepEqual(traysResult, { ok: false, authenticated: false, unauthenticated: true, trays: [] });
   assert.deepEqual(assignResult, { ok: false, authenticated: false, unauthenticated: true });
+  assert.deepEqual(completionResult, { ok: false, authenticated: false, unauthenticated: true });
 });
 
 test('malformed or non-JSON responses produce a safe generic client error', async () => {

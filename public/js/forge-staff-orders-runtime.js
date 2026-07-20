@@ -220,6 +220,49 @@
       };
     }
 
+    async function completeItemQuantity(forgeOrderUuid, lineId, expectedCompletedQuantity, targetCompletedQuantity) {
+      if (environment.dataSource === STAFF_DATA_SOURCES.local) {
+        assertLocalOrderStore(localOrderStore, 'incrementOrderItemCompletion');
+        const result = await localOrderStore.incrementOrderItemCompletion(forgeOrderUuid, lineId);
+        return {
+          ok: true,
+          authenticated: true,
+          dataSource: STAFF_DATA_SOURCES.local,
+          readOnly: false,
+          alreadyApplied: Boolean(result && result.alreadyComplete),
+          order: result && result.order ? result.order : null,
+          item: result && result.item ? result.item : null
+        };
+      }
+
+      assertStaffApiClient(staffApiClient, 'completeItemQuantity');
+      const result = await staffApiClient.completeItemQuantity(
+        forgeOrderUuid,
+        lineId,
+        expectedCompletedQuantity,
+        targetCompletedQuantity
+      );
+      if (!result || (!result.ok && result.unauthenticated) || result.authenticated === false) {
+        return {
+          ok: false,
+          authenticated: false,
+          unauthenticated: true,
+          dataSource: STAFF_DATA_SOURCES.server,
+          readOnly: true
+        };
+      }
+
+      return {
+        ok: true,
+        authenticated: true,
+        dataSource: STAFF_DATA_SOURCES.server,
+        readOnly: true,
+        alreadyApplied: Boolean(result.alreadyApplied),
+        order: adaptServerOrderForQueue(result.order),
+        item: result.item && typeof result.item === 'object' ? deepCloneValue(result.item) : null
+      };
+    }
+
     return {
       environment,
       checkAccess,
@@ -227,7 +270,8 @@
       logout,
       loadOrders,
       loadTrays,
-      assignTrayToOrder
+      assignTrayToOrder,
+      completeItemQuantity
     };
   }
 
@@ -268,6 +312,11 @@
     const payload = deepCloneValue(record && typeof record.payload === 'object' ? record.payload : {});
     const trayNumber = normalizeNullableTrayNumber(record && record.current_tray_number);
     const productionStatus = normalizeProductionStatus(record && record.production_status, trayNumber);
+    const totalItemCount = normalizeOptionalCount(record && record.total_item_count);
+    const completedItemCount = normalizeOptionalCount(record && record.completed_item_count);
+    const readyToPackAt = normalizeNullableString(record && record.ready_to_pack_at);
+    const canCompleteItems = Boolean(trayNumber)
+      && ['tray_assigned', 'in_production'].includes(productionStatus);
     return {
       forge_order_uuid: asTrimmedString(record && record.forge_order_uuid),
       record_version: asTrimmedString(record && record.record_version) || '1',
@@ -285,13 +334,15 @@
       production_status: productionStatus,
       current_tray_number: trayNumber,
       packed_at: null,
-      ready_to_pack_at: null,
-      total_item_count: null,
-      completed_item_count: null,
+      ready_to_pack_at: readyToPackAt,
+      total_item_count: totalItemCount,
+      completed_item_count: completedItemCount,
+      has_open_flags: Boolean(record && record.has_open_flags) || Boolean(payload && payload.has_open_flags),
       payload,
       staff_data_source: STAFF_DATA_SOURCES.server,
       staff_read_only: true,
-      staff_can_assign_tray: productionStatus === 'submitted' && trayNumber === null
+      staff_can_assign_tray: productionStatus === 'submitted' && trayNumber === null,
+      staff_can_complete_items: canCompleteItems
     };
   }
 
@@ -358,6 +409,19 @@
       return status;
     }
     return trayNumber ? 'tray_assigned' : 'submitted';
+  }
+
+  function normalizeOptionalCount(value) {
+    const numericValue = Number(value);
+    if (!Number.isInteger(numericValue) || numericValue < 0) {
+      return null;
+    }
+    return numericValue;
+  }
+
+  function normalizeNullableString(value) {
+    const normalized = asTrimmedString(value);
+    return normalized === '' ? null : normalized;
   }
 
   function assertStaffApiClient(staffApiClient, methodName) {
