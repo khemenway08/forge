@@ -13,6 +13,8 @@
   const LOGIN_ENDPOINT = 'login.php';
   const LOGOUT_ENDPOINT = 'logout.php';
   const ORDERS_ENDPOINT = 'orders.php';
+  const TRAYS_ENDPOINT = 'trays.php';
+  const ASSIGN_TRAY_ENDPOINT = 'assign-tray.php';
   const SAFE_ERROR_MESSAGES = {
     invalid_request: 'Staff authentication could not be prepared.',
     invalid_credentials: 'Invalid staff credentials.',
@@ -23,6 +25,11 @@
     network_error: 'The Forge staff server could not be reached.',
     unavailable: 'The Forge staff server is currently unavailable.',
     storage_unavailable: 'Staff order retrieval is currently unavailable.',
+    no_trays_configured: 'No production trays are configured.',
+    order_not_found: 'That order could not be found.',
+    tray_not_found: 'That production tray could not be found.',
+    tray_unavailable: 'That tray is no longer available. Choose another tray.',
+    order_already_assigned: 'This order already has an assigned tray.',
     server_error: 'The Forge staff server is currently unavailable.',
     method_not_allowed: 'The Forge staff server rejected this request method.'
   };
@@ -169,11 +176,87 @@
       }
     }
 
+    async function listTrays() {
+      try {
+        const response = await performJsonRequest(fetchImpl, `${baseUrl}/${TRAYS_ENDPOINT}`, timeoutMs, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json'
+          },
+          credentials: 'same-origin',
+          cache: 'no-store'
+        });
+        const payload = await parseJsonResponse(response);
+        if (response.status === 401) {
+          return {
+            ok: false,
+            authenticated: false,
+            unauthenticated: true,
+            trays: []
+          };
+        }
+        if (!response.ok) {
+          throw buildServerError(response.status, payload);
+        }
+        return normalizeTraysPayload(payload);
+      } catch (error) {
+        throw normalizeClientError(error);
+      }
+    }
+
+    async function assignTray(forgeOrderUuid, trayNumber) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      const normalizedTrayNumber = normalizeTrayNumber(trayNumber);
+
+      if (!orderUuid) {
+        throw new ForgeStaffApiError('invalid_request', 'A saved order is required.');
+      }
+
+      let requestBody = '';
+      try {
+        requestBody = JSON.stringify({
+          forge_order_uuid: orderUuid,
+          tray_number: normalizedTrayNumber
+        });
+      } catch (error) {
+        throw new ForgeStaffApiError('invalid_request', 'Tray assignment could not be prepared.', { cause: error });
+      }
+
+      try {
+        const response = await performJsonRequest(fetchImpl, `${baseUrl}/${ASSIGN_TRAY_ENDPOINT}`, timeoutMs, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json'
+          },
+          credentials: 'same-origin',
+          cache: 'no-store',
+          body: requestBody
+        });
+        const payload = await parseJsonResponse(response);
+        if (response.status === 401) {
+          return {
+            ok: false,
+            authenticated: false,
+            unauthenticated: true
+          };
+        }
+        if (!response.ok) {
+          throw buildServerError(response.status, payload);
+        }
+        return normalizeAssignTrayPayload(payload);
+      } catch (error) {
+        throw normalizeClientError(error);
+      }
+    }
+
     return {
       checkSession,
       login,
       logout,
-      listOrders
+      listOrders,
+      listTrays,
+      assignTray
     };
   }
 
@@ -270,6 +353,67 @@
     };
   }
 
+  function normalizeTraysPayload(payload) {
+    const application = asTrimmedString(payload && payload.application);
+    const apiVersion = asTrimmedString(payload && payload.api_version);
+    const status = asTrimmedString(payload && payload.status);
+    const data = payload && typeof payload === 'object' ? payload.data : null;
+    const trays = data && typeof data === 'object' ? data.trays : null;
+
+    if (application !== 'Forge' || apiVersion !== '1' || status !== 'ok' || !Array.isArray(trays)) {
+      throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+    }
+
+    return {
+      ok: true,
+      authenticated: true,
+      trays: trays.map((tray) => normalizeTrayRecord(tray))
+    };
+  }
+
+  function normalizeAssignTrayPayload(payload) {
+    const application = asTrimmedString(payload && payload.application);
+    const apiVersion = asTrimmedString(payload && payload.api_version);
+    const status = asTrimmedString(payload && payload.status);
+    const data = payload && typeof payload === 'object' ? payload.data : null;
+
+    if (application !== 'Forge' || apiVersion !== '1' || status !== 'ok' || !data || typeof data !== 'object') {
+      throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+    }
+
+    return {
+      ok: true,
+      authenticated: true,
+      alreadyAssigned: Boolean(data.already_assigned),
+      order: data.order && typeof data.order === 'object' ? data.order : null,
+      tray: data.tray && typeof data.tray === 'object' ? normalizeTrayRecord(data.tray) : null,
+      assignmentHistory: data.assignment_history && typeof data.assignment_history === 'object'
+        ? normalizeAssignmentHistoryRecord(data.assignment_history)
+        : null
+    };
+  }
+
+  function normalizeTrayRecord(record) {
+    return {
+      tray_number: normalizeTrayNumber(record && record.tray_number),
+      tray_status: asTrimmedString(record && record.tray_status),
+      current_order_uuid: normalizeNullableString(record && record.current_order_uuid),
+      assigned_at: normalizeNullableString(record && record.assigned_at),
+      updated_at: normalizeNullableString(record && record.updated_at)
+    };
+  }
+
+  function normalizeAssignmentHistoryRecord(record) {
+    return {
+      tray_assignment_id: asTrimmedString(record && record.tray_assignment_id),
+      tray_number: normalizeTrayNumber(record && record.tray_number),
+      forge_order_uuid: asTrimmedString(record && record.forge_order_uuid),
+      assigned_at: normalizeNullableString(record && record.assigned_at),
+      released_at: normalizeNullableString(record && record.released_at),
+      release_reason: normalizeNullableString(record && record.release_reason)
+    };
+  }
+
   function buildServerError(httpStatus, payload) {
     const application = asTrimmedString(payload && payload.application);
     const apiVersion = asTrimmedString(payload && payload.api_version);
@@ -282,16 +426,14 @@
       throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
     }
 
-    return new ForgeStaffApiError(code, sanitizeServerMessage(code, message), {
+    return new ForgeStaffApiError(code, sanitizeServerMessage(code), {
       status: Number.isInteger(httpStatus) ? httpStatus : undefined
     });
   }
 
-  function sanitizeServerMessage(code, message) {
+  function sanitizeServerMessage(code) {
     const normalizedCode = asTrimmedString(code);
-    return SAFE_ERROR_MESSAGES[normalizedCode]
-      || SAFE_ERROR_MESSAGES[asTrimmedString(message)]
-      || SAFE_ERROR_MESSAGES.invalid_response;
+    return SAFE_ERROR_MESSAGES[normalizedCode] || SAFE_ERROR_MESSAGES.invalid_response;
   }
 
   function normalizeClientError(error) {
@@ -338,6 +480,19 @@
       return DEFAULT_TIMEOUT_MS;
     }
     return Math.floor(numericValue);
+  }
+
+  function normalizeTrayNumber(value) {
+    const numericValue = Number(value);
+    if (!Number.isInteger(numericValue) || numericValue <= 0) {
+      throw new ForgeStaffApiError('invalid_request', 'A valid production tray is required.');
+    }
+    return numericValue;
+  }
+
+  function normalizeNullableString(value) {
+    const normalized = asTrimmedString(value);
+    return normalized === '' ? null : normalized;
   }
 
   function createAbortController() {

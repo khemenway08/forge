@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once dirname(__DIR__) . '/bootstrap.php';
+require_once dirname(__DIR__, 2) . '/public/api/v1/staff/_endpoint.php';
 
 use Forge\Server\OrderConflictException;
 use Forge\Server\OrderHandler;
@@ -891,6 +892,118 @@ $runner->run('stored staff order records normalize payload JSON and UTC timestam
     assertSame('2026-07-19T10:06:00+00:00', $record['updated_at']);
     assertSame('holiday-market', $record['event_id']);
     assertSame('123e4567-e89b-42d3-a456-426614174000', $record['payload']['forge_order_uuid']);
+});
+
+$runner->run('stored staff order records default missing production fields to submitted with no tray', static function (): void {
+    $record = \Forge\Server\normalizeStoredStaffOrderRecord([
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174000',
+        'record_version' => '1.0',
+        'source' => 'customer_kiosk',
+        'submitted_at' => '2026-07-19 10:00:00',
+        'received_at' => '2026-07-19 10:05:00',
+        'updated_at' => '2026-07-19 10:06:00',
+        'payload_sha256' => str_repeat('a', 64),
+        'payload_json' => json_encode(createValidPayload(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+    ]);
+
+    assertSame('submitted', $record['production_status']);
+    assertSame(null, $record['current_tray_number']);
+});
+
+$runner->run('stored staff order records infer tray assigned when a tray number exists', static function (): void {
+    $record = \Forge\Server\normalizeStoredStaffOrderRecord([
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174000',
+        'record_version' => '1.0',
+        'source' => 'customer_kiosk',
+        'submitted_at' => '2026-07-19 10:00:00',
+        'received_at' => '2026-07-19 10:05:00',
+        'updated_at' => '2026-07-19 10:06:00',
+        'current_tray_number' => '12',
+        'payload_sha256' => str_repeat('b', 64),
+        'payload_json' => json_encode(createValidPayload(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+    ]);
+
+    assertSame('tray_assigned', $record['production_status']);
+    assertSame(12, $record['current_tray_number']);
+});
+
+$runner->run('stored staff order records preserve later production lifecycle statuses', static function (): void {
+    $record = \Forge\Server\normalizeStoredStaffOrderRecord([
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174000',
+        'record_version' => '1.0',
+        'source' => 'customer_kiosk',
+        'submitted_at' => '2026-07-19 10:00:00',
+        'received_at' => '2026-07-19 10:05:00',
+        'updated_at' => '2026-07-19 10:06:00',
+        'production_status' => 'packed',
+        'payload_sha256' => str_repeat('b', 64),
+        'payload_json' => json_encode(createValidPayload(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+    ]);
+
+    assertSame('packed', $record['production_status']);
+    assertSame(null, $record['current_tray_number']);
+});
+
+$runner->run('configured tray numbers are deduplicated and sorted numerically', static function (): void {
+    $trayNumbers = \Forge\Server\parseConfiguredTrayNumbers('12, 2, 7 2 4');
+
+    assertSame([2, 4, 7, 12], $trayNumbers);
+});
+
+$runner->run('configured tray numbers accept the deployed comma-separated format', static function (): void {
+    $trayNumbers = \Forge\Server\parseConfiguredTrayNumbers('1,2,3,4,5,6,7,8,9,10,11,12');
+
+    assertSame([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], $trayNumbers);
+});
+
+$runner->run('private tray config uses config array value when environment is absent', static function (): void {
+    $resolvedValue = \Forge\Server\resolvePrivateTrayNumbersConfigValue(false, [
+        'FORGE_TRAY_NUMBERS' => '1,2,3,4,5,6,7,8,9,10,11,12',
+    ]);
+
+    assertSame('1,2,3,4,5,6,7,8,9,10,11,12', $resolvedValue);
+});
+
+$runner->run('private tray config gives non-empty environment values precedence over config array values', static function (): void {
+    $resolvedValue = \Forge\Server\resolvePrivateTrayNumbersConfigValue('4,5,6', [
+        'FORGE_TRAY_NUMBERS' => '1,2,3',
+    ]);
+
+    assertSame('4,5,6', $resolvedValue);
+});
+
+$runner->run('private bootstrap normalization preserves both staff auth and tray configuration keys', static function (): void {
+    $normalized = \Forge\Server\normalizePrivateServerConfig([
+        'FORGE_DB_DSN' => 'mysql:host=localhost;dbname=test;charset=utf8mb4',
+        'FORGE_DB_USER' => 'forge_user',
+        'FORGE_DB_PASSWORD' => 'secret',
+        'FORGE_STAFF_PIN_HASH' => '$2y$example',
+        'FORGE_TRAY_NUMBERS' => '1,2,3',
+        'IGNORED_KEY' => 'ignored',
+    ]);
+
+    assertSame('$2y$example', $normalized['FORGE_STAFF_PIN_HASH']);
+    assertSame('1,2,3', $normalized['FORGE_TRAY_NUMBERS']);
+    assertTrue(!array_key_exists('IGNORED_KEY', $normalized));
+});
+
+$runner->run('staff endpoint bootstrap candidates preserve the hosted forge_server_test sibling layout', static function (): void {
+    $candidates = forge_staff_bootstrap_candidates(null, '/home/example/domains/forge.thehilltopshop.com/public_html/api/v1/staff');
+
+    assertSame('/home/example/domains/forge.thehilltopshop.com/forge_server_test/bootstrap.php', $candidates[0]);
+    assertSame('/home/example/domains/forge.thehilltopshop.com/public_html/server/bootstrap.php', $candidates[1]);
+});
+
+$runner->run('configured tray numbers reject non-numeric tokens safely', static function (): void {
+    assertThrows(
+        static function (): void {
+            \Forge\Server\parseConfiguredTrayNumbers('trays 1 through 12');
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof InvalidArgumentException);
+            assertSame('A valid positive tray number is required.', $exception->getMessage());
+        }
+    );
 });
 
 $runner->run('invalid stored staff order payload fails safely', static function (): void {

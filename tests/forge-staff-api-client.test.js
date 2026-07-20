@@ -128,6 +128,98 @@ test('listOrders sends GET and same-origin credentials and returns orders safely
   assert.equal(requests[0].options.credentials, 'same-origin');
 });
 
+test('listTrays sends GET and same-origin credentials and returns normalized trays safely', async () => {
+  const requests = [];
+  const client = staffApiClientModule.createForgeStaffApiClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return createJsonResponse(200, {
+        application: 'Forge',
+        api_version: '1',
+        status: 'ok',
+        data: {
+          trays: [
+            {
+              tray_number: '12',
+              tray_status: 'assigned',
+              current_order_uuid: 'order-12',
+              assigned_at: '2026-07-20T12:00:00Z',
+              updated_at: '2026-07-20T12:00:00Z'
+            }
+          ]
+        }
+      });
+    }
+  });
+
+  const result = await client.listTrays();
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.trays, [
+    {
+      tray_number: 12,
+      tray_status: 'assigned',
+      current_order_uuid: 'order-12',
+      assigned_at: '2026-07-20T12:00:00Z',
+      updated_at: '2026-07-20T12:00:00Z'
+    }
+  ]);
+  assert.equal(requests[0].url, '/api/v1/staff/trays.php');
+  assert.equal(requests[0].options.method, 'GET');
+  assert.equal(requests[0].options.credentials, 'same-origin');
+});
+
+test('assignTray sends POST JSON and same-origin credentials with the approved payload', async () => {
+  const requests = [];
+  const client = staffApiClientModule.createForgeStaffApiClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return createJsonResponse(200, {
+        application: 'Forge',
+        api_version: '1',
+        status: 'ok',
+        data: {
+          already_assigned: false,
+          order: {
+            forge_order_uuid: 'order-1',
+            payload: { customer: { full_name: 'Kyle' }, items: [] }
+          },
+          tray: {
+            tray_number: 3,
+            tray_status: 'assigned',
+            current_order_uuid: 'order-1',
+            assigned_at: '2026-07-20T12:00:00Z',
+            updated_at: '2026-07-20T12:00:00Z'
+          },
+          assignment_history: {
+            tray_assignment_id: 'assignment-1',
+            tray_number: 3,
+            forge_order_uuid: 'order-1',
+            assigned_at: '2026-07-20T12:00:00Z',
+            released_at: null,
+            release_reason: null
+          }
+        }
+      });
+    }
+  });
+
+  const result = await client.assignTray('order-1', '3');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.alreadyAssigned, false);
+  assert.equal(result.tray.tray_number, 3);
+  assert.equal(result.assignmentHistory.tray_assignment_id, 'assignment-1');
+  assert.equal(requests[0].url, '/api/v1/staff/assign-tray.php');
+  assert.equal(requests[0].options.method, 'POST');
+  assert.equal(requests[0].options.credentials, 'same-origin');
+  assert.equal(requests[0].options.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    forge_order_uuid: 'order-1',
+    tray_number: 3
+  });
+});
+
 test('401 responses are handled safely as unauthenticated results', async () => {
   const client = staffApiClientModule.createForgeStaffApiClient({
     fetchImpl: async (url) => {
@@ -157,10 +249,14 @@ test('401 responses are handled safely as unauthenticated results', async () => 
   const sessionResult = await client.checkSession();
   const loginResult = await client.login('1234');
   const ordersResult = await client.listOrders();
+  const traysResult = await client.listTrays();
+  const assignResult = await client.assignTray('order-1', 1);
 
   assert.deepEqual(sessionResult, { ok: false, authenticated: false, unauthenticated: true });
   assert.deepEqual(loginResult, { ok: false, authenticated: false, unauthenticated: true });
   assert.deepEqual(ordersResult, { ok: false, authenticated: false, unauthenticated: true, orders: [] });
+  assert.deepEqual(traysResult, { ok: false, authenticated: false, unauthenticated: true, trays: [] });
+  assert.deepEqual(assignResult, { ok: false, authenticated: false, unauthenticated: true });
 });
 
 test('malformed or non-JSON responses produce a safe generic client error', async () => {
@@ -203,6 +299,67 @@ test('PIN values are not included in safe client errors', async () => {
     (error) => {
       assert.equal(error.code, 'server_error');
       assert.doesNotMatch(error.message, /2468/);
+      return true;
+    }
+  );
+});
+
+test('tray assignment conflicts and missing tray configuration return safe normalized errors', async () => {
+  const responses = [
+    createJsonResponse(409, {
+      application: 'Forge',
+      api_version: '1',
+      status: 'error',
+      error: {
+        code: 'tray_unavailable',
+        message: 'That tray is no longer available. Choose another tray.'
+      }
+    }),
+    createJsonResponse(503, {
+      application: 'Forge',
+      api_version: '1',
+      status: 'error',
+      error: {
+        code: 'no_trays_configured',
+        message: 'No production trays are configured.'
+      }
+    })
+  ];
+  const client = staffApiClientModule.createForgeStaffApiClient({
+    fetchImpl: async () => responses.shift()
+  });
+
+  await assert.rejects(
+    () => client.assignTray('order-1', 1),
+    (error) => {
+      assert.equal(error.code, 'tray_unavailable');
+      assert.equal(error.message, 'That tray is no longer available. Choose another tray.');
+      return true;
+    }
+  );
+
+  await assert.rejects(
+    () => client.listTrays(),
+    (error) => {
+      assert.equal(error.code, 'no_trays_configured');
+      assert.equal(error.message, 'No production trays are configured.');
+      return true;
+    }
+  );
+});
+
+test('invalid tray numbers are rejected before sending an assignment request', async () => {
+  const client = staffApiClientModule.createForgeStaffApiClient({
+    fetchImpl: async () => {
+      throw new Error('fetch should not be called');
+    }
+  });
+
+  await assert.rejects(
+    () => client.assignTray('order-1', '0'),
+    (error) => {
+      assert.equal(error.code, 'invalid_request');
+      assert.equal(error.message, 'A valid production tray is required.');
       return true;
     }
   );

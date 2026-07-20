@@ -22,7 +22,7 @@ function buildOrderHandlerFromEnvironment(?callable $unexpectedExceptionReporter
 function buildStaffOrderRepositoryFromEnvironment(): PdoStaffOrderRepository
 {
     $pdo = DatabaseConnectionFactory::createFromEnvironment(loadPrivateDatabaseConfig());
-    return new PdoStaffOrderRepository($pdo);
+    return new PdoStaffOrderRepository($pdo, loadPrivateTrayConfig());
 }
 
 function loadPrivateStaffPinHashFromEnvironment(): string
@@ -36,7 +36,7 @@ function loadPrivateStaffPinHashFromEnvironment(): string
 }
 
 /**
- * @return array{FORGE_DB_DSN?: mixed, FORGE_DB_USER?: mixed, FORGE_DB_PASSWORD?: mixed, FORGE_STAFF_PIN_HASH?: mixed}
+ * @return array{FORGE_DB_DSN?: mixed, FORGE_DB_USER?: mixed, FORGE_DB_PASSWORD?: mixed, FORGE_STAFF_PIN_HASH?: mixed, FORGE_TRAY_NUMBERS?: mixed}
  */
 function loadPrivateServerConfig(): array
 {
@@ -72,8 +72,25 @@ function loadPrivateStaffAuthConfig(): array
 }
 
 /**
+ * @return array{FORGE_TRAY_NUMBERS?: mixed}
+ */
+function loadPrivateTrayConfig(): array
+{
+    $config = loadPrivateServerConfig();
+    $resolvedValue = resolvePrivateTrayNumbersConfigValue(getenv('FORGE_TRAY_NUMBERS'), $config);
+
+    if ($resolvedValue === null) {
+        return [];
+    }
+
+    return [
+        'FORGE_TRAY_NUMBERS' => $resolvedValue,
+    ];
+}
+
+/**
  * @param mixed $config
- * @return array{FORGE_DB_DSN?: mixed, FORGE_DB_USER?: mixed, FORGE_DB_PASSWORD?: mixed, FORGE_STAFF_PIN_HASH?: mixed}
+ * @return array{FORGE_DB_DSN?: mixed, FORGE_DB_USER?: mixed, FORGE_DB_PASSWORD?: mixed, FORGE_STAFF_PIN_HASH?: mixed, FORGE_TRAY_NUMBERS?: mixed}
  */
 function normalizePrivateServerConfig($config): array
 {
@@ -86,6 +103,7 @@ function normalizePrivateServerConfig($config): array
         'FORGE_DB_USER',
         'FORGE_DB_PASSWORD',
         'FORGE_STAFF_PIN_HASH',
+        'FORGE_TRAY_NUMBERS',
     ];
 
     $normalized = [];
@@ -113,6 +131,28 @@ function filterPrivateServerConfigKeys(array $config, array $approvedKeys): arra
     }
 
     return $normalized;
+}
+
+/**
+ * @param mixed $environmentValue
+ * @param array<string, mixed> $config
+ */
+function resolvePrivateTrayNumbersConfigValue($environmentValue, array $config): ?string
+{
+    if (is_string($environmentValue)) {
+        $normalizedEnvironmentValue = trim($environmentValue);
+        if ($normalizedEnvironmentValue !== '') {
+            return $normalizedEnvironmentValue;
+        }
+    }
+
+    $configValue = $config['FORGE_TRAY_NUMBERS'] ?? null;
+    if (!is_string($configValue)) {
+        return null;
+    }
+
+    $normalizedConfigValue = trim($configValue);
+    return $normalizedConfigValue === '' ? null : $normalizedConfigValue;
 }
 
 /**

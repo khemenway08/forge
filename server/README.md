@@ -16,6 +16,7 @@ The server-side order-storage foundation reads database configuration only from:
 - `FORGE_DB_USER`
 - `FORGE_DB_PASSWORD`
 - `FORGE_STAFF_PIN_HASH`
+- `FORGE_TRAY_NUMBERS`
 
 No credentials belong in Git.
 
@@ -27,6 +28,7 @@ Private config placeholder:
 
 ```php
 'FORGE_STAFF_PIN_HASH' => '$2y$...replace-with-password-hash...',
+'FORGE_TRAY_NUMBERS' => '1,2,3,4,5,6,7,8,9,10,11,12',
 ```
 
 For manual shared-hosting deployment, a private `config.php` fallback is also supported.
@@ -68,9 +70,20 @@ After configuring a non-production MySQL database, apply:
 
 ```bash
 mysql --database YOUR_NON_PRODUCTION_DATABASE < server/migrations/001_create_forge_orders.sql
+mysql --database YOUR_NON_PRODUCTION_DATABASE < server/migrations/002_add_production_trays.sql
 ```
 
 This phase does not create WooCommerce orders and does not connect browser submission to the server yet.
+
+## Configure Production Trays
+
+Set `FORGE_TRAY_NUMBERS` in the private Hostinger environment or private `config.php` using a comma-separated list of positive tray numbers:
+
+```php
+'FORGE_TRAY_NUMBERS' => '1,2,3,4,5,6,7,8,9,10,11,12',
+```
+
+The tray repository seeds missing tray rows idempotently from this private configuration the first time staff loads trays or assigns a tray. Existing tray rows are preserved, and tray numbers are never derived from array position.
 
 ## Run the PHP Tests
 

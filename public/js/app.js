@@ -1,4 +1,8 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
+const FORGE_BUILD_VERSION = '20260720-14';
+
+window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
+
 const appShell = document.querySelector('.app-shell');
 const treeForm = document.querySelector('[data-form="tree-ornament"]');
 const treeStatus = document.querySelector('[data-form-status]');
@@ -163,11 +167,11 @@ if (!forgeOrderSubmission) {
   throw new Error('Forge order submission helpers failed to load before app.js.');
 }
 
-if (!forgeStaffApiClient) {
+if (!forgeStaffApiClient && !isLoopbackHost(window.location)) {
   throw new Error('Forge staff API client failed to load before app.js.');
 }
 
-if (!forgeStaffOrdersRuntime) {
+if (!forgeStaffOrdersRuntime && !isLoopbackHost(window.location)) {
   throw new Error('Forge staff orders runtime helpers failed to load before app.js.');
 }
 
@@ -633,12 +637,8 @@ let lastStaffPackingFocusTarget = null;
 const payloadPreviewContextStore = forgeOrderPayloadPreview.createPayloadPreviewContextStore();
 const orderStore = forgeOrderStore.createOrderStore();
 const orderSyncApiClient = forgeApiClient.createForgeApiClient();
-const staffApiClient = forgeStaffApiClient.createForgeStaffApiClient();
-const staffRuntime = forgeStaffOrdersRuntime.createStaffOrdersRuntime({
-  locationLike: window.location,
-  staffApiClient,
-  localOrderStore: orderStore
-});
+const staffApiClient = createOptionalStaffApiClient();
+const staffRuntime = createSafeStaffRuntime(orderStore, staffApiClient);
 const orderSyncService = forgeOrderServerSync.createOrderServerSyncService({
   orderStore,
   apiClient: orderSyncApiClient
@@ -666,6 +666,139 @@ automaticOrderSync.start();
 staffOrdersState.dataSource = staffRuntime.environment.dataSource;
 staffOrdersState.readOnly = staffRuntime.environment.dataSource === 'server';
 staffOrdersState.authenticated = staffRuntime.environment.dataSource === 'local';
+
+function createOptionalStaffApiClient() {
+  if (!forgeStaffApiClient || typeof forgeStaffApiClient.createForgeStaffApiClient !== 'function') {
+    if (isLoopbackHost(window.location)) {
+      return null;
+    }
+    throw new Error('ForgeStaffApiClient.createForgeStaffApiClient() is unavailable during app startup.');
+  }
+
+  try {
+    return forgeStaffApiClient.createForgeStaffApiClient();
+  } catch (error) {
+    if (isLoopbackHost(window.location)) {
+      console.error('Forge staff API client bootstrap failed on localhost', error);
+      return null;
+    }
+    throw error;
+  }
+}
+
+function createSafeStaffRuntime(localOrderStore, staffClient) {
+  if (!forgeStaffOrdersRuntime || typeof forgeStaffOrdersRuntime.createStaffOrdersRuntime !== 'function') {
+    if (isLoopbackHost(window.location)) {
+      console.error('Forge staff runtime bootstrap fell back to localhost development mode because ForgeStaffOrdersRuntime was unavailable.');
+      return createLocalStaffRuntimeFallback(localOrderStore);
+    }
+    throw new Error('ForgeStaffOrdersRuntime.createStaffOrdersRuntime() is unavailable during app startup.');
+  }
+
+  try {
+    return forgeStaffOrdersRuntime.createStaffOrdersRuntime({
+      locationLike: window.location,
+      staffApiClient: staffClient,
+      localOrderStore
+    });
+  } catch (error) {
+    if (isLoopbackHost(window.location)) {
+      console.error('Forge staff runtime bootstrap failed on localhost', error);
+      return createLocalStaffRuntimeFallback(localOrderStore);
+    }
+    throw error;
+  }
+}
+
+function createLocalStaffRuntimeFallback(localOrderStore) {
+  return {
+    environment: {
+      protocol: String(window.location?.protocol || ''),
+      hostname: String(window.location?.hostname || ''),
+      usesHostedServer: false,
+      requiresAuthentication: false,
+      dataSource: 'local'
+    },
+    async checkAccess() {
+      return {
+        ok: true,
+        authenticated: true,
+        requiresAuthentication: false,
+        nextScreen: 'staff-orders',
+        dataSource: 'local',
+        readOnly: false
+      };
+    },
+    async login() {
+      return {
+        ok: true,
+        authenticated: true,
+        requiresAuthentication: false,
+        nextScreen: 'staff-orders',
+        dataSource: 'local',
+        readOnly: false
+      };
+    },
+    async logout() {
+      return {
+        ok: true,
+        authenticated: false,
+        nextScreen: 'welcome',
+        dataSource: 'local',
+        readOnly: false
+      };
+    },
+    async loadOrders() {
+      const records = typeof localOrderStore?.listOrders === 'function'
+        ? await localOrderStore.listOrders()
+        : [];
+      return {
+        ok: true,
+        authenticated: true,
+        dataSource: 'local',
+        readOnly: false,
+        records: Array.isArray(records) ? records : []
+      };
+    },
+    async loadTrays() {
+      const trays = typeof localOrderStore?.listTrays === 'function'
+        ? await localOrderStore.listTrays()
+        : [];
+      return {
+        ok: true,
+        authenticated: true,
+        dataSource: 'local',
+        readOnly: false,
+        trays: Array.isArray(trays) ? trays : []
+      };
+    },
+    async assignTrayToOrder(forgeOrderUuid, trayNumber) {
+      if (typeof localOrderStore?.assignTrayToOrder !== 'function') {
+        throw new Error('Local tray assignment is unavailable.');
+      }
+
+      const result = await localOrderStore.assignTrayToOrder(forgeOrderUuid, trayNumber);
+      return {
+        ok: true,
+        authenticated: true,
+        dataSource: 'local',
+        readOnly: false,
+        alreadyAssigned: Boolean(result?.already_assigned),
+        order: result?.order || null,
+        tray: result?.tray || null,
+        assignmentHistory: result?.assignment_history || null
+      };
+    }
+  };
+}
+
+function isLoopbackHost(locationLike) {
+  const hostname = String(locationLike?.hostname || '').trim().toLowerCase();
+  return hostname === 'localhost'
+    || hostname === '127.0.0.1'
+    || hostname === '::1'
+    || hostname.endsWith('.local');
+}
 
 function getProductConfig(productDefinitionId = draft.productDefinitionId) {
   const resolvedProductDefinitionId = resolveConfiguredProductDefinitionId(productDefinitionId);
@@ -880,7 +1013,7 @@ document.querySelectorAll('[data-product]').forEach((button) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./service-worker.js').catch(() => {});
+    navigator.serviceWorker.register(`./service-worker.js?v=${FORGE_BUILD_VERSION}`, { updateViaCache: 'none' }).catch(() => {});
   });
 }
 
@@ -1340,6 +1473,10 @@ function isHostedStaffMode() {
   return staffRuntime.environment.dataSource === 'server';
 }
 
+function shouldCreateStaffUiShell() {
+  return Boolean(staffOrdersState.enabled || staffOrdersState.authenticated || staffOrdersState.readOnly || isHostedStaffMode());
+}
+
 function isStaffReadOnlyRecord(record) {
   return Boolean(record?.staff_read_only) || staffOrdersState.readOnly;
 }
@@ -1364,7 +1501,7 @@ function getStaffSourceConfig() {
       queueUnavailableLabel: 'Shared queue unavailable',
       emptyReadyHeading: 'No shared orders are ready to pack',
       emptyReadyCopy: 'Shared server orders will appear here when the hosted production workflow begins reporting ready-to-pack status.',
-      readOnlyNote: 'Shared server orders are read-only in this build.',
+      readOnlyNote: 'Shared server orders currently support tray assignment only in this build.',
       syncAttemptsLabel: 'Data Source',
       syncAttemptsValue: 'Shared Server'
     };
@@ -3565,7 +3702,7 @@ function renderSavedOrdersDialog() {
 }
 
 function ensureStaffOrderDetailUi() {
-  if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled) || staffOrderDetailDialog) {
+  if (!shouldCreateStaffUiShell() || staffOrderDetailDialog) {
     return;
   }
 
@@ -3597,9 +3734,6 @@ function ensureStaffOrderDetailUi() {
     }
 
     if (action === 'staff-open-tray-assignment' && orderUuid) {
-      if (staffOrdersState.readOnly) {
-        return;
-      }
       openStaffTrayAssignment(orderUuid);
       return;
     }
@@ -3623,7 +3757,7 @@ function ensureStaffOrderDetailUi() {
 }
 
 function ensureStaffTrayAssignmentUi() {
-  if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled) || staffTrayAssignmentDialog) {
+  if (!shouldCreateStaffUiShell() || staffTrayAssignmentDialog) {
     return;
   }
 
@@ -3667,8 +3801,48 @@ function ensureStaffTrayAssignmentUi() {
   });
 }
 
+function bindStaffOrderDetailDirectActions(assignTrayButton) {
+  if (!assignTrayButton) {
+    staffOrdersState.notice = '';
+    staffOrdersState.detailError = 'Tray assignment is unavailable right now.';
+    return;
+  }
+
+  if (assignTrayButton.dataset.trayHandlerBound === 'true' && typeof assignTrayButton.onclick === 'function') {
+    return;
+  }
+
+  assignTrayButton.onclick = (event) => handleStaffOpenTrayAssignment(event, assignTrayButton);
+  assignTrayButton.dataset.trayHandlerBound = 'true';
+}
+
+function handleStaffOpenTrayAssignment(event, button) {
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+
+  const forgeOrderUuid = String(button?.dataset?.orderUuid || '').trim();
+  if (!forgeOrderUuid) {
+    staffOrdersState.notice = '';
+    staffOrdersState.detailError = 'Tray assignment is unavailable right now.';
+    renderStaffOrderDetail();
+    return;
+  }
+
+  staffOrdersState.notice = 'Loading available trays...';
+  staffOrdersState.noticeTone = 'success';
+  staffOrdersState.detailError = '';
+  renderStaffOrderDetail();
+
+  Promise.resolve(openStaffTrayAssignment(forgeOrderUuid)).catch((error) => {
+    console.error('Forge tray assignment failed to open', error);
+    staffOrdersState.notice = '';
+    staffOrdersState.detailError = error?.message || 'Production trays could not be loaded on this device.';
+    renderStaffOrderDetail();
+  });
+}
+
 function ensureStaffBatchUi() {
-  if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled) || staffBatchDialog) {
+  if (!shouldCreateStaffUiShell() || staffBatchDialog) {
     return;
   }
 
@@ -3707,7 +3881,7 @@ function ensureStaffBatchUi() {
 }
 
 function ensureStaffPackingUi() {
-  if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled) || staffPackingDialog) {
+  if (!shouldCreateStaffUiShell() || staffPackingDialog) {
     return;
   }
 
@@ -3862,6 +4036,10 @@ function getOrderTrayBadgeClass(record) {
 
 function canAssignTrayToOrder(record) {
   return !getOrderTrayNumber(record) && getOrderProductionStatus(record) === 'submitted';
+}
+
+function canStaffAssignTray(record) {
+  return canAssignTrayToOrder(record) && (!isStaffReadOnlyRecord(record) || record?.staff_can_assign_tray === true);
 }
 
 function getOrderCompletionCounts(record) {
@@ -4693,7 +4871,7 @@ function renderStaffOrderDetail() {
   const shortOrderReference = getOrderShortReference(record);
   const productionStatusLabel = getOrderProductionStatusLabel(record);
   const trayLabel = getOrderTrayLabel(record);
-  const showAssignTrayAction = !isReadOnlyRecord && canAssignTrayToOrder(record);
+  const showAssignTrayAction = canStaffAssignTray(record);
   const completionCounts = getOrderCompletionCounts(record);
   const completionSummary = getOrderCompletionSummary(record);
   const showNoTrayMessage = !getOrderTrayNumber(record);
@@ -4705,7 +4883,8 @@ function renderStaffOrderDetail() {
     && completionCounts.completedItemCount >= completionCounts.totalItemCount
     && openFlags.length > 0;
 
-  staffOrderDetailDialog.innerHTML = `
+  const renderedDetailContainer = staffOrderDetailDialog;
+  renderedDetailContainer.innerHTML = `
     <div class="staff-order-detail-header">
       <div class="staff-order-detail-heading">
         <p class="eyebrow staff-orders-eyebrow">Development Only</p>
@@ -4807,6 +4986,11 @@ function renderStaffOrderDetail() {
       ${getStaffOrderItemsMarkup(record, payload.items || [])}
     </section>
   `;
+
+  if (showAssignTrayAction) {
+    const assignTrayButton = renderedDetailContainer.querySelector('[data-action="staff-open-tray-assignment"]');
+    bindStaffOrderDetailDirectActions(assignTrayButton);
+  }
 }
 
 async function submitStaffItemCompletion(forgeOrderUuid, lineId) {
@@ -4843,6 +5027,10 @@ async function submitStaffItemCompletion(forgeOrderUuid, lineId) {
 async function openStaffTrayAssignment(forgeOrderUuid) {
   ensureStaffTrayAssignmentUi();
   if (!staffTrayAssignmentDialog) {
+    staffOrdersState.notice = 'Tray assignment is unavailable right now.';
+    staffOrdersState.noticeTone = 'error';
+    staffOrdersState.detailError = staffOrdersState.detailError || 'Tray assignment is unavailable right now.';
+    renderStaffOrderDetail();
     return;
   }
 
@@ -4858,22 +5046,30 @@ async function openStaffTrayAssignment(forgeOrderUuid) {
   renderStaffTrayAssignment();
 
   try {
-    const [record, trays] = await Promise.all([
-      orderStore.getOrder(forgeOrderUuid),
-      orderStore.listTrays()
+    const [record, traysResult] = await Promise.all([
+      staffOrdersState.readOnly
+        ? Promise.resolve(staffOrdersState.records.find((candidate) => candidate?.forge_order_uuid === forgeOrderUuid) || null)
+        : orderStore.getOrder(forgeOrderUuid),
+      staffRuntime.loadTrays()
     ]);
+
+    if (!traysResult.ok && traysResult.unauthenticated) {
+      closeStaffTrayAssignment({ restoreFocus: false });
+      showUnauthenticatedStaffAccess();
+      return;
+    }
 
     if (!record) {
       staffOrdersState.trayDialogError = 'That saved order could not be found.';
-    } else if (!canAssignTrayToOrder(record)) {
+    } else if (!canStaffAssignTray(record)) {
       staffOrdersState.trayDialogError = 'This order already has an assigned tray.';
     } else {
       staffOrdersState.trayDialogRecord = record;
-      staffOrdersState.trayDialogAvailableTrays = trays.filter((tray) => tray.tray_status === 'available');
+      staffOrdersState.trayDialogAvailableTrays = Array.isArray(traysResult.trays) ? traysResult.trays : [];
     }
   } catch (error) {
     console.error('Forge tray assignment options failed to load', error);
-    staffOrdersState.trayDialogError = 'Production trays could not be loaded on this device.';
+    staffOrdersState.trayDialogError = error?.message || 'Production trays could not be loaded on this device.';
   } finally {
     staffOrdersState.trayDialogLoading = false;
     renderStaffTrayAssignment();
@@ -4914,19 +5110,41 @@ async function submitStaffTrayAssignment() {
   renderStaffTrayAssignment();
 
   try {
-    const result = await orderStore.assignTrayToOrder(
+    const result = await staffRuntime.assignTrayToOrder(
       staffOrdersState.trayDialogRecord.forge_order_uuid,
       staffOrdersState.trayDialogSelectedTrayNumber
     );
+
+    if (!result.ok && result.unauthenticated) {
+      closeStaffTrayAssignment({ restoreFocus: false });
+      showUnauthenticatedStaffAccess();
+      return;
+    }
 
     staffOrdersState.notice = `Tray ${result.tray.tray_number} assigned to ${result.order.payload?.customer?.full_name || 'this order'}.`;
     staffOrdersState.noticeTone = 'success';
     closeStaffTrayAssignment({ restoreFocus: false });
     await loadStaffOrdersQueue();
-    staffOrdersState.detailRecord = await orderStore.getOrder(result.order.forge_order_uuid);
+    staffOrdersState.detailRecord = staffOrdersState.readOnly
+      ? staffOrdersState.records.find((record) => record?.forge_order_uuid === result.order.forge_order_uuid) || result.order
+      : await orderStore.getOrder(result.order.forge_order_uuid);
     renderStaffOrderDetail();
   } catch (error) {
     console.error('Forge tray assignment failed', error);
+    if (error?.code === 'tray_unavailable' && staffOrdersState.trayDialogRecord) {
+      try {
+        const traysResult = await staffRuntime.loadTrays();
+        if (!traysResult.ok && traysResult.unauthenticated) {
+          closeStaffTrayAssignment({ restoreFocus: false });
+          showUnauthenticatedStaffAccess();
+          return;
+        }
+        staffOrdersState.trayDialogAvailableTrays = Array.isArray(traysResult.trays) ? traysResult.trays : [];
+        staffOrdersState.trayDialogSelectedTrayNumber = null;
+      } catch (refreshError) {
+        console.error('Forge tray assignment refresh failed', refreshError);
+      }
+    }
     staffOrdersState.trayDialogError = error?.message || 'Tray assignment could not be saved.';
     staffOrdersState.notice = '';
     staffOrdersState.trayDialogSaving = false;
@@ -4962,7 +5180,7 @@ function renderStaffTrayAssignment() {
     return;
   }
 
-  if (staffOrdersState.trayDialogError || !staffOrdersState.trayDialogRecord) {
+  if (!staffOrdersState.trayDialogRecord) {
     staffTrayAssignmentDialog.innerHTML = `
       <div class="staff-order-detail-header">
         <div>
@@ -4981,7 +5199,7 @@ function renderStaffTrayAssignment() {
 
   const record = staffOrdersState.trayDialogRecord;
   const customerName = record.payload?.customer?.full_name || 'Unknown customer';
-  const availableTrays = [...staffOrdersState.trayDialogAvailableTrays].sort((left, right) => left.tray_number - right.tray_number);
+  const trays = [...staffOrdersState.trayDialogAvailableTrays].sort((left, right) => left.tray_number - right.tray_number);
   const hasSelection = Number.isInteger(staffOrdersState.trayDialogSelectedTrayNumber);
   const disableSubmit = !hasSelection || staffOrdersState.trayDialogSaving;
 
@@ -5007,26 +5225,37 @@ function renderStaffTrayAssignment() {
     </section>
 
     <section class="staff-order-detail-section">
-      <h3>Available Production Trays</h3>
-      ${availableTrays.length ? `
-        <div class="staff-tray-grid" role="group" aria-label="Available production trays">
-          ${availableTrays.map((tray) => `
+      <h3>Production Trays</h3>
+      ${trays.length ? `
+        <div class="staff-tray-grid" role="group" aria-label="Production trays">
+          ${trays.map((tray) => {
+            const isAvailable = tray?.tray_status === 'available';
+            const isSelected = staffOrdersState.trayDialogSelectedTrayNumber === tray.tray_number;
+            const isDisabled = staffOrdersState.trayDialogSaving || !isAvailable;
+            const statusLabel = isAvailable
+              ? ''
+              : (tray?.tray_status === 'out_of_service' ? 'Out of Service' : 'Assigned');
+
+            return `
             <button
-              class="secondary-button staff-tray-option${staffOrdersState.trayDialogSelectedTrayNumber === tray.tray_number ? ' is-selected' : ''}"
+              class="secondary-button staff-tray-option${isSelected ? ' is-selected' : ''}${!isAvailable ? ' is-unavailable' : ''}"
               type="button"
               data-action="staff-select-tray"
               data-tray-number="${escapeHtml(String(tray.tray_number))}"
-              aria-pressed="${staffOrdersState.trayDialogSelectedTrayNumber === tray.tray_number ? 'true' : 'false'}"
-              ${staffOrdersState.trayDialogSaving ? 'disabled' : ''}
+              aria-pressed="${isSelected ? 'true' : 'false'}"
+              aria-disabled="${isDisabled ? 'true' : 'false'}"
+              ${isDisabled ? 'disabled' : ''}
             >
-              Tray ${escapeHtml(String(tray.tray_number))}
+              <span>Tray ${escapeHtml(String(tray.tray_number))}</span>
+              ${statusLabel ? `<small>${escapeHtml(statusLabel)}</small>` : ''}
             </button>
-          `).join('')}
+          `;
+          }).join('')}
         </div>
       ` : `
         <div class="staff-empty-state">
-          <h3>No production trays are currently available.</h3>
-          <p>Finish packing or release a tray before assigning another order.</p>
+          <h3>No production trays are configured.</h3>
+          <p>Configure tray numbers on the Forge server before assigning orders.</p>
         </div>
       `}
     </section>

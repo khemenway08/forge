@@ -145,12 +145,89 @@
       };
     }
 
+    async function loadTrays() {
+      if (environment.dataSource === STAFF_DATA_SOURCES.local) {
+        assertLocalOrderStore(localOrderStore, 'listTrays');
+        const trays = await localOrderStore.listTrays();
+        return {
+          ok: true,
+          authenticated: true,
+          dataSource: STAFF_DATA_SOURCES.local,
+          readOnly: false,
+          trays: Array.isArray(trays) ? trays : []
+        };
+      }
+
+      assertStaffApiClient(staffApiClient, 'listTrays');
+      const result = await staffApiClient.listTrays();
+      if (!result || (!result.ok && result.unauthenticated) || result.authenticated === false) {
+        return {
+          ok: false,
+          authenticated: false,
+          unauthenticated: true,
+          dataSource: STAFF_DATA_SOURCES.server,
+          readOnly: true,
+          trays: []
+        };
+      }
+
+      return {
+        ok: true,
+        authenticated: true,
+        dataSource: STAFF_DATA_SOURCES.server,
+        readOnly: true,
+        trays: Array.isArray(result.trays) ? result.trays.slice().sort(compareTraysByNumber) : []
+      };
+    }
+
+    async function assignTrayToOrder(forgeOrderUuid, trayNumber) {
+      if (environment.dataSource === STAFF_DATA_SOURCES.local) {
+        assertLocalOrderStore(localOrderStore, 'assignTrayToOrder');
+        const result = await localOrderStore.assignTrayToOrder(forgeOrderUuid, trayNumber);
+        return {
+          ok: true,
+          authenticated: true,
+          dataSource: STAFF_DATA_SOURCES.local,
+          readOnly: false,
+          alreadyAssigned: Boolean(result && result.already_assigned),
+          order: result && result.order ? result.order : null,
+          tray: result && result.tray ? result.tray : null,
+          assignmentHistory: result && result.assignment_history ? result.assignment_history : null
+        };
+      }
+
+      assertStaffApiClient(staffApiClient, 'assignTray');
+      const result = await staffApiClient.assignTray(forgeOrderUuid, trayNumber);
+      if (!result || (!result.ok && result.unauthenticated) || result.authenticated === false) {
+        return {
+          ok: false,
+          authenticated: false,
+          unauthenticated: true,
+          dataSource: STAFF_DATA_SOURCES.server,
+          readOnly: true
+        };
+      }
+
+      return {
+        ok: true,
+        authenticated: true,
+        dataSource: STAFF_DATA_SOURCES.server,
+        readOnly: true,
+        alreadyAssigned: Boolean(result.alreadyAssigned),
+        order: adaptServerOrderForQueue(result.order),
+        tray: result.tray || null,
+        assignmentHistory: result.assignmentHistory || null
+      };
+    }
+
     return {
       environment,
       checkAccess,
       login,
       logout,
-      loadOrders
+      loadOrders,
+      loadTrays,
+      assignTrayToOrder
     };
   }
 
@@ -189,6 +266,8 @@
 
   function adaptServerOrderForQueue(record) {
     const payload = deepCloneValue(record && typeof record.payload === 'object' ? record.payload : {});
+    const trayNumber = normalizeNullableTrayNumber(record && record.current_tray_number);
+    const productionStatus = normalizeProductionStatus(record && record.production_status, trayNumber);
     return {
       forge_order_uuid: asTrimmedString(record && record.forge_order_uuid),
       record_version: asTrimmedString(record && record.record_version) || '1',
@@ -203,15 +282,16 @@
       server_received_at: asTrimmedString(record && record.received_at) || null,
       server_payload_sha256: asTrimmedString(record && record.payload_sha256) || null,
       server_created: false,
-      production_status: 'submitted',
-      current_tray_number: null,
+      production_status: productionStatus,
+      current_tray_number: trayNumber,
       packed_at: null,
       ready_to_pack_at: null,
       total_item_count: null,
       completed_item_count: null,
       payload,
       staff_data_source: STAFF_DATA_SOURCES.server,
-      staff_read_only: true
+      staff_read_only: true,
+      staff_can_assign_tray: productionStatus === 'submitted' && trayNumber === null
     };
   }
 
@@ -228,6 +308,10 @@
     }
 
     return asTrimmedString(right && right.forge_order_uuid).localeCompare(asTrimmedString(left && left.forge_order_uuid));
+  }
+
+  function compareTraysByNumber(left, right) {
+    return normalizeNullableTrayNumber(left && left.tray_number) - normalizeNullableTrayNumber(right && right.tray_number);
   }
 
   function deepCloneValue(value) {
@@ -247,15 +331,44 @@
     return typeof value === 'string' ? value.trim() : '';
   }
 
+  function normalizeNullableTrayNumber(value) {
+    const stringValue = typeof value === 'number' || typeof value === 'string'
+      ? String(value).trim()
+      : '';
+    if (!/^\d+$/.test(stringValue)) {
+      return null;
+    }
+
+    const trayNumber = Number.parseInt(stringValue, 10);
+    return Number.isInteger(trayNumber) && trayNumber > 0 ? trayNumber : null;
+  }
+
+  function normalizeProductionStatus(value, trayNumber) {
+    const status = asTrimmedString(value).toLowerCase();
+    if ([
+      'submitted',
+      'tray_assigned',
+      'in_production',
+      'ready_to_pack',
+      'packed',
+      'shipped',
+      'picked_up',
+      'cancelled'
+    ].includes(status)) {
+      return status;
+    }
+    return trayNumber ? 'tray_assigned' : 'submitted';
+  }
+
   function assertStaffApiClient(staffApiClient, methodName) {
     if (!staffApiClient || typeof staffApiClient[methodName] !== 'function') {
       throw new Error(`A Forge staff API client with ${methodName}() is required for hosted staff access.`);
     }
   }
 
-  function assertLocalOrderStore(localOrderStore) {
-    if (!localOrderStore || typeof localOrderStore.listOrders !== 'function') {
-      throw new Error('A local Forge order store is required for development staff access.');
+  function assertLocalOrderStore(localOrderStore, methodName = 'listOrders') {
+    if (!localOrderStore || typeof localOrderStore[methodName] !== 'function') {
+      throw new Error(`A local Forge order store with ${methodName}() is required for development staff access.`);
     }
   }
 
