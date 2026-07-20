@@ -50,6 +50,52 @@
         </div>
       </section>
 
+      <section class="screen staff-orders-screen" data-screen="staff-access">
+        <div class="staff-orders-shell staff-auth-shell">
+          <header class="staff-orders-header">
+            <div class="staff-orders-brand">
+              <img class="staff-orders-logo" src="assets/brand/forge-logo.png" alt="Forge">
+              <div>
+                <p class="eyebrow staff-orders-eyebrow">Development Only</p>
+                <h1>Staff Access</h1>
+                <p class="lead" data-staff-auth-description>Enter the shared Staff PIN to continue.</p>
+              </div>
+            </div>
+            <div class="staff-orders-header-actions">
+              <button class="secondary-button" type="button" data-action="staff-return-welcome-from-auth">Return to Welcome</button>
+            </div>
+          </header>
+
+          <section class="staff-panel-surface staff-auth-card">
+            <form class="staff-auth-form" data-staff-auth-form novalidate autocomplete="off">
+              <div class="staff-auth-copy">
+                <p class="eyebrow staff-orders-eyebrow">Staff Access</p>
+                <h2>Enter Staff PIN</h2>
+                <p>Use the shared Forge Staff PIN to view authenticated staff orders.</p>
+              </div>
+              <div class="staff-auth-field">
+                <label for="staff-pin-input">PIN</label>
+                <input
+                  id="staff-pin-input"
+                  class="staff-auth-input"
+                  type="password"
+                  inputmode="numeric"
+                  autocomplete="off"
+                  autocapitalize="off"
+                  autocorrect="off"
+                  spellcheck="false"
+                  data-staff-pin-input
+                >
+              </div>
+              <p class="staff-orders-status staff-auth-status" data-staff-auth-status aria-live="polite"></p>
+              <div class="staff-auth-actions">
+                <button class="primary-button" type="submit" data-staff-auth-submit>Continue</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      </section>
+
       <section class="screen staff-orders-screen" data-screen="staff-orders">
         <div class="staff-orders-shell">
           <header class="staff-orders-header">
@@ -57,13 +103,15 @@
               <img class="staff-orders-logo" src="assets/brand/forge-logo.png" alt="Forge">
               <div>
                 <p class="eyebrow staff-orders-eyebrow">Development Only</p>
-                <h1>Local Orders Queue</h1>
-                <p class="lead">View durable local orders on this device and assign one production tray per active order.</p>
+                <h1>Staff Orders</h1>
+                <p class="lead" data-staff-orders-lead>View staff orders and production context.</p>
               </div>
             </div>
             <div class="staff-orders-header-actions">
+              <span class="staff-source-pill" data-staff-source-status aria-live="polite"></span>
               <button class="secondary-button" type="button" data-action="staff-open-ready-to-pack">Ready to Pack</button>
               <button class="secondary-button" type="button" data-action="staff-refresh-orders">Refresh Queue</button>
+              <button class="secondary-button" type="button" data-action="staff-logout" data-staff-logout-button hidden>Logout</button>
               <button class="secondary-button" type="button" data-action="staff-return-welcome">Return to Welcome</button>
             </div>
           </header>
@@ -114,12 +162,14 @@
               <div>
                 <p class="eyebrow staff-orders-eyebrow">Development Only</p>
                 <h1>Ready to Pack</h1>
-                <p class="lead">Completed orders waiting for packing verification.</p>
+                <p class="lead" data-ready-to-pack-lead>Completed orders waiting for packing verification.</p>
               </div>
             </div>
             <div class="staff-orders-header-actions">
+              <span class="staff-source-pill" data-ready-source-status aria-live="polite"></span>
               <button class="secondary-button" type="button" data-action="staff-open-orders">All Staff Orders</button>
               <button class="secondary-button" type="button" data-action="staff-refresh-ready-to-pack">Refresh Queue</button>
+              <button class="secondary-button" type="button" data-action="staff-logout" data-staff-logout-button hidden>Logout</button>
               <button class="secondary-button" type="button" data-action="staff-return-welcome">Return to Welcome</button>
             </div>
           </header>
@@ -624,6 +674,8 @@
   <script src="js/forge-order-store.js"></script>
   <script src="js/forge-order-server-sync.js"></script>
   <script src="js/forge-order-submission.js"></script>
+  <script src="js/forge-staff-api-client.js"></script>
+  <script src="js/forge-staff-orders-runtime.js"></script>
   <script src="js/forge-local-orders-queue.js"></script>
   <script src="js/app.js"></script>
 </body>

@@ -37,12 +37,20 @@ const finalReviewDelivery = document.querySelector('[data-final-review-delivery]
 const finalReviewStatus = document.querySelector('[data-final-review-status]');
 const thankYouCopy = document.querySelector('[data-thank-you-copy]');
 const thankYouReference = document.querySelector('[data-thank-you-reference]');
+const staffAuthForm = document.querySelector('[data-staff-auth-form]');
+const staffAuthPinInput = document.querySelector('[data-staff-pin-input]');
+const staffAuthStatus = document.querySelector('[data-staff-auth-status]');
+const staffAuthDescription = document.querySelector('[data-staff-auth-description]');
 const staffOrdersSummary = document.querySelector('[data-staff-orders-summary]');
 const staffOrdersSearchInput = document.querySelector('[data-staff-orders-search]');
 const staffOrdersFilters = document.querySelector('[data-staff-orders-filters]');
 const staffBatchGroups = document.querySelector('[data-staff-batch-groups]');
 const staffOrdersList = document.querySelector('[data-staff-orders-list]');
 const staffOrdersStatus = document.querySelector('[data-staff-orders-status]');
+const staffOrdersLead = document.querySelector('[data-staff-orders-lead]');
+const readyToPackLead = document.querySelector('[data-ready-to-pack-lead]');
+const staffSourceStatusNodes = [...document.querySelectorAll('[data-staff-source-status], [data-ready-source-status]')];
+const staffLogoutButtons = [...document.querySelectorAll('[data-staff-logout-button]')];
 const readyToPackCount = document.querySelector('[data-ready-to-pack-count]');
 const readyToPackList = document.querySelector('[data-ready-to-pack-list]');
 const addConfirmationBackdrop = document.querySelector('[data-add-confirmation-backdrop]');
@@ -66,6 +74,8 @@ const forgeApiClient = globalThis.ForgeApiClient;
 const forgeOrderStore = globalThis.ForgeOrderStore;
 const forgeOrderServerSync = globalThis.ForgeOrderServerSync;
 const forgeOrderSubmission = globalThis.ForgeOrderSubmission;
+const forgeStaffApiClient = globalThis.ForgeStaffApiClient;
+const forgeStaffOrdersRuntime = globalThis.ForgeStaffOrdersRuntime;
 const forgeLocalOrdersQueue = globalThis.ForgeLocalOrdersQueue;
 const storageKey = 'forge-tree-ornament-draft';
 const orderItemsStorageKey = 'forge-order-items';
@@ -79,6 +89,14 @@ const savedOrderInspectorState = {
 };
 const staffOrdersState = {
   enabled: false,
+  dataSource: 'local',
+  readOnly: false,
+  authenticated: false,
+  authChecking: false,
+  authSubmitting: false,
+  authError: '',
+  desiredScreen: 'staff-orders',
+  errorCanRetry: false,
   loading: false,
   records: [],
   searchTerm: '',
@@ -143,6 +161,14 @@ if (!forgeOrderServerSync) {
 
 if (!forgeOrderSubmission) {
   throw new Error('Forge order submission helpers failed to load before app.js.');
+}
+
+if (!forgeStaffApiClient) {
+  throw new Error('Forge staff API client failed to load before app.js.');
+}
+
+if (!forgeStaffOrdersRuntime) {
+  throw new Error('Forge staff orders runtime helpers failed to load before app.js.');
 }
 
 if (!forgeLocalOrdersQueue) {
@@ -607,6 +633,12 @@ let lastStaffPackingFocusTarget = null;
 const payloadPreviewContextStore = forgeOrderPayloadPreview.createPayloadPreviewContextStore();
 const orderStore = forgeOrderStore.createOrderStore();
 const orderSyncApiClient = forgeApiClient.createForgeApiClient();
+const staffApiClient = forgeStaffApiClient.createForgeStaffApiClient();
+const staffRuntime = forgeStaffOrdersRuntime.createStaffOrdersRuntime({
+  locationLike: window.location,
+  staffApiClient,
+  localOrderStore: orderStore
+});
 const orderSyncService = forgeOrderServerSync.createOrderServerSyncService({
   orderStore,
   apiClient: orderSyncApiClient
@@ -631,6 +663,9 @@ const orderSubmissionService = forgeOrderSubmission.createOrderSubmissionService
   }
 });
 automaticOrderSync.start();
+staffOrdersState.dataSource = staffRuntime.environment.dataSource;
+staffOrdersState.readOnly = staffRuntime.environment.dataSource === 'server';
+staffOrdersState.authenticated = staffRuntime.environment.dataSource === 'local';
 
 function getProductConfig(productDefinitionId = draft.productDefinitionId) {
   const resolvedProductDefinitionId = resolveConfiguredProductDefinitionId(productDefinitionId);
@@ -1301,26 +1336,270 @@ function closeStaffPanel() {
   }
 }
 
-function openStaffOrdersScreen() {
+function isHostedStaffMode() {
+  return staffRuntime.environment.dataSource === 'server';
+}
+
+function isStaffReadOnlyRecord(record) {
+  return Boolean(record?.staff_read_only) || staffOrdersState.readOnly;
+}
+
+function getStaffSourceConfig() {
+  if (staffOrdersState.dataSource === 'server') {
+    return {
+      sourceBadge: 'Shared Server Orders',
+      ordersLead: 'View authenticated shared server orders for Forge staff.',
+      readyLead: 'View the shared read-only ready-to-pack queue for authenticated staff.',
+      loadingOrders: 'Loading shared server orders...',
+      emptyOrdersHeading: 'No shared orders match these filters',
+      emptyOrdersCopy: 'Adjust the search or clear filters to see the shared server orders available to staff.',
+      ordersLoadError: 'Shared staff orders could not be loaded. Try again.',
+      orderDetailLoadText: 'Loading the shared server order record...',
+      orderDetailMissingText: 'That shared order could not be found.',
+      orderDetailErrorText: 'Order details could not be loaded right now.',
+      savedTimestampLabel: 'Server Received',
+      secondarySummaryLabel: 'Authenticated Session',
+      secondarySummaryValue: 'Active',
+      totalSummaryLabel: 'Total Shared Orders',
+      queueUnavailableLabel: 'Shared queue unavailable',
+      emptyReadyHeading: 'No shared orders are ready to pack',
+      emptyReadyCopy: 'Shared server orders will appear here when the hosted production workflow begins reporting ready-to-pack status.',
+      readOnlyNote: 'Shared server orders are read-only in this build.',
+      syncAttemptsLabel: 'Data Source',
+      syncAttemptsValue: 'Shared Server'
+    };
+  }
+
+  return {
+    sourceBadge: 'Local Development Orders',
+    ordersLead: 'View durable local orders on this device and assign one production tray per active order.',
+    readyLead: 'Completed orders waiting for packing verification.',
+    loadingOrders: 'Loading durable local orders...',
+    emptyOrdersHeading: 'No orders match these filters',
+    emptyOrdersCopy: 'Adjust the search or clear filters to see the saved local orders on this device.',
+    ordersLoadError: 'Saved local orders could not be loaded on this device.',
+    orderDetailLoadText: 'Loading the durable local order record...',
+    orderDetailMissingText: 'That saved order could not be found.',
+    orderDetailErrorText: 'Order details could not be loaded on this device.',
+    savedTimestampLabel: 'Local Saved',
+    secondarySummaryLabel: 'Pending Future Sync',
+    secondarySummaryValue: null,
+    totalSummaryLabel: 'Total Saved Orders',
+    queueUnavailableLabel: 'Ready-to-pack queue unavailable',
+    emptyReadyHeading: 'No orders are ready to pack',
+    emptyReadyCopy: 'Orders will appear here automatically after every required piece is complete and no blocking issue remains.',
+    readOnlyNote: '',
+    syncAttemptsLabel: 'Sync Attempts',
+    syncAttemptsValue: null
+  };
+}
+
+function renderStaffSourceUi() {
+  const config = getStaffSourceConfig();
+  if (staffOrdersLead) {
+    staffOrdersLead.textContent = config.ordersLead;
+  }
+  if (readyToPackLead) {
+    readyToPackLead.textContent = config.readyLead;
+  }
+  staffSourceStatusNodes.forEach((node) => {
+    node.textContent = config.sourceBadge;
+  });
+  staffLogoutButtons.forEach((button) => {
+    button.hidden = !isHostedStaffMode();
+  });
+}
+
+function renderStaffAuthScreen() {
+  if (!staffAuthForm || !staffAuthPinInput || !staffAuthStatus) {
+    return;
+  }
+
+  const isBusy = staffOrdersState.authChecking || staffOrdersState.authSubmitting;
+  const submitButton = staffAuthForm.querySelector('[data-staff-auth-submit]');
+  if (staffAuthDescription) {
+    staffAuthDescription.textContent = staffOrdersState.authChecking
+      ? 'Checking the shared staff session before revealing staff order data.'
+      : 'Enter the shared Staff PIN to continue.';
+  }
+  staffAuthForm.setAttribute('aria-busy', isBusy ? 'true' : 'false');
+  staffAuthPinInput.disabled = isBusy;
+  if (submitButton instanceof HTMLButtonElement) {
+    submitButton.disabled = isBusy;
+    submitButton.textContent = staffOrdersState.authSubmitting ? 'Checking PIN...' : 'Continue';
+  }
+  staffAuthStatus.textContent = staffOrdersState.authError || (staffOrdersState.authChecking ? 'Checking staff access...' : '');
+}
+
+function clearStaffOrderData() {
+  staffOrdersState.records = [];
+  staffOrdersState.loading = false;
+  staffOrdersState.error = '';
+  staffOrdersState.errorCanRetry = false;
+  staffOrdersState.notice = '';
+  staffOrdersState.noticeTone = 'success';
+  staffOrdersState.batchSummary = null;
+  staffOrdersState.batchError = '';
+  staffOrdersState.searchTerm = '';
+  staffOrdersState.filters = forgeLocalOrdersQueue.createEmptyOrderFilters();
+  closeStaffBatchDialog({ restoreFocus: false });
+  closeStaffPackingDialog({ restoreFocus: false });
+  closeStaffTrayAssignment();
+  closeStaffOrderDetail();
+}
+
+function showUnauthenticatedStaffAccess() {
+  clearStaffOrderData();
   staffOrdersState.enabled = true;
+  staffOrdersState.dataSource = 'server';
+  staffOrdersState.readOnly = true;
+  staffOrdersState.authenticated = false;
+  staffOrdersState.authChecking = false;
+  staffOrdersState.authSubmitting = false;
+  staffOrdersState.authError = '';
+  if (staffAuthPinInput) {
+    staffAuthPinInput.value = '';
+  }
+  renderStaffSourceUi();
+  renderStaffAuthScreen();
+  showScreen('staff-access');
+  window.setTimeout(() => staffAuthPinInput?.focus(), 0);
+}
+
+async function openStaffAccessScreen(screenName = 'staff-orders') {
+  staffOrdersState.enabled = true;
+  staffOrdersState.desiredScreen = screenName;
   ensureStaffOrderDetailUi();
   ensureStaffTrayAssignmentUi();
-  renderStaffOrdersQueue();
-  renderReadyToPackQueue();
-  loadStaffOrdersQueue();
+  ensureStaffBatchUi();
+  ensureStaffPackingUi();
   closeStaffPanel();
-  showScreen('staff-orders');
+  renderStaffSourceUi();
+
+  if (!isHostedStaffMode()) {
+    staffOrdersState.authenticated = true;
+    staffOrdersState.readOnly = false;
+    showScreen(screenName);
+    renderStaffOrdersQueue();
+    renderReadyToPackQueue();
+    await loadStaffOrdersQueue();
+    return;
+  }
+
+  if (staffOrdersState.authenticated) {
+    showScreen(screenName);
+    renderStaffOrdersQueue();
+    renderReadyToPackQueue();
+    await loadStaffOrdersQueue();
+    return;
+  }
+
+  staffOrdersState.authenticated = false;
+  staffOrdersState.readOnly = true;
+  staffOrdersState.authChecking = true;
+  staffOrdersState.authSubmitting = false;
+  staffOrdersState.authError = '';
+  clearStaffOrderData();
+  renderStaffAuthScreen();
+  showScreen('staff-access');
+
+  try {
+    const access = await staffRuntime.checkAccess();
+    staffOrdersState.authChecking = false;
+    staffOrdersState.dataSource = access.dataSource;
+    staffOrdersState.readOnly = Boolean(access.readOnly);
+    staffOrdersState.authenticated = Boolean(access.authenticated);
+    renderStaffSourceUi();
+
+    if (!access.authenticated) {
+      renderStaffAuthScreen();
+      window.setTimeout(() => staffAuthPinInput?.focus(), 0);
+      return;
+    }
+
+    showScreen(screenName);
+    renderStaffOrdersQueue();
+    renderReadyToPackQueue();
+    await loadStaffOrdersQueue();
+  } catch (error) {
+    console.error('Forge staff session check failed', error);
+    staffOrdersState.authChecking = false;
+    staffOrdersState.authenticated = false;
+    staffOrdersState.authError = 'Unable to connect. Try again.';
+    renderStaffAuthScreen();
+    window.setTimeout(() => staffAuthPinInput?.focus(), 0);
+  }
+}
+
+async function submitStaffPin() {
+  if (!staffAuthPinInput) {
+    return;
+  }
+
+  const pin = String(staffAuthPinInput.value || '').trim();
+  if (!pin) {
+    staffOrdersState.authError = 'Incorrect PIN.';
+    renderStaffAuthScreen();
+    staffAuthPinInput.focus();
+    return;
+  }
+
+  staffOrdersState.authSubmitting = true;
+  staffOrdersState.authError = '';
+  renderStaffAuthScreen();
+
+  try {
+    const result = await staffRuntime.login(pin);
+    staffAuthPinInput.value = '';
+    staffOrdersState.authSubmitting = false;
+
+    if (!result.ok) {
+      staffOrdersState.authenticated = false;
+      staffOrdersState.authError = result.errorMessage || 'Incorrect PIN.';
+      renderStaffAuthScreen();
+      staffAuthPinInput.focus();
+      return;
+    }
+
+    staffOrdersState.dataSource = result.dataSource;
+    staffOrdersState.readOnly = Boolean(result.readOnly);
+    staffOrdersState.authenticated = true;
+    staffOrdersState.authError = '';
+    renderStaffSourceUi();
+    showScreen(staffOrdersState.desiredScreen || 'staff-orders');
+    renderStaffOrdersQueue();
+    renderReadyToPackQueue();
+    await loadStaffOrdersQueue();
+  } catch (error) {
+    console.error('Forge staff login failed', error);
+    staffAuthPinInput.value = '';
+    staffOrdersState.authSubmitting = false;
+    staffOrdersState.authenticated = false;
+    staffOrdersState.authError = 'Unable to connect. Try again.';
+    renderStaffAuthScreen();
+    staffAuthPinInput.focus();
+  }
+}
+
+async function logoutStaffAccess() {
+  try {
+    await staffRuntime.logout();
+    showUnauthenticatedStaffAccess();
+  } catch (error) {
+    console.error('Forge staff logout failed', error);
+    staffOrdersState.notice = 'Unable to connect. Try again.';
+    staffOrdersState.noticeTone = 'error';
+    renderStaffOrdersQueue();
+    renderReadyToPackQueue();
+  }
+}
+
+function openStaffOrdersScreen() {
+  return openStaffAccessScreen('staff-orders');
 }
 
 function openReadyToPackScreen() {
-  staffOrdersState.enabled = true;
-  ensureStaffOrderDetailUi();
-  ensureStaffTrayAssignmentUi();
-  renderStaffOrdersQueue();
-  renderReadyToPackQueue();
-  loadStaffOrdersQueue();
-  closeStaffPanel();
-  showScreen('ready-to-pack');
+  return openStaffAccessScreen('ready-to-pack');
 }
 
 function resetActiveOrderSession({ clearCart = true, goToWelcome = true } = {}) {
@@ -3318,11 +3597,17 @@ function ensureStaffOrderDetailUi() {
     }
 
     if (action === 'staff-open-tray-assignment' && orderUuid) {
+      if (staffOrdersState.readOnly) {
+        return;
+      }
       openStaffTrayAssignment(orderUuid);
       return;
     }
 
     if (action === 'staff-complete-item' && orderUuid && !staffOrdersState.detailSavingLineId) {
+      if (staffOrdersState.readOnly) {
+        return;
+      }
       const lineId = event.target.closest('[data-line-id]')?.dataset.lineId;
       if (lineId) {
         submitStaffItemCompletion(orderUuid, lineId);
@@ -3681,7 +3966,8 @@ function canMarkStaffItemComplete(record, item) {
     ? Math.max(Math.min(item.completed_quantity, quantity), 0)
     : 0;
   const status = getStaffItemProductionStatus(item);
-  return Boolean(getOrderTrayNumber(record))
+  return !isStaffReadOnlyRecord(record)
+    && Boolean(getOrderTrayNumber(record))
     && completedQuantity < quantity
     && status !== forgeOrderStore.ITEM_PRODUCTION_STATUSES?.blocked
     && status !== forgeOrderStore.ITEM_PRODUCTION_STATUSES?.cancelled;
@@ -3957,6 +4243,8 @@ function renderStaffOrdersQueue() {
     return;
   }
 
+  renderStaffSourceUi();
+  const sourceConfig = getStaffSourceConfig();
   const filteredRecords = forgeLocalOrdersQueue.filterLocalOrders(
     staffOrdersState.records,
     staffOrdersState.filters,
@@ -3979,8 +4267,8 @@ function renderStaffOrdersQueue() {
   staffOrdersState.batchSummary = batchSummary;
 
   staffOrdersSummary.innerHTML = [
-    { label: 'Total Saved Orders', value: summary.totalOrders },
-    { label: 'Pending Future Sync', value: summary.pendingFutureSync },
+    { label: sourceConfig.totalSummaryLabel, value: summary.totalOrders },
+    { label: sourceConfig.secondarySummaryLabel, value: sourceConfig.secondarySummaryValue || summary.pendingFutureSync },
     { label: 'Orders With Open Flags', value: summary.ordersWithOpenFlags },
     { label: 'Total Items', value: summary.totalItems }
   ].map((card) => `
@@ -4022,7 +4310,7 @@ function renderStaffOrdersQueue() {
   }
 
   if (staffOrdersState.loading) {
-    staffOrdersStatus.textContent = 'Loading durable local orders...';
+    staffOrdersStatus.textContent = sourceConfig.loadingOrders;
     staffOrdersList.innerHTML = '';
     staffBatchGroups.innerHTML = '';
     return;
@@ -4037,8 +4325,9 @@ function renderStaffOrdersQueue() {
       ? filteredRecords.map((record) => buildStaffOrderCardMarkup(record, staffOrdersState.filters)).join('')
       : `
         <div class="staff-empty-state">
-          <h3>No orders match these filters</h3>
-          <p>Adjust the search or clear filters to see the saved local orders on this device.</p>
+          <h3>${escapeHtml(sourceConfig.emptyOrdersHeading)}</h3>
+          <p>${escapeHtml(sourceConfig.emptyOrdersCopy)}</p>
+          ${staffOrdersState.errorCanRetry ? '<button class="secondary-button" type="button" data-action="staff-refresh-orders">Retry</button>' : ''}
         </div>
       `}
   `;
@@ -4049,6 +4338,8 @@ function renderReadyToPackQueue() {
     return;
   }
 
+  renderStaffSourceUi();
+  const sourceConfig = getStaffSourceConfig();
   if (staffOrdersState.loading) {
     readyToPackCount.textContent = 'Loading ready orders...';
     readyToPackList.innerHTML = '';
@@ -4056,7 +4347,7 @@ function renderReadyToPackQueue() {
   }
 
   if (staffOrdersState.error) {
-    readyToPackCount.textContent = 'Ready-to-pack queue unavailable';
+    readyToPackCount.textContent = sourceConfig.queueUnavailableLabel;
     readyToPackList.innerHTML = buildStaffNoticeMarkup(staffOrdersState.error, 'error');
     return;
   }
@@ -4071,8 +4362,8 @@ function renderReadyToPackQueue() {
     : `
       ${buildStaffNoticeMarkup(staffOrdersState.notice, staffOrdersState.noticeTone)}
       <div class="staff-empty-state">
-        <h3>No orders are ready to pack</h3>
-        <p>Orders will appear here automatically after every required piece is complete and no blocking issue remains.</p>
+        <h3>${escapeHtml(sourceConfig.emptyReadyHeading)}</h3>
+        <p>${escapeHtml(sourceConfig.emptyReadyCopy)}</p>
       </div>
     `;
 }
@@ -4084,6 +4375,7 @@ function buildReadyToPackCardMarkup(record) {
     ? `Ready since ${formatReadableDateTime(record.ready_to_pack_at)}`
     : `Ready since ${formatReadableDateTime(record.submitted_at || record.local_saved_at || '')}`;
   const fulfillmentMethod = payload.fulfillment?.method === 'pickup' ? 'Pickup' : 'Shipping';
+  const canPackOrder = !isStaffReadOnlyRecord(record);
 
   return `
     <article class="staff-order-card staff-ready-card">
@@ -4106,7 +4398,7 @@ function buildReadyToPackCardMarkup(record) {
       <p class="staff-ready-card-timestamp">${escapeHtml(readyTimestamp)}</p>
       <div class="staff-order-card-actions">
         <button class="secondary-button" type="button" data-action="staff-view-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">View Order</button>
-        <button class="primary-button" type="button" data-action="staff-pack-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Pack Order</button>
+        ${canPackOrder ? `<button class="primary-button" type="button" data-action="staff-pack-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Pack Order</button>` : ''}
       </div>
     </article>
   `;
@@ -4193,7 +4485,7 @@ function buildStaffOrderCardMarkup(record, filters) {
   const completionSummary = getOrderCompletionSummary(record);
   const syncStatusLabel = getStaffSyncStatusLabel(record);
   const syncStatusBadgeClass = getStaffSyncStatusBadgeClass(record);
-  const canPackOrder = forgeLocalOrdersQueue.isOrderEligibleForReadyToPack(record);
+  const canPackOrder = !isStaffReadOnlyRecord(record) && forgeLocalOrdersQueue.isOrderEligibleForReadyToPack(record);
 
   return `
     <article class="staff-order-card">
@@ -4248,15 +4540,26 @@ async function loadStaffOrdersQueue() {
 
   staffOrdersState.loading = true;
   staffOrdersState.error = '';
+  staffOrdersState.errorCanRetry = false;
   renderStaffOrdersQueue();
+  renderReadyToPackQueue();
 
   try {
-    const records = await orderStore.listOrders();
-    staffOrdersState.records = forgeLocalOrdersQueue.sortLocalOrdersNewestFirst(records);
+    const result = await staffRuntime.loadOrders();
+    if (!result.ok && result.unauthenticated) {
+      showUnauthenticatedStaffAccess();
+      return;
+    }
+
+    staffOrdersState.dataSource = result.dataSource;
+    staffOrdersState.readOnly = Boolean(result.readOnly);
+    staffOrdersState.authenticated = true;
+    staffOrdersState.records = forgeLocalOrdersQueue.sortLocalOrdersNewestFirst(result.records);
   } catch (error) {
-    console.error('Forge staff local orders queue failed to load', error);
+    console.error('Forge staff orders queue failed to load', error);
     staffOrdersState.records = [];
-    staffOrdersState.error = 'Saved local orders could not be loaded on this device.';
+    staffOrdersState.error = getStaffSourceConfig().ordersLoadError;
+    staffOrdersState.errorCanRetry = true;
   } finally {
     staffOrdersState.loading = false;
     renderStaffOrdersQueue();
@@ -4284,19 +4587,25 @@ async function openStaffOrderDetail(forgeOrderUuid) {
   renderStaffOrderDetail();
 
   try {
-    const [record, packingVerification] = await Promise.all([
-      orderStore.getOrder(forgeOrderUuid),
-      orderStore.getPackingVerificationForOrder(forgeOrderUuid)
-    ]);
+    let record = null;
+    let packingVerification = null;
+    if (staffOrdersState.readOnly) {
+      record = staffOrdersState.records.find((candidate) => candidate?.forge_order_uuid === forgeOrderUuid) || null;
+    } else {
+      [record, packingVerification] = await Promise.all([
+        orderStore.getOrder(forgeOrderUuid),
+        orderStore.getPackingVerificationForOrder(forgeOrderUuid)
+      ]);
+    }
     if (!record) {
-      staffOrdersState.detailError = 'That saved order could not be found.';
+      staffOrdersState.detailError = getStaffSourceConfig().orderDetailMissingText;
     } else {
       staffOrdersState.detailRecord = record;
       staffOrdersState.detailPackingVerification = packingVerification;
     }
   } catch (error) {
     console.error('Forge staff order detail failed to load', error);
-    staffOrdersState.detailError = 'Order details could not be loaded on this device.';
+    staffOrdersState.detailError = getStaffSourceConfig().orderDetailErrorText;
   } finally {
     staffOrdersState.detailLoading = false;
     renderStaffOrderDetail();
@@ -4333,6 +4642,7 @@ function renderStaffOrderDetail() {
     return;
   }
 
+  const sourceConfig = getStaffSourceConfig();
   staffOrderDetailBackdrop.hidden = !staffOrdersState.detailOpen;
   staffOrderDetailDialog.hidden = !staffOrdersState.detailOpen;
 
@@ -4350,7 +4660,7 @@ function renderStaffOrderDetail() {
         </div>
         <button class="text-button" type="button" data-action="close-staff-order-detail">Close</button>
       </div>
-      <p class="staff-orders-status">Loading the durable local order record...</p>
+      <p class="staff-orders-status">${escapeHtml(sourceConfig.orderDetailLoadText)}</p>
     `;
     return;
   }
@@ -4366,13 +4676,14 @@ function renderStaffOrderDetail() {
       </div>
       <div class="staff-empty-state">
         <h3>Unable to open this order</h3>
-        <p>${escapeHtml(staffOrdersState.detailError || 'Saved order details are unavailable.')}</p>
+        <p>${escapeHtml(staffOrdersState.detailError || sourceConfig.orderDetailErrorText)}</p>
       </div>
     `;
     return;
   }
 
   const record = staffOrdersState.detailRecord;
+  const isReadOnlyRecord = isStaffReadOnlyRecord(record);
   const packingVerification = staffOrdersState.detailPackingVerification;
   const payload = record.payload || {};
   const customer = payload.customer || {};
@@ -4382,7 +4693,7 @@ function renderStaffOrderDetail() {
   const shortOrderReference = getOrderShortReference(record);
   const productionStatusLabel = getOrderProductionStatusLabel(record);
   const trayLabel = getOrderTrayLabel(record);
-  const showAssignTrayAction = canAssignTrayToOrder(record);
+  const showAssignTrayAction = !isReadOnlyRecord && canAssignTrayToOrder(record);
   const completionCounts = getOrderCompletionCounts(record);
   const completionSummary = getOrderCompletionSummary(record);
   const showNoTrayMessage = !getOrderTrayNumber(record);
@@ -4417,6 +4728,7 @@ function renderStaffOrderDetail() {
 
     ${buildStaffNoticeMarkup(staffOrdersState.notice, staffOrdersState.noticeTone)}
     ${staffOrdersState.detailError ? buildStaffNoticeMarkup(staffOrdersState.detailError, 'error') : ''}
+    ${isReadOnlyRecord && sourceConfig.readOnlyNote ? buildStaffNoticeMarkup(sourceConfig.readOnlyNote, 'success') : ''}
 
     <div class="staff-order-detail-meta">
       <div><span>Order Number</span><strong>${escapeHtml(shortOrderReference)}</strong></div>
@@ -4424,7 +4736,7 @@ function renderStaffOrderDetail() {
       <div><span>Needed By</span><strong>${escapeHtml(fulfillment.needed_by ? formatReadableDate(fulfillment.needed_by) : 'Not provided')}</strong></div>
       <div><span>UUID</span><strong>${escapeHtml(record.forge_order_uuid)}</strong></div>
       <div><span>Submitted</span><strong>${escapeHtml(formatReadableDateTime(record.submitted_at || ''))}</strong></div>
-      <div><span>Local Saved</span><strong>${escapeHtml(formatReadableDateTime(record.local_saved_at || ''))}</strong></div>
+      <div><span>${escapeHtml(sourceConfig.savedTimestampLabel)}</span><strong>${escapeHtml(formatReadableDateTime(record.local_saved_at || record.received_at || ''))}</strong></div>
       <div><span>Sync Status</span><strong>${escapeHtml(syncStatusLabel)}</strong></div>
     </div>
 
@@ -4434,7 +4746,7 @@ function renderStaffOrderDetail() {
         <div><span>Tray State</span><strong>${escapeHtml(trayLabel)}</strong></div>
         <div><span>Production Progress</span><strong>${escapeHtml(completionSummary)}</strong></div>
         <div><span>Production Status</span><strong>${escapeHtml(productionStatusLabel)}</strong></div>
-        <div><span>Sync Attempts</span><strong>${escapeHtml(String(record.sync_attempt_count ?? 0))}</strong></div>
+        <div><span>${escapeHtml(sourceConfig.syncAttemptsLabel)}</span><strong>${escapeHtml(sourceConfig.syncAttemptsValue || String(record.sync_attempt_count ?? 0))}</strong></div>
       </div>
       ${showOpenFlagProgressNote ? '<p class="staff-order-detail-note">All required pieces are complete, but this order still has an open flag and cannot move to Ready to Pack yet.</p>' : ''}
       <div class="staff-order-detail-flags">
@@ -5022,6 +5334,7 @@ function getStaffOrderItemsMarkup(record, items) {
     const itemStatusLabel = getStaffItemProductionStatusLabel(item);
     const itemProgressLabel = getStaffItemCompletionSummary(item);
     const canComplete = canMarkStaffItemComplete(record, item);
+    const isReadOnlyRecord = isStaffReadOnlyRecord(record);
     const isSaving = staffOrdersState.detailSavingLineId === item.line_id;
     const completionActionLabel = isSaving ? 'Saving...' : getStaffItemCompletionActionLabel(item);
     return `
@@ -5042,14 +5355,16 @@ function getStaffOrderItemsMarkup(record, items) {
             <strong>${escapeHtml(itemProgressLabel)}</strong>
             ${item.completed_at ? `<p>Completed ${escapeHtml(formatReadableDateTime(item.completed_at))}</p>` : ''}
           </div>
-          <button
-            class="primary-button staff-item-complete-button"
-            type="button"
-            data-action="staff-complete-item"
-            data-order-uuid="${escapeHtml(record.forge_order_uuid)}"
-            data-line-id="${escapeHtml(item.line_id || '')}"
-            ${!canComplete || isSaving ? 'disabled' : ''}
-          >${escapeHtml(completionActionLabel)}</button>
+          ${isReadOnlyRecord ? '' : `
+            <button
+              class="primary-button staff-item-complete-button"
+              type="button"
+              data-action="staff-complete-item"
+              data-order-uuid="${escapeHtml(record.forge_order_uuid)}"
+              data-line-id="${escapeHtml(item.line_id || '')}"
+              ${!canComplete || isSaving ? 'disabled' : ''}
+            >${escapeHtml(completionActionLabel)}</button>
+          `}
         </div>
         <div class="staff-order-detail-grid">
           ${itemDetails.map((detail) => `
@@ -5358,21 +5673,29 @@ function closeSavedOrdersInspector() {
 }
 
 async function inspectSavedOrderRecord(forgeOrderUuid) {
+  const useSharedServerRecord = staffOrdersState.readOnly
+    && (appState.currentScreen === 'staff-orders' || appState.currentScreen === 'ready-to-pack');
   try {
-    const record = await orderStore.getOrder(forgeOrderUuid);
+    const record = useSharedServerRecord
+      ? staffOrdersState.records.find((candidate) => candidate?.forge_order_uuid === forgeOrderUuid) || null
+      : await orderStore.getOrder(forgeOrderUuid);
     if (!record) {
       return;
     }
     openJsonViewer({
-      title: 'Saved Local Order Record',
-      copy: 'Inspect the durable local order record exactly as it was saved on this device.',
+      title: useSharedServerRecord ? 'Shared Server Order Record' : 'Saved Local Order Record',
+      copy: useSharedServerRecord
+        ? 'Inspect the authenticated shared server order record exactly as it was returned to this device.'
+        : 'Inspect the durable local order record exactly as it was saved on this device.',
       json: JSON.stringify(record, null, 2)
     });
   } catch (error) {
     console.error('Forge saved-order record inspection failed', error);
     openJsonViewer({
-      title: 'Saved Local Order Record',
-      copy: 'Inspect the durable local order record exactly as it was saved on this device.',
+      title: useSharedServerRecord ? 'Shared Server Order Record' : 'Saved Local Order Record',
+      copy: useSharedServerRecord
+        ? 'Inspect the authenticated shared server order record exactly as it was returned to this device.'
+        : 'Inspect the durable local order record exactly as it was saved on this device.',
       json: error && error.stack ? error.stack : String(error),
       error: 'Saved order inspection failed. See the browser console for details.'
     });
@@ -5976,9 +6299,8 @@ if (treeForm) {
   renderStaffOrdersQueue();
   renderReadyToPackQueue();
 
-  if (staffOrdersState.enabled) {
-    loadStaffOrdersQueue();
-    showScreen(appState.currentScreen === 'ready-to-pack' ? 'ready-to-pack' : 'staff-orders');
+  if (['staff-orders', 'ready-to-pack', 'staff-access'].includes(appState.currentScreen)) {
+    openStaffAccessScreen(appState.currentScreen === 'ready-to-pack' ? 'ready-to-pack' : 'staff-orders');
   } else if (appState.currentScreen === 'tree-customization') {
     showScreen('tree-customization');
   } else if (appState.currentScreen === 'tree-review') {
@@ -6037,6 +6359,25 @@ if (treeForm) {
 
     if (action === 'confirm-staff-reset') {
       resetActiveOrderSession();
+    }
+  });
+
+  staffAuthForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    submitStaffPin();
+  });
+
+  document.querySelector('[data-screen="staff-access"]')?.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    if (!action) {
+      return;
+    }
+
+    if (action === 'staff-return-welcome-from-auth') {
+      staffOrdersState.enabled = false;
+      staffOrdersState.authError = '';
+      renderStaffAuthScreen();
+      showScreen('welcome');
     }
   });
 
@@ -6707,8 +7048,14 @@ if (treeForm) {
       return;
     }
 
+    if (action === 'staff-logout') {
+      logoutStaffAccess();
+      return;
+    }
+
     if (action === 'staff-return-welcome') {
       staffOrdersState.notice = '';
+      staffOrdersState.enabled = false;
       closeStaffBatchDialog({ restoreFocus: false });
       closeStaffPackingDialog({ restoreFocus: false });
       closeStaffTrayAssignment();
@@ -6739,6 +7086,9 @@ if (treeForm) {
     }
 
     if (action === 'staff-pack-order' && orderUuid) {
+      if (staffOrdersState.readOnly) {
+        return;
+      }
       staffOrdersState.notice = '';
       openStaffPackingDialog(orderUuid);
     }
@@ -6757,14 +7107,20 @@ if (treeForm) {
       return;
     }
 
+    if (action === 'staff-logout') {
+      logoutStaffAccess();
+      return;
+    }
+
     if (action === 'staff-open-orders') {
       staffOrdersState.notice = '';
-      showScreen('staff-orders');
+      openStaffOrdersScreen();
       return;
     }
 
     if (action === 'staff-return-welcome') {
       staffOrdersState.notice = '';
+      staffOrdersState.enabled = false;
       closeStaffBatchDialog({ restoreFocus: false });
       closeStaffPackingDialog({ restoreFocus: false });
       closeStaffTrayAssignment();

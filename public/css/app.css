@@ -1970,6 +1970,10 @@ h1 {
   gap: 18px;
 }
 
+.staff-auth-shell {
+  align-content: start;
+}
+
 .staff-orders-header,
 .staff-panel-surface {
   border: 1px solid var(--staff-line);
@@ -2018,6 +2022,7 @@ h1 {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  align-items: center;
 }
 
 .staff-orders-screen .primary-button {
@@ -2047,6 +2052,72 @@ h1 {
 .staff-orders-screen select:focus-visible,
 .staff-orders-screen textarea:focus-visible {
   outline-color: rgba(239,108,26,.55);
+}
+
+.staff-source-pill {
+  min-height: 40px;
+  padding: 10px 14px;
+  border: 1px solid var(--staff-line);
+  border-radius: 999px;
+  background: rgba(255,255,255,.04);
+  color: var(--staff-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.staff-auth-card {
+  max-width: 580px;
+  width: 100%;
+  justify-self: center;
+  padding: clamp(22px, 3vw, 30px);
+}
+
+.staff-auth-form,
+.staff-auth-copy,
+.staff-auth-field {
+  display: grid;
+  gap: 12px;
+}
+
+.staff-auth-copy h2,
+.staff-auth-copy p {
+  margin: 0;
+}
+
+.staff-auth-copy p:last-child {
+  color: var(--staff-muted);
+}
+
+.staff-auth-field label {
+  color: var(--staff-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.staff-auth-input {
+  width: 100%;
+  min-height: 52px;
+  padding: 12px 14px;
+  border: 1px solid var(--staff-line);
+  border-radius: 14px;
+  background: rgba(17, 20, 24, .72);
+  color: var(--staff-text);
+}
+
+.staff-auth-status {
+  min-height: 24px;
+  text-align: left;
+}
+
+.staff-auth-actions {
+  display: flex;
+  justify-content: flex-start;
 }
 
 .staff-orders-summary {
@@ -3138,6 +3209,7 @@ h1 {
   .staff-orders-filters,
   .staff-orders-grid,
   .staff-ready-list,
+  .staff-auth-actions,
   .staff-order-detail-grid,
   .staff-order-detail-meta,
   .staff-order-card-meta--primary,
