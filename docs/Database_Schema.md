@@ -110,6 +110,8 @@ Each submitted order stores the customer, fulfillment, pricing, synchronization,
 | `forge_order_uuid` | UUID/string | Permanent Forge identifier |
 | `forge_order_number` | string/integer | Human-readable order number |
 | `submitted_at` | timestamp | Original customer submission time |
+| `external_payment_method` | nullable enum/string | Staff-confirmed external payment source: `card_square`, `cash`, or `venmo`, recorded after stateless PIN verification |
+| `payment_confirmed_at` | nullable timestamp | UTC time when staff completed online stateless payment confirmation before submission |
 | `updated_at` | timestamp | Most recent record update |
 | `customer_json` | object | Complete customer-information snapshot |
 | `fulfillment_method` | enum | `shipping` or `pickup` |
@@ -150,7 +152,7 @@ Example:
 
 # 4. Production Status
 
-Order production status is separate from payment status, WooCommerce synchronization status, and customer-visible WooCommerce order status.
+Order production status is separate from payment confirmation metadata, WooCommerce synchronization status, and customer-visible WooCommerce order status.
 
 ## Approved Order Production Statuses
 

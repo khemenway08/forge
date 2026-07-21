@@ -52,6 +52,7 @@ Forge Version 1 is designed for The Hilltop Shop's two-person workflow. It must 
 - Development payload preview
 - Durable local order storage using IndexedDB
 - Order submission flow
+- Staff-controlled payment handoff gate before submission using online stateless PIN verification
 - Thank You screen
 - Staff local orders queue
 - Staff order detail viewer

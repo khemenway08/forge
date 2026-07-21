@@ -12,6 +12,7 @@
   const SESSION_ENDPOINT = 'session.php';
   const LOGIN_ENDPOINT = 'login.php';
   const LOGOUT_ENDPOINT = 'logout.php';
+  const VERIFY_PIN_ENDPOINT = 'verify-pin.php';
   const ORDERS_ENDPOINT = 'orders.php';
   const TRAYS_ENDPOINT = 'trays.php';
   const ASSIGN_TRAY_ENDPOINT = 'assign-tray.php';
@@ -147,6 +148,47 @@
           throw buildServerError(response.status, payload);
         }
         return normalizeAuthenticationPayload(payload);
+      } catch (error) {
+        throw normalizeClientError(error);
+      }
+    }
+
+    async function verifyPin(pin) {
+      const normalizedPin = asTrimmedString(pin);
+      if (!normalizedPin) {
+        throw new ForgeStaffApiError('invalid_request', 'A staff PIN is required.');
+      }
+
+      let requestBody = '';
+      try {
+        requestBody = JSON.stringify({ pin: normalizedPin });
+      } catch (error) {
+        throw new ForgeStaffApiError('invalid_request', 'Staff authentication could not be prepared.', { cause: error });
+      }
+
+      try {
+        const response = await performJsonRequest(fetchImpl, `${baseUrl}/${VERIFY_PIN_ENDPOINT}`, timeoutMs, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json'
+          },
+          credentials: 'same-origin',
+          cache: 'no-store',
+          body: requestBody
+        });
+        const payload = await parseJsonResponse(response);
+        if (response.status === 401) {
+          return {
+            ok: false,
+            verified: false,
+            invalidCredentials: true
+          };
+        }
+        if (!response.ok) {
+          throw buildServerError(response.status, payload);
+        }
+        return normalizePinVerificationPayload(payload);
       } catch (error) {
         throw normalizeClientError(error);
       }
@@ -314,6 +356,7 @@
       checkSession,
       login,
       logout,
+      verifyPin,
       listOrders,
       listTrays,
       assignTray,
@@ -379,6 +422,23 @@
     return {
       ok: true,
       authenticated
+    };
+  }
+
+  function normalizePinVerificationPayload(payload) {
+    const application = asTrimmedString(payload && payload.application);
+    const apiVersion = asTrimmedString(payload && payload.api_version);
+    const status = asTrimmedString(payload && payload.status);
+    const data = payload && typeof payload === 'object' ? payload.data : null;
+    const verified = data && typeof data === 'object' ? data.verified : undefined;
+
+    if (application !== 'Forge' || apiVersion !== '1' || status !== 'ok' || verified !== true) {
+      throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+    }
+
+    return {
+      ok: true,
+      verified: true
     };
   }
 

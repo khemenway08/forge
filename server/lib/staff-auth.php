@@ -9,6 +9,8 @@ final class StaffAuth
     public const SESSION_AUTHENTICATED_KEY = 'forge_staff_authenticated';
     public const SESSION_AUTHENTICATED_AT_KEY = 'forge_staff_authenticated_at';
     public const SESSION_SAMESITE = 'Strict';
+    public const PIN_VERIFY_MIN_DURATION_US = 250000;
+    public const PIN_VERIFY_FAILURE_PENALTY_US = 500000;
 }
 
 /**
@@ -38,6 +40,25 @@ function verifyStaffPin(string $pin, string $pinHash): bool
     }
 
     return password_verify($normalizedPin, $pinHash);
+}
+
+function verifyStaffPinStateless(string $pinHash, string $pin): bool
+{
+    return verifyStaffPinWithSharedThrottle($pinHash, $pin);
+}
+
+function verifyStaffPinWithSharedThrottle(string $pinHash, string $pin): bool
+{
+    $startedAt = microtime(true);
+    $verified = verifyStaffPin($pin, $pinHash);
+    $targetDelayUs = StaffAuth::PIN_VERIFY_MIN_DURATION_US + ($verified ? 0 : StaffAuth::PIN_VERIFY_FAILURE_PENALTY_US);
+    $elapsedUs = (int) round((microtime(true) - $startedAt) * 1000000);
+
+    if ($elapsedUs < $targetDelayUs) {
+        usleep($targetDelayUs - $elapsedUs);
+    }
+
+    return $verified;
 }
 
 /**
@@ -78,11 +99,11 @@ function startStaffSession(array $server = []): void
  */
 function loginStaffSession(string $pinHash, string $pin, array $server = []): bool
 {
-    startStaffSession($server);
-
-    if (!verifyStaffPin($pin, $pinHash)) {
+    if (!verifyStaffPinWithSharedThrottle($pinHash, $pin)) {
         return false;
     }
+
+    startStaffSession($server);
 
     if (!session_regenerate_id(true)) {
         throw new \RuntimeException('Staff session could not be secured.');

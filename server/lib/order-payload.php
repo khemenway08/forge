@@ -13,6 +13,7 @@ final class OrderPayload
     public const MAX_REQUEST_BYTES = 1048576;
     private const UUID_PATTERN = '/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/';
     private const ISO_8601_PATTERN = '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+\-]\d{2}:\d{2})$/';
+    private const EXTERNAL_PAYMENT_METHODS = ['card_square', 'cash', 'venmo'];
 
     public static function isJsonContentType(?string $contentType): bool
     {
@@ -75,6 +76,8 @@ final class OrderPayload
         if (!is_array($customer) || self::isListArray($customer)) {
             throw new ApiProblem(422, 'invalid_order', 'The submitted order is missing required Forge fields.');
         }
+
+        self::validatePaymentConfirmation($payload);
 
         try {
             self::canonicalizeToJson($payload);
@@ -227,6 +230,30 @@ final class OrderPayload
         }
 
         throw new \InvalidArgumentException('A valid database date-time value is required.');
+    }
+
+    private static function validatePaymentConfirmation(array $payload): void
+    {
+        $paymentMethod = self::trimmedString($payload['external_payment_method'] ?? null);
+        $paymentConfirmedAt = self::trimmedString($payload['payment_confirmed_at'] ?? null);
+        $hasPaymentMethod = $paymentMethod !== '';
+        $hasPaymentConfirmedAt = $paymentConfirmedAt !== '';
+
+        if (!$hasPaymentMethod && !$hasPaymentConfirmedAt) {
+            return;
+        }
+
+        if (!$hasPaymentMethod || !$hasPaymentConfirmedAt) {
+            throw new ApiProblem(422, 'invalid_order', 'The submitted order is missing required Forge fields.');
+        }
+
+        if (!in_array($paymentMethod, self::EXTERNAL_PAYMENT_METHODS, true)) {
+            throw new ApiProblem(422, 'invalid_order', 'The submitted order is missing required Forge fields.');
+        }
+
+        if (!self::isValidDateTimeValue($paymentConfirmedAt)) {
+            throw new ApiProblem(422, 'invalid_order', 'The submitted order is missing required Forge fields.');
+        }
     }
 
     private static function trimmedString($value): string

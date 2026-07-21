@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260721-16';
+const FORGE_BUILD_VERSION = '20260721-17';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
 
@@ -39,6 +39,13 @@ const finalReviewSummary = document.querySelector('[data-final-review-summary]')
 const finalReviewCustomer = document.querySelector('[data-final-review-customer]');
 const finalReviewDelivery = document.querySelector('[data-final-review-delivery]');
 const finalReviewStatus = document.querySelector('[data-final-review-status]');
+const paymentHandoffCustomerName = document.querySelector('[data-payment-handoff-customer-name]');
+const paymentHandoffSummary = document.querySelector('[data-payment-handoff-summary]');
+const paymentHandoffTotal = document.querySelector('[data-payment-handoff-total]');
+const paymentHandoffStatus = document.querySelector('[data-payment-handoff-status]');
+const paymentHandoffPinInput = document.querySelector('[data-payment-handoff-pin]');
+const paymentHandoffCancelPanel = document.querySelector('[data-payment-handoff-cancel-panel]');
+const paymentMethodChoiceButtons = [...document.querySelectorAll('[data-payment-method]')];
 const thankYouCopy = document.querySelector('[data-thank-you-copy]');
 const thankYouReference = document.querySelector('[data-thank-you-reference]');
 const staffAuthForm = document.querySelector('[data-staff-auth-form]');
@@ -344,6 +351,7 @@ const allowedValues = {
   preferredContact: ['Text', 'Email'],
   fulfillmentMethod: ['Shipping', 'Local Pickup']
 };
+const allowedExternalPaymentMethods = ['card_square', 'cash', 'venmo'];
 
 const productReviewConfig = {
   tree_ornament: {
@@ -587,6 +595,13 @@ const finalReviewState = {
   tone: '',
   savingOrder: false
 };
+const paymentHandoffState = {
+  message: '',
+  tone: '',
+  selectedMethod: '',
+  processing: false,
+  confirmCancel: false
+};
 const payloadPreviewState = {
   enabled: forgeOrderPayloadPreview.isPayloadPreviewEnabled(window.location.search),
   open: false,
@@ -608,6 +623,7 @@ const orderUiState = {
 };
 
 let orderUiNoteTimer = 0;
+let paymentSubmissionAuthorization = null;
 let lastStaffFocusTarget = null;
 let lastConfirmationFocusTarget = null;
 let lastPayloadPreviewFocusTarget = null;
@@ -1741,6 +1757,7 @@ function openReadyToPackScreen() {
 
 function resetActiveOrderSession({ clearCart = true, goToWelcome = true } = {}) {
   const previousOrderSessionId = appState.activeOrderSessionId;
+  resetPaymentHandoffState();
   if (clearCart) {
     saveOrderItems([]);
   }
@@ -3522,7 +3539,188 @@ function renderPlaceOrderButton() {
   }
 
   button.disabled = finalReviewState.savingOrder;
-  button.textContent = finalReviewState.savingOrder ? 'Saving Order...' : 'Place My Order';
+  button.textContent = 'Review & Pay';
+}
+
+function resetPaymentHandoffState(options = {}) {
+  const clearMethod = options.clearMethod !== false;
+  const clearPin = options.clearPin !== false;
+  const clearMessage = options.clearMessage !== false;
+  const clearAuthorization = options.clearAuthorization !== false;
+  paymentHandoffState.processing = false;
+  paymentHandoffState.confirmCancel = false;
+  if (clearMethod) {
+    paymentHandoffState.selectedMethod = '';
+  }
+  if (clearMessage) {
+    paymentHandoffState.message = '';
+    paymentHandoffState.tone = '';
+  }
+  if (clearPin && paymentHandoffPinInput) {
+    paymentHandoffPinInput.value = '';
+  }
+  if (clearAuthorization) {
+    clearPaymentSubmissionAuthorization();
+  }
+}
+
+function clearPaymentSubmissionAuthorization() {
+  paymentSubmissionAuthorization = null;
+}
+
+function grantPaymentSubmissionAuthorization(orderSessionId, externalPaymentMethod, paymentConfirmedAt) {
+  paymentSubmissionAuthorization = {
+    orderSessionId: sanitizeText(orderSessionId || ''),
+    externalPaymentMethod: sanitizeText(externalPaymentMethod || ''),
+    paymentConfirmedAt: sanitizeText(paymentConfirmedAt || '')
+  };
+}
+
+function normalizePaymentConfirmationTimestamp(value) {
+  const normalized = sanitizeText(value || '');
+  if (!normalized) {
+    return '';
+  }
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) {
+    return '';
+  }
+  return parsed.toISOString();
+}
+
+function consumePaymentSubmissionAuthorization(activeOrderSessionId) {
+  const authorization = paymentSubmissionAuthorization;
+  clearPaymentSubmissionAuthorization();
+  const orderSessionId = sanitizeText(activeOrderSessionId || '');
+  if (!authorization || authorization.orderSessionId !== orderSessionId) {
+    return null;
+  }
+  if (!allowedExternalPaymentMethods.includes(authorization.externalPaymentMethod)) {
+    return null;
+  }
+  const normalizedTimestamp = normalizePaymentConfirmationTimestamp(authorization.paymentConfirmedAt);
+  if (!normalizedTimestamp) {
+    return null;
+  }
+  return {
+    externalPaymentMethod: authorization.externalPaymentMethod,
+    paymentConfirmedAt: normalizedTimestamp
+  };
+}
+
+function getPaymentMethodLabel(value) {
+  if (value === 'card_square') {
+    return 'Card / Square';
+  }
+  if (value === 'cash') {
+    return 'Cash';
+  }
+  if (value === 'venmo') {
+    return 'Venmo';
+  }
+  return '';
+}
+
+function renderPaymentMethodChoices() {
+  paymentMethodChoiceButtons.forEach((button) => {
+    const selected = button.dataset.paymentMethod === paymentHandoffState.selectedMethod;
+    button.classList.toggle('is-selected', selected);
+    button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    button.disabled = paymentHandoffState.processing || finalReviewState.savingOrder;
+  });
+}
+
+function renderPaymentHandoffStatus() {
+  if (!paymentHandoffStatus) {
+    return;
+  }
+  paymentHandoffStatus.textContent = paymentHandoffState.message;
+  paymentHandoffStatus.className = `form-status payment-handoff-status${paymentHandoffState.tone === 'success' ? ' is-success' : ''}`;
+}
+
+function renderPaymentHandoff() {
+  const items = getOrderItems();
+  const { itemCount, subtotal } = getCurrentOrderStats(items);
+  if (paymentHandoffCustomerName) {
+    paymentHandoffCustomerName.textContent = customerDraft.fullName || 'Customer name unavailable';
+  }
+  if (paymentHandoffSummary) {
+    const summaryMarkup = items.length > 0
+      ? `
+        <ul>
+          ${items.map((item) => `
+            <li>${item.quantity} × ${escapeHtml(item.displayName || 'Item')}</li>
+          `).join('')}
+        </ul>
+        <p class="payment-handoff-summary-note">${itemCount} total item${itemCount === 1 ? '' : 's'} in this order.</p>
+      `
+      : '<p class="payment-handoff-summary-note">No items are currently in this order.</p>';
+    paymentHandoffSummary.innerHTML = summaryMarkup;
+  }
+  if (paymentHandoffTotal) {
+    paymentHandoffTotal.textContent = formatPrice(subtotal);
+  }
+  if (paymentHandoffPinInput) {
+    paymentHandoffPinInput.disabled = paymentHandoffState.processing || finalReviewState.savingOrder;
+  }
+  if (paymentHandoffCancelPanel) {
+    paymentHandoffCancelPanel.hidden = !paymentHandoffState.confirmCancel;
+  }
+  renderPaymentMethodChoices();
+  renderPaymentHandoffStatus();
+  renderPaymentHandoffSubmitButton();
+}
+
+function renderPaymentHandoffSubmitButton() {
+  const button = document.querySelector('[data-action="payment-handoff-submit"]');
+  if (!button) {
+    return;
+  }
+  const pinValue = sanitizeText(paymentHandoffPinInput?.value || '');
+  const disabled = paymentHandoffState.processing
+    || finalReviewState.savingOrder
+    || !allowedExternalPaymentMethods.includes(paymentHandoffState.selectedMethod)
+    || !pinValue;
+  button.disabled = disabled;
+  button.textContent = paymentHandoffState.processing || finalReviewState.savingOrder
+    ? 'Verifying Staff PIN...'
+    : 'Payment Received — Submit Order';
+}
+
+function openPaymentHandoff() {
+  const validationResult = validateFinalReviewDraft();
+  if (!validationResult.isValid) {
+    finalReviewState.message = `${validationResult.issues[0]} Use Edit Items or Edit Customer Information to finish your order.`;
+    finalReviewState.tone = 'error';
+    renderFinalReviewStatus();
+    finalReviewStatus?.focus();
+    return;
+  }
+  resetPaymentHandoffState();
+  renderPaymentHandoff();
+  showScreen('payment-handoff');
+}
+
+async function verifyStaffPaymentHandoff(pin) {
+  if (!staffApiClient || typeof staffApiClient.verifyPin !== 'function') {
+    const unavailableError = new Error('Staff verification is unavailable.');
+    unavailableError.code = 'verification_unavailable';
+    throw unavailableError;
+  }
+
+  const verificationResult = await staffApiClient.verifyPin(pin);
+  if (!verificationResult || verificationResult.verified !== true) {
+    const invalidPinError = new Error('The Staff PIN was incorrect.');
+    invalidPinError.code = 'invalid_pin';
+    throw invalidPinError;
+  }
+}
+
+function showPaymentHandoffError(message) {
+  paymentHandoffState.message = message;
+  paymentHandoffState.tone = 'error';
+  renderPaymentHandoff();
+  paymentHandoffStatus?.focus();
 }
 
 function ensurePayloadPreviewUi() {
@@ -6040,10 +6238,16 @@ async function renderThankYouScreen() {
 async function submitCurrentOrder() {
   const validationResult = validateFinalReviewDraft();
   if (!validationResult.isValid) {
-    finalReviewState.message = `${validationResult.issues[0]} Use Edit Items or Edit Customer Information to finish your order.`;
+    const message = `${validationResult.issues[0]} Use Edit Items or Edit Customer Information to finish your order.`;
+    paymentHandoffState.processing = false;
+    clearPaymentSubmissionAuthorization();
+    finalReviewState.message = message;
     finalReviewState.tone = 'error';
+    paymentHandoffState.message = message;
+    paymentHandoffState.tone = 'error';
     renderFinalReviewStatus();
-    finalReviewStatus?.focus();
+    renderPaymentHandoff();
+    (appState.currentScreen === 'payment-handoff' ? paymentHandoffStatus : finalReviewStatus)?.focus();
     return;
   }
 
@@ -6051,11 +6255,23 @@ async function submitCurrentOrder() {
     return;
   }
 
+  const paymentConfirmation = consumePaymentSubmissionAuthorization(appState.activeOrderSessionId);
+  if (!paymentConfirmation) {
+    paymentHandoffState.processing = false;
+    showPaymentHandoffError('Staff payment confirmation is required before submitting this order.');
+    return;
+  }
+
   finalReviewState.savingOrder = true;
   finalReviewState.message = '';
   finalReviewState.tone = '';
+  paymentHandoffState.processing = true;
+  paymentHandoffState.message = '';
+  paymentHandoffState.tone = '';
+  paymentHandoffState.confirmCancel = false;
   renderFinalReviewStatus();
   renderPlaceOrderButton();
+  renderPaymentHandoff();
 
   const orderStateSnapshot = buildCurrentOrderStateSnapshot();
 
@@ -6064,7 +6280,8 @@ async function submitCurrentOrder() {
       activeOrderSessionId: appState.activeOrderSessionId,
       orderState: orderStateSnapshot,
       deviceId: null,
-      event: null
+      event: null,
+      paymentConfirmation
     });
 
     if (!result.ok) {
@@ -6072,9 +6289,13 @@ async function submitCurrentOrder() {
       finalReviewState.savingOrder = false;
       finalReviewState.message = 'We could not save your order. Please ask a Hilltop Shop team member for help.';
       finalReviewState.tone = 'error';
+      paymentHandoffState.processing = false;
+      paymentHandoffState.message = finalReviewState.message;
+      paymentHandoffState.tone = 'error';
       renderFinalReviewStatus();
       renderPlaceOrderButton();
-      finalReviewStatus?.focus();
+      renderPaymentHandoff();
+      (appState.currentScreen === 'payment-handoff' ? paymentHandoffStatus : finalReviewStatus)?.focus();
       return;
     }
 
@@ -6097,9 +6318,13 @@ async function submitCurrentOrder() {
     finalReviewState.savingOrder = false;
     finalReviewState.message = 'We could not save your order. Please ask a Hilltop Shop team member for help.';
     finalReviewState.tone = 'error';
+    paymentHandoffState.processing = false;
+    paymentHandoffState.message = finalReviewState.message;
+    paymentHandoffState.tone = 'error';
     renderFinalReviewStatus();
     renderPlaceOrderButton();
-    finalReviewStatus?.focus();
+    renderPaymentHandoff();
+    (appState.currentScreen === 'payment-handoff' ? paymentHandoffStatus : finalReviewStatus)?.focus();
   }
 }
 
@@ -6127,6 +6352,7 @@ function clearEditableOrderStateAfterSubmit() {
   reviewState.saving = false;
   reviewState.error = '';
   finalReviewState.savingOrder = false;
+  resetPaymentHandoffState();
   closeSavedOrdersInspector();
   closePayloadPreview(false);
   appState.editingItemId = '';
@@ -6247,7 +6473,15 @@ function renderFinalReview() {
 function openFinalReview() {
   finalReviewState.message = '';
   finalReviewState.tone = '';
+  resetPaymentHandoffState();
   ensurePayloadPreviewUi();
+  renderFinalReview();
+  showScreen('final-review');
+}
+
+function returnFromPaymentHandoffToFinalReview() {
+  resetPaymentHandoffState();
+  renderPaymentHandoff();
   renderFinalReview();
   showScreen('final-review');
 }
@@ -6565,6 +6799,7 @@ if (treeForm) {
   renderTreeReview();
   renderCurrentOrder();
   renderFinalReview();
+  renderPaymentHandoff();
   renderCustomerOrderContext();
   renderCurrentOrderUtilityButtons();
   renderDiscardPanels();
@@ -6594,6 +6829,9 @@ if (treeForm) {
     showScreen('customer-information');
   } else if (appState.currentScreen === 'final-review') {
     showScreen('final-review');
+  } else if (appState.currentScreen === 'payment-handoff' && hasRestorableFinalReviewState()) {
+    renderPaymentHandoff();
+    showScreen('payment-handoff');
   } else if (appState.currentScreen === 'thank-you' && appState.lastSubmittedOrderUuid) {
     renderThankYouScreen();
     showScreen('thank-you');
@@ -6933,6 +7171,28 @@ if (treeForm) {
     });
   });
 
+  paymentMethodChoiceButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      if (paymentHandoffState.processing || finalReviewState.savingOrder) {
+        return;
+      }
+      paymentHandoffState.selectedMethod = button.dataset.paymentMethod || '';
+      paymentHandoffState.message = '';
+      paymentHandoffState.tone = '';
+      paymentHandoffState.confirmCancel = false;
+      clearPaymentSubmissionAuthorization();
+      renderPaymentHandoff();
+    });
+  });
+
+  paymentHandoffPinInput?.addEventListener('input', () => {
+    paymentHandoffState.message = '';
+    paymentHandoffState.tone = '';
+    clearPaymentSubmissionAuthorization();
+    renderPaymentHandoffSubmitButton();
+    renderPaymentHandoffStatus();
+  });
+
   treeForm.addEventListener('submit', (event) => {
     event.preventDefault();
     syncDraftFromFields();
@@ -7214,12 +7474,90 @@ if (treeForm) {
     }
 
     if (action === 'place-order-development') {
-      submitCurrentOrder();
+      openPaymentHandoff();
       return;
     }
 
     if (action === 'preview-order-payload') {
       openPayloadPreview();
+    }
+  });
+
+  document.querySelector('[data-screen="payment-handoff"]')?.addEventListener('click', async (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    if (!action) {
+      return;
+    }
+
+    if (action === 'payment-handoff-back') {
+      returnFromPaymentHandoffToFinalReview();
+      return;
+    }
+
+    if (action === 'payment-handoff-cancel') {
+      paymentHandoffState.confirmCancel = true;
+      paymentHandoffState.message = '';
+      paymentHandoffState.tone = '';
+      renderPaymentHandoff();
+      return;
+    }
+
+    if (action === 'payment-handoff-cancel-dismiss') {
+      paymentHandoffState.confirmCancel = false;
+      renderPaymentHandoff();
+      return;
+    }
+
+    if (action === 'payment-handoff-cancel-confirm') {
+      resetActiveOrderSession();
+      return;
+    }
+
+    if (action !== 'payment-handoff-submit') {
+      return;
+    }
+
+    if (paymentHandoffState.processing || finalReviewState.savingOrder) {
+      return;
+    }
+
+    if (!allowedExternalPaymentMethods.includes(paymentHandoffState.selectedMethod)) {
+      showPaymentHandoffError('Select a payment method before continuing.');
+      return;
+    }
+
+    const pin = sanitizeText(paymentHandoffPinInput?.value || '');
+    if (!pin) {
+      showPaymentHandoffError('Enter the Staff PIN before continuing.');
+      return;
+    }
+
+    paymentHandoffState.processing = true;
+    paymentHandoffState.message = '';
+    paymentHandoffState.tone = '';
+    paymentHandoffState.confirmCancel = false;
+    renderPaymentHandoff();
+
+    try {
+      await verifyStaffPaymentHandoff(pin);
+      grantPaymentSubmissionAuthorization(
+        appState.activeOrderSessionId,
+        paymentHandoffState.selectedMethod,
+        new Date().toISOString()
+      );
+      await submitCurrentOrder();
+    } catch (error) {
+      clearPaymentSubmissionAuthorization();
+      paymentHandoffState.processing = false;
+      finalReviewState.savingOrder = false;
+      if (paymentHandoffPinInput) {
+        paymentHandoffPinInput.value = '';
+      }
+      if (error && error.code === 'invalid_pin') {
+        showPaymentHandoffError('The Staff PIN was incorrect. Re-enter the PIN and try again.');
+        return;
+      }
+      showPaymentHandoffError('Staff verification is unavailable. Check the connection and try again.');
     }
   });
 

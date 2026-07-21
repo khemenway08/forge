@@ -4,8 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const BUILD_VERSION = '20260721-16';
-const CACHE_NAME = 'forge-starter-v16';
+const BUILD_VERSION = '20260721-17';
+const CACHE_NAME = 'forge-starter-v17';
 
 function normalizeRequestUrl(input) {
   if (typeof input === 'string') {
@@ -154,6 +154,9 @@ test('service worker install fetches current precache assets with cache reload a
     'forge-starter-v15': {
       '/js/app.js?v=20260720-15': 'previous app bundle'
     },
+    'forge-starter-v16': {
+      '/js/app.js?v=20260721-16': 'stale prior payment-gate build'
+    },
     'unrelated-cache': {
       '/misc.txt': 'keep me'
     }
@@ -181,6 +184,7 @@ test('service worker install fetches current precache assets with cache reload a
   assert.ok(!cacheKeys.includes('forge-starter-v12'));
   assert.ok(!cacheKeys.includes('forge-starter-v13'));
   assert.ok(!cacheKeys.includes('forge-starter-v15'));
+  assert.ok(!cacheKeys.includes('forge-starter-v16'));
   assert.ok(cacheKeys.includes('unrelated-cache'));
 });
 

@@ -96,6 +96,37 @@ test('logout sends POST and same-origin credentials', async () => {
   assert.equal(requests[0].options.credentials, 'same-origin');
 });
 
+test('verifyPin sends POST JSON and same-origin credentials without creating a session-oriented result', async () => {
+  const requests = [];
+  const client = staffApiClientModule.createForgeStaffApiClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return createJsonResponse(200, {
+        application: 'Forge',
+        api_version: '1',
+        status: 'ok',
+        data: {
+          verified: true
+        }
+      });
+    }
+  });
+
+  const result = await client.verifyPin('2468');
+
+  assert.deepEqual(result, {
+    ok: true,
+    verified: true
+  });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, '/api/v1/staff/verify-pin.php');
+  assert.equal(requests[0].options.method, 'POST');
+  assert.equal(requests[0].options.credentials, 'same-origin');
+  assert.equal(requests[0].options.headers.Accept, 'application/json');
+  assert.equal(requests[0].options.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(requests[0].options.body), { pin: '2468' });
+});
+
 test('listOrders sends GET and same-origin credentials and returns orders safely', async () => {
   const requests = [];
   const client = staffApiClientModule.createForgeStaffApiClient({
@@ -364,6 +395,7 @@ test('401 responses are handled safely as unauthenticated results', async () => 
 
   const sessionResult = await client.checkSession();
   const loginResult = await client.login('1234');
+  const verifyPinResult = await client.verifyPin('1234');
   const ordersResult = await client.listOrders();
   const traysResult = await client.listTrays();
   const assignResult = await client.assignTray('order-1', 1);
@@ -371,6 +403,7 @@ test('401 responses are handled safely as unauthenticated results', async () => 
 
   assert.deepEqual(sessionResult, { ok: false, authenticated: false, unauthenticated: true });
   assert.deepEqual(loginResult, { ok: false, authenticated: false, unauthenticated: true });
+  assert.deepEqual(verifyPinResult, { ok: false, verified: false, invalidCredentials: true });
   assert.deepEqual(ordersResult, { ok: false, authenticated: false, unauthenticated: true, orders: [] });
   assert.deepEqual(traysResult, { ok: false, authenticated: false, unauthenticated: true, trays: [] });
   assert.deepEqual(assignResult, { ok: false, authenticated: false, unauthenticated: true });
@@ -413,7 +446,7 @@ test('PIN values are not included in safe client errors', async () => {
   });
 
   await assert.rejects(
-    () => client.login('2468'),
+    () => client.verifyPin('2468'),
     (error) => {
       assert.equal(error.code, 'server_error');
       assert.doesNotMatch(error.message, /2468/);

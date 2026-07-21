@@ -151,6 +151,24 @@ test('successful submission saves one immutable local record with a normalized p
   assert.deepEqual(savedRecord.payload.items[0].personalization_order.map((entry) => entry.name), ['Kyle', 'Scout']);
 });
 
+test('successful submission preserves external payment metadata only after staff confirmation', async () => {
+  const { service, orderStore } = createService();
+  const result = await service.submitOrder({
+    activeOrderSessionId: 'order-session-123',
+    orderState: createOrderState([createItem()]),
+    paymentConfirmation: {
+      externalPaymentMethod: 'cash',
+      paymentConfirmedAt: '2026-07-21T18:45:00.000Z'
+    }
+  });
+
+  const savedRecord = await orderStore.getOrder('submission-uuid-1');
+
+  assert.equal(result.ok, true);
+  assert.equal(savedRecord.payload.external_payment_method, 'cash');
+  assert.equal(savedRecord.payload.payment_confirmed_at, '2026-07-21T18:45:00.000Z');
+});
+
 test('successful local save triggers a background sync request with the saved record uuid', async () => {
   let syncedUuid = '';
   let syncCallCount = 0;
@@ -462,6 +480,16 @@ test('stale final review restores thank-you when a completed receipt exists and 
     hasUsableActiveOrder: false,
     hasCompletedReceipt: false
   }), 'welcome');
+  assert.equal(submissionModule.resolveRestoredScreen({
+    currentScreen: 'payment-handoff',
+    hasUsableActiveOrder: false,
+    hasCompletedReceipt: true
+  }), 'thank-you');
+  assert.equal(submissionModule.resolveRestoredScreen({
+    currentScreen: 'payment-handoff',
+    hasUsableActiveOrder: false,
+    hasCompletedReceipt: false
+  }), 'welcome');
 });
 
 test('unfinished active drafts still restore their final review screen normally', () => {
@@ -470,6 +498,11 @@ test('unfinished active drafts still restore their final review screen normally'
     hasUsableActiveOrder: true,
     hasCompletedReceipt: false
   }), 'final-review');
+  assert.equal(submissionModule.resolveRestoredScreen({
+    currentScreen: 'payment-handoff',
+    hasUsableActiveOrder: true,
+    hasCompletedReceipt: false
+  }), 'payment-handoff');
 });
 
 test('failed save does not create a completion receipt', async () => {

@@ -88,11 +88,11 @@ Forge Version 1 assumes production is performed by Kyle and Meagan or another tw
 
 # 6. Customer Experience
 
-Welcome → Choose Product → Choose Ornament → Customize Product → Add Another Item → Customer Information → Review → Submit Order → Thank You
+Welcome → Choose Product → Choose Ornament → Customize Product → Add Another Item → Customer Information → Review → Review & Pay → Staff Payment Confirmation → Thank You
 
 Customer information is collected once after all products have been added. Shipping is the default fulfillment method.
 
-Forge does not process payments in Version 1. Payments continue through external methods such as Square, cash, Venmo, or another staff-approved method.
+Forge does not process payments in Version 1. Payments continue through external methods such as Square, cash, or Venmo. The order remains an unsaved Forge draft until a staff member confirms payment with a one-time stateless Staff PIN verification. That verification requires an internet connection, does not open or preserve a Staff Tools session, and only then allows Forge to save and submit the order.
 
 # 7. Staff Experience
 The staff experience is protected by a Staff PIN.

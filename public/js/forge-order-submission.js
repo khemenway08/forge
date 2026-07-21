@@ -140,6 +140,7 @@
       const submissionPromise = submitOrderOnce({
         activeOrderSessionId,
         orderState: input.orderState,
+        paymentConfirmation: input.paymentConfirmation || null,
         event: input.event || null,
         deviceId: input.deviceId || null
       }).finally(() => {
@@ -169,6 +170,7 @@
         }
 
         const submittedContext = contextManager.markSubmitted(input.activeOrderSessionId, getNow());
+        const paymentConfirmation = normalizePaymentConfirmationInput(input.paymentConfirmation);
         const payload = buildForgeOrderPayload(immutableOrderState, {
           forgeOrderUuid: submittedContext.forgeOrderUuid,
           builtAt: submittedContext.builtAt,
@@ -176,7 +178,9 @@
           source: 'customer_kiosk',
           orderStatus: 'submitted',
           deviceId: input.deviceId || null,
-          event: input.event || null
+          event: input.event || null,
+          externalPaymentMethod: paymentConfirmation.externalPaymentMethod,
+          paymentConfirmedAt: paymentConfirmation.paymentConfirmedAt
         });
 
         const nowIso = normalizeDateValue(getNow()).toISOString();
@@ -311,9 +315,9 @@
     const hasUsableActiveOrder = Boolean(options.hasUsableActiveOrder);
     const hasCompletedReceipt = Boolean(options.hasCompletedReceipt);
 
-    if (currentScreen === 'final-review') {
+    if (currentScreen === 'final-review' || currentScreen === 'payment-handoff') {
       if (hasUsableActiveOrder) {
-        return 'final-review';
+        return currentScreen;
       }
       return hasCompletedReceipt ? 'thank-you' : 'welcome';
     }
@@ -341,6 +345,25 @@
     randomSegments[3] = `${((Number.parseInt(randomSegments[3][0], 16) & 0x3) | 0x8).toString(16)}${randomSegments[3].slice(1)}`;
     randomSegments[4] = `${timestamp.slice(-12)}${randomSegments[4]}`.slice(0, 12);
     return randomSegments.join('-');
+  }
+
+  function normalizePaymentConfirmationInput(value) {
+    if (!value || typeof value !== 'object') {
+      return {
+        externalPaymentMethod: null,
+        paymentConfirmedAt: null
+      };
+    }
+
+    const externalPaymentMethod = asTrimmedString(value.externalPaymentMethod);
+    const paymentConfirmedAt = value.paymentConfirmedAt == null
+      ? null
+      : normalizeDateValue(value.paymentConfirmedAt).toISOString();
+
+    return {
+      externalPaymentMethod: externalPaymentMethod || null,
+      paymentConfirmedAt
+    };
   }
 
   function createRandomHex(length) {

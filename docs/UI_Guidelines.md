@@ -823,7 +823,7 @@ Do not add:
 - Workload balancing
 - Role-specific production dashboards
 
-A Staff PIN may protect staff screens, but the interface should not behave like an enterprise workforce platform.
+A Staff PIN may protect staff screens, but the interface should not behave like an enterprise workforce platform. Customer-facing payment handoff must keep the Staff PIN contained to a simple online stateless verification step, must not open the full staff workspace during checkout, and must never leave Staff Tools unlocked as a side effect of payment confirmation.
 
 ---
 

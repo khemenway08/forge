@@ -11,6 +11,7 @@
   }
 }(typeof globalThis !== 'undefined' ? globalThis : this, function (productCatalog) {
   const PAYLOAD_SCHEMA_VERSION = '1.0';
+  const EXTERNAL_PAYMENT_METHODS = new Set(['card_square', 'cash', 'venmo']);
   const TRANSIENT_SNAPSHOT_KEYS = new Set([
     'previewurl',
     'objecturl',
@@ -35,8 +36,12 @@
     const itemFlags = canonicalItems.flatMap((item) => item.open_flags);
     const topLevelFlags = dedupeOrderFlags(itemFlags);
     const pricing = buildOrderPricing(canonicalItems, orderState);
+    const externalPaymentMethod = normalizeExternalPaymentMethod(context.externalPaymentMethod);
+    const paymentConfirmedAt = context.paymentConfirmedAt == null
+      ? null
+      : normalizeIsoDate(context.paymentConfirmedAt, 'paymentConfirmedAt');
 
-    return {
+    const payload = {
       payload_type: 'forge_order',
       schema_version: PAYLOAD_SCHEMA_VERSION,
       forge_order_uuid: context.forgeOrderUuid,
@@ -55,6 +60,13 @@
       open_flags: topLevelFlags,
       has_open_flags: topLevelFlags.length > 0
     };
+
+    if (externalPaymentMethod && paymentConfirmedAt) {
+      payload.external_payment_method = externalPaymentMethod;
+      payload.payment_confirmed_at = paymentConfirmedAt;
+    }
+
+    return payload;
   }
 
   function validateBuilderInputs(orderState, context) {
@@ -68,6 +80,7 @@
       throw new Error('buildForgeOrderPayload requires forgeOrderUuid.');
     }
     normalizeIsoDate(context.builtAt, 'builtAt');
+    validatePaymentConfirmationContext(context);
     getOrderItemsFromState(orderState);
   }
 
@@ -587,6 +600,33 @@
       throw new Error(`buildForgeOrderPayload received an invalid ${fieldName} value.`);
     }
     return parsed.toISOString();
+  }
+
+  function validatePaymentConfirmationContext(context) {
+    const hasMethod = context.externalPaymentMethod != null && String(context.externalPaymentMethod).trim() !== '';
+    const hasTimestamp = context.paymentConfirmedAt != null && String(context.paymentConfirmedAt).trim() !== '';
+    if (!hasMethod && !hasTimestamp) {
+      return;
+    }
+    if (!hasMethod || !hasTimestamp) {
+      throw new Error('buildForgeOrderPayload requires both externalPaymentMethod and paymentConfirmedAt together.');
+    }
+    normalizeExternalPaymentMethod(context.externalPaymentMethod, true);
+    normalizeIsoDate(context.paymentConfirmedAt, 'paymentConfirmedAt');
+  }
+
+  function normalizeExternalPaymentMethod(value, throwOnInvalid = false) {
+    const normalized = asTrimmedString(value);
+    if (!normalized) {
+      return '';
+    }
+    if (!EXTERNAL_PAYMENT_METHODS.has(normalized)) {
+      if (throwOnInvalid) {
+        throw new Error('buildForgeOrderPayload requires a supported externalPaymentMethod.');
+      }
+      return '';
+    }
+    return normalized;
   }
 
   function normalizeOptionalMoney(value, fallback) {

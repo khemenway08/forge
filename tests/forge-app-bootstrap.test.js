@@ -100,6 +100,17 @@ function createElement(name = 'div') {
   return element;
 }
 
+function attachActionDataset(element, action) {
+  element.dataset.action = action;
+  element.closest = (selector) => {
+    if (selector === '[data-action]') {
+      return element;
+    }
+    return null;
+  };
+  return element;
+}
+
 class MockMouseEvent {
   constructor(type, init = {}) {
     this.type = type;
@@ -182,8 +193,18 @@ function createDispatchTarget({ action = '', orderUuid = '', trayNumber = '' } =
 
 function loadForgeAppWithoutStaffModules() {
   const env = createQueryEnvironment();
-  const startButton = createElement('button');
-  const staffButton = createElement('button');
+  const startButton = attachActionDataset(createElement('button'), 'start');
+  const staffButton = attachActionDataset(createElement('button'), 'staff');
+  const placeOrderButton = attachActionDataset(createElement('button'), 'place-order-development');
+  const paymentHandoffSubmitButton = attachActionDataset(createElement('button'), 'payment-handoff-submit');
+  const paymentHandoffStatus = createElement('p');
+  const paymentHandoffPinInput = createElement('input');
+  const paymentHandoffCustomerName = createElement('strong');
+  const paymentHandoffSummary = createElement('div');
+  const paymentHandoffTotal = createElement('strong');
+  const paymentHandoffCancelPanel = createElement('div');
+  paymentHandoffCancelPanel.hidden = true;
+  const finalReviewStatus = createElement('p');
   const staffPanel = createElement('div');
   staffPanel.hidden = true;
   const staffDefaultActions = createElement('div');
@@ -194,18 +215,41 @@ function loadForgeAppWithoutStaffModules() {
   welcomeScreen.dataset.screen = 'welcome';
   const categoriesScreen = createElement('section');
   categoriesScreen.dataset.screen = 'categories';
-  const allScreens = [welcomeScreen, categoriesScreen];
+  const finalReviewScreen = createElement('section');
+  finalReviewScreen.dataset.screen = 'final-review';
+  const paymentHandoffScreen = createElement('section');
+  paymentHandoffScreen.dataset.screen = 'payment-handoff';
+  const paymentMethodButtons = ['card_square', 'cash', 'venmo'].map((paymentMethod) => {
+    const button = createElement('button');
+    button.dataset.paymentMethod = paymentMethod;
+    return button;
+  });
+  const allScreens = [welcomeScreen, categoriesScreen, finalReviewScreen, paymentHandoffScreen];
   const appBody = createElement('body');
+  const localStorageData = new Map();
+  const documentListeners = new Map();
 
   env.registerSelector('[data-action="start"]', startButton);
   env.registerSelector('[data-action="staff"]', staffButton);
+  env.registerSelector('[data-action="place-order-development"]', placeOrderButton);
+  env.registerSelector('[data-action="payment-handoff-submit"]', paymentHandoffSubmitButton);
   env.registerSelector('[data-staff-panel]', staffPanel);
   env.registerSelector('[data-staff-actions="default"]', staffDefaultActions);
   env.registerSelector('[data-staff-actions="confirm"]', staffConfirmActions);
   env.registerSelector('[data-form="tree-ornament"]', treeForm);
+  env.registerSelector('[data-final-review-status]', finalReviewStatus);
+  env.registerSelector('[data-payment-handoff-status]', paymentHandoffStatus);
+  env.registerSelector('[data-payment-handoff-pin]', paymentHandoffPinInput);
+  env.registerSelector('[data-payment-handoff-customer-name]', paymentHandoffCustomerName);
+  env.registerSelector('[data-payment-handoff-summary]', paymentHandoffSummary);
+  env.registerSelector('[data-payment-handoff-total]', paymentHandoffTotal);
+  env.registerSelector('[data-payment-handoff-cancel-panel]', paymentHandoffCancelPanel);
+  env.registerSelector('[data-screen="final-review"]', finalReviewScreen);
+  env.registerSelector('[data-screen="payment-handoff"]', paymentHandoffScreen);
   env.registerSelector('.app-shell', appShell);
 
   env.registerSelectorAll('[data-screen]', allScreens);
+  env.registerSelectorAll('[data-payment-method]', paymentMethodButtons);
   env.registerSelectorAll('[data-category]', []);
   env.registerSelectorAll('[data-action="back-categories"]', []);
   env.registerSelectorAll('[data-action="back-ornaments"]', []);
@@ -262,7 +306,20 @@ function loadForgeAppWithoutStaffModules() {
         return array;
       }
     },
-    localStorage: { getItem() { return null; }, setItem() {}, removeItem() {}, clear() {} },
+    localStorage: {
+      getItem(key) {
+        return localStorageData.has(key) ? localStorageData.get(key) : null;
+      },
+      setItem(key, value) {
+        localStorageData.set(String(key), String(value));
+      },
+      removeItem(key) {
+        localStorageData.delete(String(key));
+      },
+      clear() {
+        localStorageData.clear();
+      }
+    },
     sessionStorage: { getItem() { return null; }, setItem() {}, removeItem() {}, clear() {} },
     navigator: {
       clipboard: { writeText: async () => {} },
@@ -271,6 +328,7 @@ function loadForgeAppWithoutStaffModules() {
     location: { protocol: 'http:', hostname: 'localhost', search: '', href: 'http://localhost:3016/' },
     CustomEvent: function CustomEvent(type, init) { this.type = type; this.detail = init?.detail; },
     Event: function Event(type) { this.type = type; },
+    Element: function Element() {},
     HTMLElement: function HTMLElement() {},
     HTMLInputElement: function HTMLInputElement() {},
     HTMLTextAreaElement: function HTMLTextAreaElement() {},
@@ -294,8 +352,23 @@ function loadForgeAppWithoutStaffModules() {
     createElement(tag) {
       return createElement(tag);
     },
-    addEventListener() {},
-    removeEventListener() {}
+    addEventListener(type, handler) {
+      if (!documentListeners.has(type)) {
+        documentListeners.set(type, []);
+      }
+      documentListeners.get(type).push(handler);
+    },
+    removeEventListener(type, handler) {
+      if (!documentListeners.has(type)) {
+        return;
+      }
+      documentListeners.set(type, documentListeners.get(type).filter((candidate) => candidate !== handler));
+    },
+    dispatchEvent(event) {
+      const handlers = documentListeners.get(event.type) || [];
+      handlers.forEach((handler) => handler.call(this, event));
+      return true;
+    }
   };
 
   context.window = context;
@@ -330,10 +403,22 @@ function loadForgeAppWithoutStaffModules() {
   }
 
   return {
+    context,
     startButton,
     staffButton,
     staffPanel,
-    categoriesScreen
+    categoriesScreen,
+    finalReviewScreen,
+    paymentHandoffScreen,
+    placeOrderButton,
+    paymentHandoffSubmitButton,
+    paymentHandoffStatus,
+    paymentHandoffPinInput,
+    paymentHandoffCustomerName,
+    paymentHandoffSummary,
+    paymentHandoffTotal,
+    paymentMethodButtons,
+    localStorageData
   };
 }
 
@@ -763,6 +848,108 @@ test('localhost app bootstrap survives missing staff tray modules and keeps Star
 
   assert.doesNotThrow(() => staffButton.click());
   assert.equal(staffPanel.hidden, false);
+});
+
+test('Review & Pay relabels the final review action and opening the payment handoff creates no submission context or completion receipt', () => {
+  const {
+    context,
+    placeOrderButton,
+    paymentHandoffCustomerName,
+    paymentHandoffSummary,
+    paymentHandoffTotal,
+    localStorageData
+  } = loadForgeAppWithoutStaffModules();
+
+  context.__testValidateFinalReviewDraft = () => ({ isValid: true, issues: [] });
+  context.__testGetOrderItems = () => [{ quantity: 1, displayName: 'Tree Ornament' }];
+  context.__testGetCurrentOrderStats = () => ({ itemCount: 1, subtotal: 30 });
+  vm.runInContext(`
+    validateFinalReviewDraft = globalThis.__testValidateFinalReviewDraft;
+    getOrderItems = globalThis.__testGetOrderItems;
+    getCurrentOrderStats = globalThis.__testGetCurrentOrderStats;
+    customerDraft.fullName = 'Kyle Hemenway';
+    appState.currentScreen = 'final-review';
+  `, context);
+
+  context.openPaymentHandoff();
+
+  assert.equal(placeOrderButton.textContent, 'Review & Pay');
+  assert.equal(vm.runInContext('appState.currentScreen', context), 'payment-handoff');
+  assert.equal(paymentHandoffCustomerName.textContent, 'Kyle Hemenway');
+  assert.match(String(paymentHandoffSummary.innerHTML || ''), /Tree Ornament/);
+  assert.equal(paymentHandoffTotal.textContent, '$30.00');
+  assert.equal(localStorageData.has('forge-order-submission-context'), false);
+  assert.equal(localStorageData.has('forge-order-completion-receipt'), false);
+});
+
+test('payment handoff requires a payment method before submit and leaves the draft unsaved', () => {
+  const {
+    context,
+    placeOrderButton,
+    paymentHandoffSubmitButton,
+    paymentHandoffStatus,
+    paymentHandoffPinInput,
+    localStorageData
+  } = loadForgeAppWithoutStaffModules();
+
+  context.__testValidateFinalReviewDraft = () => ({ isValid: true, issues: [] });
+  context.__testGetOrderItems = () => [{ quantity: 1, displayName: 'Tree Ornament' }];
+  context.__testGetCurrentOrderStats = () => ({ itemCount: 1, subtotal: 3000 });
+  context.__testVerifyStaffPaymentHandoff = async () => {
+    throw new Error('verify should not be called');
+  };
+  context.__testSubmitCurrentOrder = async () => {
+    throw new Error('submit should not be called');
+  };
+  vm.runInContext(`
+    validateFinalReviewDraft = globalThis.__testValidateFinalReviewDraft;
+    getOrderItems = globalThis.__testGetOrderItems;
+    getCurrentOrderStats = globalThis.__testGetCurrentOrderStats;
+    verifyStaffPaymentHandoff = globalThis.__testVerifyStaffPaymentHandoff;
+    submitCurrentOrder = globalThis.__testSubmitCurrentOrder;
+    customerDraft.fullName = 'Kyle Hemenway';
+    appState.currentScreen = 'final-review';
+  `, context);
+
+  context.document.dispatchEvent({
+    type: 'click',
+    target: placeOrderButton,
+    currentTarget: context.document,
+    preventDefault() {},
+    stopPropagation() {}
+  });
+  paymentHandoffPinInput.value = '2468';
+  context.document.querySelector('[data-screen="payment-handoff"]').dispatchEvent({
+    type: 'click',
+    target: paymentHandoffSubmitButton,
+    currentTarget: context.document.querySelector('[data-screen="payment-handoff"]'),
+    preventDefault() {},
+    stopPropagation() {}
+  });
+
+  assert.match(paymentHandoffStatus.textContent, /Select a payment method before continuing\./);
+  assert.equal(localStorageData.has('forge-order-submission-context'), false);
+  assert.equal(localStorageData.has('forge-order-completion-receipt'), false);
+});
+
+test('payment handoff authorization is tied to one order session and can be consumed only once', () => {
+  const {
+    context
+  } = loadForgeAppWithoutStaffModules();
+
+  context.grantPaymentSubmissionAuthorization('order-session-1', 'venmo', '2026-07-21T18:45:00.000Z');
+
+  const wrongSession = context.consumePaymentSubmissionAuthorization('other-session');
+  context.grantPaymentSubmissionAuthorization('order-session-1', 'venmo', '2026-07-21T18:45:00.000Z');
+  const firstConsume = context.consumePaymentSubmissionAuthorization('order-session-1');
+  const secondConsume = context.consumePaymentSubmissionAuthorization('order-session-1');
+
+  assert.equal(wrongSession, null);
+  assert.equal(JSON.stringify(firstConsume), JSON.stringify({
+    externalPaymentMethod: 'venmo',
+    paymentConfirmedAt: '2026-07-21T18:45:00.000Z'
+  }));
+  assert.equal(secondConsume, null);
 });
 
 test('shared server order detail assign tray button opens the tray picker after re-rendering', async () => {

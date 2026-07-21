@@ -624,14 +624,80 @@
             <div class="order-summary-card final-review-customer" data-final-review-customer></div>
             <div class="order-summary-card final-review-delivery" data-final-review-delivery></div>
             <div class="order-summary-card final-review-actions-card">
-              <h3>Place My Order</h3>
-              <p class="final-review-copy">We will validate everything one more time before submission. Order submission is still in development.</p>
+              <h3>Review &amp; Pay</h3>
+              <p class="final-review-copy">We will validate everything one more time before continuing to staff payment confirmation.</p>
               <p class="form-status final-review-status" data-final-review-status role="alert" aria-live="polite" tabindex="-1"></p>
               <div class="review-actions final-review-actions">
-                <button class="primary-button" type="button" data-action="place-order-development">Place My Order</button>
+                <button class="primary-button" type="button" data-action="place-order-development">Review &amp; Pay</button>
               </div>
             </div>
           </aside>
+        </div>
+      </section>
+
+      <section class="screen" data-screen="payment-handoff">
+        <div class="hero">
+          <div class="hero-card payment-handoff-card">
+            <div class="payment-handoff-copy">
+              <p class="eyebrow">Payment &amp; Order Confirmation</p>
+              <h1>Payment &amp; Order Confirmation</h1>
+              <p class="lead payment-handoff-lead">Please see a staff member to complete payment.</p>
+            </div>
+
+            <div class="payment-handoff-summary">
+              <div class="payment-handoff-summary-card">
+                <span class="summary-label">Customer</span>
+                <strong data-payment-handoff-customer-name>Customer name unavailable</strong>
+              </div>
+              <div class="payment-handoff-summary-card">
+                <span class="summary-label">Order Summary</span>
+                <div data-payment-handoff-summary></div>
+              </div>
+              <div class="payment-handoff-summary-card">
+                <span class="summary-label">Order Total</span>
+                <strong data-payment-handoff-total>$0.00</strong>
+              </div>
+            </div>
+
+            <div class="payment-handoff-methods">
+              <p class="summary-label payment-handoff-section-label">Payment Method</p>
+              <div class="choice-grid payment-handoff-choice-grid" data-payment-method-grid>
+                <button class="choice-card" type="button" data-payment-method="card_square" aria-pressed="false">Card / Square</button>
+                <button class="choice-card" type="button" data-payment-method="cash" aria-pressed="false">Cash</button>
+                <button class="choice-card" type="button" data-payment-method="venmo" aria-pressed="false">Venmo</button>
+              </div>
+            </div>
+
+            <div class="payment-handoff-pin-field">
+              <label for="payment-handoff-pin">Staff PIN</label>
+              <input
+                id="payment-handoff-pin"
+                type="password"
+                inputmode="numeric"
+                autocomplete="off"
+                autocapitalize="off"
+                autocorrect="off"
+                spellcheck="false"
+                data-payment-handoff-pin
+              >
+            </div>
+
+            <p class="form-status payment-handoff-status" data-payment-handoff-status role="alert" aria-live="polite" tabindex="-1"></p>
+
+            <div class="payment-handoff-cancel-panel" data-payment-handoff-cancel-panel hidden>
+              <p>Cancel this order and start over? This will clear the current draft and customer information.</p>
+              <div class="payment-handoff-cancel-actions">
+                <button class="secondary-button" type="button" data-action="payment-handoff-cancel-dismiss">Keep Editing</button>
+                <button class="primary-button" type="button" data-action="payment-handoff-cancel-confirm">Cancel Order and Start Over</button>
+              </div>
+            </div>
+
+            <div class="payment-handoff-actions">
+              <button class="primary-button" type="button" data-action="payment-handoff-submit">Payment Received — Submit Order</button>
+              <button class="secondary-button" type="button" data-action="payment-handoff-back">Back to Edit</button>
+              <button class="text-button" type="button" data-action="payment-handoff-cancel">Cancel Order and Start Over</button>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -667,16 +733,16 @@
     </div>
   </div>
 
-  <script src="js/forge-product-catalog.js?v=20260721-16"></script>
-  <script src="js/forge-order-payload-builder.js?v=20260721-16"></script>
-  <script src="js/forge-order-payload-preview.js?v=20260721-16"></script>
-  <script src="js/forge-api-client.js?v=20260721-16"></script>
-  <script src="js/forge-order-store.js?v=20260721-16"></script>
-  <script src="js/forge-order-server-sync.js?v=20260721-16"></script>
-  <script src="js/forge-order-submission.js?v=20260721-16"></script>
-  <script src="js/forge-staff-api-client.js?v=20260721-16"></script>
-  <script src="js/forge-staff-orders-runtime.js?v=20260721-16"></script>
-  <script src="js/forge-local-orders-queue.js?v=20260721-16"></script>
-  <script src="js/app.js?v=20260721-16"></script>
+  <script src="js/forge-product-catalog.js?v=20260721-17"></script>
+  <script src="js/forge-order-payload-builder.js?v=20260721-17"></script>
+  <script src="js/forge-order-payload-preview.js?v=20260721-17"></script>
+  <script src="js/forge-api-client.js?v=20260721-17"></script>
+  <script src="js/forge-order-store.js?v=20260721-17"></script>
+  <script src="js/forge-order-server-sync.js?v=20260721-17"></script>
+  <script src="js/forge-order-submission.js?v=20260721-17"></script>
+  <script src="js/forge-staff-api-client.js?v=20260721-17"></script>
+  <script src="js/forge-staff-orders-runtime.js?v=20260721-17"></script>
+  <script src="js/forge-local-orders-queue.js?v=20260721-17"></script>
+  <script src="js/app.js?v=20260721-17"></script>
 </body>
 </html>

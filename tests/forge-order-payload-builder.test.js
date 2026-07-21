@@ -98,7 +98,35 @@ test('shared runtime source is authoritative for app and builder pricing', () =>
   assert.match(appSource, /applyCatalogPricingToItems/);
   assert.match(
     indexSource,
-    /<script src="js\/forge-product-catalog\.js\?v=20260721-16"><\/script>\s*<script src="js\/forge-order-payload-builder\.js\?v=20260721-16"><\/script>\s*<script src="js\/forge-order-payload-preview\.js\?v=20260721-16"><\/script>\s*<script src="js\/forge-api-client\.js\?v=20260721-16"><\/script>\s*<script src="js\/forge-order-store\.js\?v=20260721-16"><\/script>\s*<script src="js\/forge-order-server-sync\.js\?v=20260721-16"><\/script>\s*<script src="js\/forge-order-submission\.js\?v=20260721-16"><\/script>\s*<script src="js\/forge-staff-api-client\.js\?v=20260721-16"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260721-16"><\/script>\s*<script src="js\/forge-local-orders-queue\.js\?v=20260721-16"><\/script>\s*<script src="js\/app\.js\?v=20260721-16"><\/script>/
+    /<script src="js\/forge-product-catalog\.js\?v=20260721-17"><\/script>\s*<script src="js\/forge-order-payload-builder\.js\?v=20260721-17"><\/script>\s*<script src="js\/forge-order-payload-preview\.js\?v=20260721-17"><\/script>\s*<script src="js\/forge-api-client\.js\?v=20260721-17"><\/script>\s*<script src="js\/forge-order-store\.js\?v=20260721-17"><\/script>\s*<script src="js\/forge-order-server-sync\.js\?v=20260721-17"><\/script>\s*<script src="js\/forge-order-submission\.js\?v=20260721-17"><\/script>\s*<script src="js\/forge-staff-api-client\.js\?v=20260721-17"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260721-17"><\/script>\s*<script src="js\/forge-local-orders-queue\.js\?v=20260721-17"><\/script>\s*<script src="js\/app\.js\?v=20260721-17"><\/script>/
+  );
+});
+
+test('submitted payloads preserve approved external payment metadata and reject unsupported values', () => {
+  const payload = buildForgeOrderPayload(
+    createOrderState([createItem()]),
+    createContext({
+      orderStatus: 'submitted',
+      submittedAt: '2026-07-21T18:50:00.000Z',
+      externalPaymentMethod: 'card_square',
+      paymentConfirmedAt: '2026-07-21T18:49:30.000Z'
+    })
+  );
+
+  assert.equal(payload.external_payment_method, 'card_square');
+  assert.equal(payload.payment_confirmed_at, '2026-07-21T18:49:30.000Z');
+
+  assert.throws(
+    () => buildForgeOrderPayload(
+      createOrderState([createItem()]),
+      createContext({
+        orderStatus: 'submitted',
+        submittedAt: '2026-07-21T18:50:00.000Z',
+        externalPaymentMethod: 'bitcoin',
+        paymentConfirmedAt: '2026-07-21T18:49:30.000Z'
+      })
+    ),
+    /supported externalPaymentMethod/i
   );
 });
 

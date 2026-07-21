@@ -245,6 +245,46 @@ $runner->run('valid UUID acceptance', static function (): void {
     assertTrue(true);
 });
 
+$runner->run('approved external payment metadata is accepted and preserved in canonical json', static function (): void {
+    $payload = createValidPayload([
+        'external_payment_method' => 'venmo',
+        'payment_confirmed_at' => '2026-07-21T18:55:00+00:00',
+    ]);
+
+    OrderPayload::validatePayload($payload);
+    $canonicalJson = OrderPayload::canonicalizeToJson($payload);
+
+    assertTrue(strpos($canonicalJson, '"external_payment_method":"venmo"') !== false);
+    assertTrue(strpos($canonicalJson, '"payment_confirmed_at":"2026-07-21T18:55:00+00:00"') !== false);
+});
+
+$runner->run('unsupported external payment metadata is rejected safely', static function (): void {
+    assertThrows(
+        static function (): void {
+            OrderPayload::validatePayload(createValidPayload([
+                'external_payment_method' => 'bitcoin',
+                'payment_confirmed_at' => '2026-07-21T18:55:00+00:00',
+            ]));
+        },
+        static function (\Throwable $exception): void {
+            assertSame('The submitted order is missing required Forge fields.', $exception->getMessage());
+        }
+    );
+});
+
+$runner->run('partial external payment metadata is rejected safely', static function (): void {
+    assertThrows(
+        static function (): void {
+            OrderPayload::validatePayload(createValidPayload([
+                'external_payment_method' => 'cash',
+            ]));
+        },
+        static function (\Throwable $exception): void {
+            assertSame('The submitted order is missing required Forge fields.', $exception->getMessage());
+        }
+    );
+});
+
 $runner->run('invalid UUID rejection', static function (): void {
     assertThrows(
         static function (): void {
@@ -1122,6 +1162,26 @@ $runner->run('staff endpoint bootstrap candidates preserve the hosted forge_serv
 
     assertSame('/home/example/domains/forge.thehilltopshop.com/forge_server_test/bootstrap.php', $candidates[0]);
     assertSame('/home/example/domains/forge.thehilltopshop.com/public_html/server/bootstrap.php', $candidates[1]);
+});
+
+$runner->run('stateless staff pin verification validates a correct pin without creating a php session', static function (): void {
+    $pinHash = password_hash('2468', PASSWORD_DEFAULT);
+    $sessionStatusBefore = session_status();
+
+    $verified = \Forge\Server\verifyStaffPinStateless($pinHash, '2468');
+
+    assertSame(true, $verified);
+    assertSame($sessionStatusBefore, session_status());
+});
+
+$runner->run('stateless staff pin verification rejects an incorrect pin without creating a php session', static function (): void {
+    $pinHash = password_hash('2468', PASSWORD_DEFAULT);
+    $sessionStatusBefore = session_status();
+
+    $verified = \Forge\Server\verifyStaffPinStateless($pinHash, '1357');
+
+    assertSame(false, $verified);
+    assertSame($sessionStatusBefore, session_status());
 });
 
 $runner->run('configured tray numbers reject non-numeric tokens safely', static function (): void {

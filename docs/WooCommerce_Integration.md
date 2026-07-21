@@ -137,11 +137,14 @@ Forge creates the WooCommerce order only after the customer:
 1. Adds all desired products.
 2. Enters customer information.
 3. Reviews the complete order.
-4. Selects **Place My Order**.
+4. Selects **Review & Pay**.
+5. Forge opens a contained payment handoff screen and keeps the order as an unsaved draft.
+6. Staff confirms the external payment method and completes a one-time online stateless Staff PIN verification that does not create or preserve a Staff Tools session.
+7. Only then does Forge save the order locally, assign the immutable Forge order UUID, and begin synchronization.
 
 Before submission, the order remains a Forge draft and must not create a WooCommerce order.
 
-After submission:
+After staff-confirmed submission:
 
 1. Forge saves the complete local order first.
 2. Forge assigns a permanent Forge order UUID.
@@ -205,7 +208,7 @@ Payments may occur through Square, cash, Venmo, or another external method.
 
 Only staff may confirm external payment.
 
-Forge stores the external payment method as approved order metadata and updates WooCommerce payment status only after staff confirmation.
+Forge stores the external payment method and payment confirmation timestamp as approved order metadata and updates WooCommerce payment status only after staff confirmation. If the PIN-verification request cannot reach the server, the order must remain an unsaved draft and no unpaid order may enter production.
 
 Production completion alone must not mark a WooCommerce order `completed`.
 
