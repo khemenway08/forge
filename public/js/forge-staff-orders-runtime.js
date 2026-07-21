@@ -11,6 +11,9 @@
     local: 'local',
     server: 'server'
   };
+  const HOSTED_ORDERS_PAGE_SIZE = 50;
+  const HOSTED_ORDERS_MAX_PAGES = 1000;
+  const HOSTED_ORDERS_INCOMPLETE_LOAD_ERROR = 'Shared staff orders could not be fully loaded.';
 
   function createStaffOrdersRuntime(options = {}) {
     const environment = resolveStaffRuntimeEnvironment(options.locationLike || {});
@@ -124,7 +127,7 @@
       }
 
       assertStaffApiClient(staffApiClient, 'listOrders');
-      const result = await staffApiClient.listOrders();
+      const result = await loadHostedOrdersPages(staffApiClient);
       if (!result || (!result.ok && result.unauthenticated) || result.authenticated === false) {
         return {
           ok: false,
@@ -293,6 +296,65 @@
     };
   }
 
+  async function loadHostedOrdersPages(staffApiClient) {
+    const collectedOrders = [];
+    const seenOrderUuids = new Set();
+    let offset = 0;
+    let totalCount = null;
+
+    for (let pageIndex = 0; pageIndex < HOSTED_ORDERS_MAX_PAGES; pageIndex += 1) {
+      const result = await staffApiClient.listOrders({
+        limit: HOSTED_ORDERS_PAGE_SIZE,
+        offset
+      });
+
+      if (!result || (!result.ok && result.unauthenticated) || result.authenticated === false) {
+        return result;
+      }
+
+      const pageOrders = Array.isArray(result.orders) ? result.orders : [];
+      if (Number.isInteger(result.totalCount) && result.totalCount >= 0) {
+        totalCount = result.totalCount;
+      }
+
+      let newUniqueOrders = 0;
+      for (const order of pageOrders) {
+        const orderUuid = asTrimmedString(order && order.forge_order_uuid);
+        if (!orderUuid || seenOrderUuids.has(orderUuid)) {
+          continue;
+        }
+
+        seenOrderUuids.add(orderUuid);
+        collectedOrders.push(order);
+        newUniqueOrders += 1;
+      }
+
+      if (totalCount !== null && collectedOrders.length >= totalCount) {
+        break;
+      }
+      if (pageOrders.length === 0) {
+        throw new Error(HOSTED_ORDERS_INCOMPLETE_LOAD_ERROR);
+      }
+      if (newUniqueOrders === 0) {
+        throw new Error(HOSTED_ORDERS_INCOMPLETE_LOAD_ERROR);
+      }
+      if (pageOrders.length < HOSTED_ORDERS_PAGE_SIZE) {
+        throw new Error(HOSTED_ORDERS_INCOMPLETE_LOAD_ERROR);
+      }
+
+      offset += HOSTED_ORDERS_PAGE_SIZE;
+    }
+
+    return {
+      ok: true,
+      authenticated: true,
+      orders: collectedOrders,
+      totalCount: totalCount === null ? collectedOrders.length : totalCount,
+      limit: HOSTED_ORDERS_PAGE_SIZE,
+      offset: 0
+    };
+  }
+
   function adaptServerOrdersForQueue(records) {
     const source = Array.isArray(records) ? records : [];
     const seen = new Set();
@@ -438,7 +500,10 @@
 
   return {
     STAFF_DATA_SOURCES,
+    HOSTED_ORDERS_PAGE_SIZE,
+    HOSTED_ORDERS_INCOMPLETE_LOAD_ERROR,
     createStaffOrdersRuntime,
+    loadHostedOrdersPages,
     resolveStaffRuntimeEnvironment,
     adaptServerOrderForQueue,
     adaptServerOrdersForQueue

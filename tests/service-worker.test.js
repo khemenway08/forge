@@ -4,8 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const BUILD_VERSION = '20260720-15';
-const CACHE_NAME = 'forge-starter-v15';
+const BUILD_VERSION = '20260721-16';
+const CACHE_NAME = 'forge-starter-v16';
 
 function normalizeRequestUrl(input) {
   if (typeof input === 'string') {
@@ -143,13 +143,16 @@ async function dispatchFetch(listener, request) {
   return responsePromise;
 }
 
-test('service worker install fetches current precache assets with cache reload and activation removes forge-starter-v12', async () => {
+test('service worker install fetches current precache assets with cache reload and activation removes older Forge caches', async () => {
   const caches = createCacheStorage({
     'forge-starter-v12': {
       '/js/app.js': 'old app bundle'
     },
     'forge-starter-v13': {
       '/js/app.js?v=20260720-15': 'older app bundle'
+    },
+    'forge-starter-v15': {
+      '/js/app.js?v=20260720-15': 'previous app bundle'
     },
     'unrelated-cache': {
       '/misc.txt': 'keep me'
@@ -177,6 +180,7 @@ test('service worker install fetches current precache assets with cache reload a
   assert.ok(cacheKeys.includes(CACHE_NAME));
   assert.ok(!cacheKeys.includes('forge-starter-v12'));
   assert.ok(!cacheKeys.includes('forge-starter-v13'));
+  assert.ok(!cacheKeys.includes('forge-starter-v15'));
   assert.ok(cacheKeys.includes('unrelated-cache'));
 });
 

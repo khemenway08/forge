@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const staffOrdersRuntime = require('../public/js/forge-staff-orders-runtime.js');
+const queueHelpers = require('../public/js/forge-local-orders-queue.js');
 
 test('hosted staff entry checks session before revealing order data', async () => {
   const calls = [];
@@ -143,6 +144,9 @@ test('authenticated hosted session loads adapted server orders', async () => {
         return {
           ok: true,
           authenticated: true,
+          totalCount: 2,
+          limit: 50,
+          offset: 0,
           orders: [
             {
               forge_order_uuid: 'order-2',
@@ -187,6 +191,292 @@ test('authenticated hosted session loads adapted server orders', async () => {
   assert.deepEqual(result.records[1].payload, { customer: { full_name: 'Meagan' }, items: [] });
 });
 
+test('hosted runtime loads multiple order pages and a ready-to-pack order beyond the first page reaches the final queue', async () => {
+  const calls = [];
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'https:', hostname: 'forge.example.com' },
+    staffApiClient: {
+      async listOrders(options) {
+        calls.push({ ...options });
+        if (options.offset === 0) {
+          return {
+            ok: true,
+            authenticated: true,
+            totalCount: 51,
+            limit: 50,
+            offset: 0,
+            orders: Array.from({ length: 50 }, (_, index) => ({
+              forge_order_uuid: `order-${index + 1}`,
+              submitted_at: `2026-07-20T10:${String(index).padStart(2, '0')}:00Z`,
+              received_at: `2026-07-20T10:${String(index).padStart(2, '0')}:30Z`,
+              production_status: 'submitted',
+              payload: { customer: { full_name: `Customer ${index + 1}` }, items: [] }
+            }))
+          };
+        }
+
+        return {
+          ok: true,
+          authenticated: true,
+          totalCount: 51,
+          limit: 50,
+          offset: 50,
+          orders: [
+            {
+              forge_order_uuid: 'order-51',
+              submitted_at: '2026-07-20T11:00:00Z',
+              received_at: '2026-07-20T11:00:30Z',
+              production_status: 'ready_to_pack',
+              current_tray_number: 9,
+              total_item_count: 1,
+              completed_item_count: 1,
+              ready_to_pack_at: '2026-07-20T11:00:00Z',
+              payload: {
+                customer: { full_name: 'Ready Customer' },
+                items: [
+                  {
+                    line_id: 'line-51',
+                    quantity: 1,
+                    completed_quantity: 1,
+                    production_status: 'complete',
+                    product_display_name: 'Tree Ornament'
+                  }
+                ]
+              }
+            }
+          ]
+        };
+      }
+    }
+  });
+
+  const result = await runtime.loadOrders();
+  const readyRecords = queueHelpers.filterReadyToPackOrders(result.records);
+
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls, [
+    { limit: 50, offset: 0 },
+    { limit: 50, offset: 50 }
+  ]);
+  assert.equal(result.records.length, 51);
+  assert.deepEqual(readyRecords.map((record) => record.forge_order_uuid), ['order-51']);
+});
+
+test('hosted runtime does not request a second page when total_count fits within the first page', async () => {
+  const calls = [];
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'https:', hostname: 'forge.example.com' },
+    staffApiClient: {
+      async listOrders(options) {
+        calls.push({ ...options });
+        return {
+          ok: true,
+          authenticated: true,
+          totalCount: 2,
+          limit: 50,
+          offset: 0,
+          orders: [
+            {
+              forge_order_uuid: 'order-a',
+              submitted_at: '2026-07-20T09:00:00Z',
+              received_at: '2026-07-20T09:00:30Z',
+              payload: { items: [] }
+            },
+            {
+              forge_order_uuid: 'order-b',
+              submitted_at: '2026-07-20T09:01:00Z',
+              received_at: '2026-07-20T09:01:30Z',
+              payload: { items: [] }
+            }
+          ]
+        };
+      }
+    }
+  });
+
+  const result = await runtime.loadOrders();
+
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0], { limit: 50, offset: 0 });
+  assert.equal(result.records.length, 2);
+});
+
+test('hosted runtime deduplicates repeated UUIDs while continuing to later new orders', async () => {
+  const calls = [];
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'https:', hostname: 'forge.example.com' },
+    staffApiClient: {
+      async listOrders(options) {
+        calls.push({ ...options });
+        if (options.offset === 0) {
+          return {
+            ok: true,
+            authenticated: true,
+            totalCount: 75,
+            limit: 50,
+            offset: 0,
+            orders: Array.from({ length: 50 }, (_, index) => ({
+              forge_order_uuid: `order-${index + 1}`,
+              submitted_at: '2026-07-20T10:00:00Z',
+              received_at: `2026-07-20T10:${String(index).padStart(2, '0')}:00Z`,
+              payload: { items: [] }
+            }))
+          };
+        }
+
+        return {
+          ok: true,
+          authenticated: true,
+          totalCount: 75,
+          limit: 50,
+          offset: 50,
+          orders: [
+            ...Array.from({ length: 25 }, (_, index) => ({
+              forge_order_uuid: `order-${index + 1}`,
+              submitted_at: '2026-07-20T10:00:00Z',
+              received_at: `2026-07-20T10:${String(index).padStart(2, '0')}:00Z`,
+              payload: { items: [] }
+            })),
+            ...Array.from({ length: 25 }, (_, index) => ({
+              forge_order_uuid: `order-${index + 51}`,
+              submitted_at: '2026-07-20T11:00:00Z',
+              received_at: `2026-07-20T11:${String(index).padStart(2, '0')}:00Z`,
+              payload: { items: [] }
+            }))
+          ]
+        };
+      }
+    }
+  });
+
+  const result = await runtime.loadOrders();
+
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 2);
+  assert.equal(result.records.length, 75);
+  assert.deepEqual(result.records.map((record) => record.forge_order_uuid).slice(0, 3), ['order-75', 'order-74', 'order-73']);
+});
+
+test('a later hosted order page with only duplicate UUIDs fails safely when total_count has not been reached', async () => {
+  let calls = 0;
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'https:', hostname: 'forge.example.com' },
+    staffApiClient: {
+      async listOrders(options) {
+        calls += 1;
+        if (options.offset === 0) {
+          return {
+            ok: true,
+            authenticated: true,
+            totalCount: 120,
+            limit: 50,
+            offset: 0,
+            orders: Array.from({ length: 50 }, (_, index) => ({
+              forge_order_uuid: `order-${index + 1}`,
+              submitted_at: '2026-07-20T10:00:00Z',
+              received_at: `2026-07-20T10:${String(index).padStart(2, '0')}:00Z`,
+              payload: { items: [] }
+            }))
+          };
+        }
+        return {
+          ok: true,
+          authenticated: true,
+          totalCount: 120,
+          limit: 50,
+          offset: 50,
+          orders: Array.from({ length: 50 }, (_, index) => ({
+            forge_order_uuid: `order-${index + 1}`,
+            submitted_at: '2026-07-20T10:00:00Z',
+            received_at: `2026-07-20T10:${String(index).padStart(2, '0')}:00Z`,
+            payload: { items: [] }
+          }))
+        };
+      }
+    }
+  });
+
+  await assert.rejects(
+    () => runtime.loadOrders(),
+    new RegExp(staffOrdersRuntime.HOSTED_ORDERS_INCOMPLETE_LOAD_ERROR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  );
+  assert.equal(calls, 2);
+});
+
+test('a later hosted order page failure rejects instead of presenting a partial queue', async () => {
+  let calls = 0;
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'https:', hostname: 'forge.example.com' },
+    staffApiClient: {
+      async listOrders(options) {
+        calls += 1;
+        if (options.offset === 0) {
+          return {
+            ok: true,
+            authenticated: true,
+            totalCount: 51,
+            limit: 50,
+            offset: 0,
+            orders: Array.from({ length: 50 }, (_, index) => ({
+              forge_order_uuid: `order-${index + 1}`,
+              submitted_at: '2026-07-20T10:00:00Z',
+              received_at: `2026-07-20T10:${String(index).padStart(2, '0')}:00Z`,
+              payload: { items: [] }
+            }))
+          };
+        }
+        throw new Error('Second page failed');
+      }
+    }
+  });
+
+  await assert.rejects(() => runtime.loadOrders(), /Second page failed/);
+  assert.equal(calls, 2);
+});
+
+test('an empty later hosted order page fails safely when total_count has not been reached', async () => {
+  let calls = 0;
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'https:', hostname: 'forge.example.com' },
+    staffApiClient: {
+      async listOrders(options) {
+        calls += 1;
+        if (options.offset === 0) {
+          return {
+            ok: true,
+            authenticated: true,
+            totalCount: 60,
+            limit: 50,
+            offset: 0,
+            orders: Array.from({ length: 50 }, (_, index) => ({
+              forge_order_uuid: `order-${index + 1}`,
+              submitted_at: '2026-07-20T10:00:00Z',
+              received_at: `2026-07-20T10:${String(index).padStart(2, '0')}:00Z`,
+              payload: { items: [] }
+            }))
+          };
+        }
+        return {
+          ok: true,
+          authenticated: true,
+          totalCount: 60,
+          limit: 50,
+          offset: 50,
+          orders: []
+        };
+      }
+    }
+  });
+
+  await assert.rejects(
+    () => runtime.loadOrders(),
+    new RegExp(staffOrdersRuntime.HOSTED_ORDERS_INCOMPLETE_LOAD_ERROR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  );
+  assert.equal(calls, 2);
+});
+
 test('401 while loading hosted orders is handled as a normal unauthenticated state', async () => {
   const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
     locationLike: { protocol: 'https:', hostname: 'forge.example.com' },
@@ -219,7 +509,7 @@ test('retrying hosted loads re-runs the same server request path', async () => {
         if (attempts === 1) {
           throw new Error('Temporary network issue');
         }
-        return { ok: true, authenticated: true, orders: [] };
+        return { ok: true, authenticated: true, totalCount: 0, limit: 50, offset: 0, orders: [] };
       }
     }
   });

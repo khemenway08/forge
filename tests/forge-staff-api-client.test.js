@@ -126,6 +126,79 @@ test('listOrders sends GET and same-origin credentials and returns orders safely
   assert.equal(requests[0].url, '/api/v1/staff/orders.php');
   assert.equal(requests[0].options.method, 'GET');
   assert.equal(requests[0].options.credentials, 'same-origin');
+  assert.equal(requests[0].options.cache, 'no-store');
+  assert.equal(requests[0].options.headers.Accept, 'application/json');
+});
+
+test('listOrders can send explicit limit and offset without mutating caller options', async () => {
+  const requests = [];
+  const pagination = { limit: 50, offset: 100 };
+  const originalPagination = { ...pagination };
+  const client = staffApiClientModule.createForgeStaffApiClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return createJsonResponse(200, {
+        application: 'Forge',
+        api_version: '1',
+        status: 'ok',
+        data: {
+          orders: [{ forge_order_uuid: 'order-101' }],
+          total_count: 120,
+          limit: 50,
+          offset: 100
+        }
+      });
+    }
+  });
+
+  const result = await client.listOrders(pagination);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.totalCount, 120);
+  assert.equal(result.limit, 50);
+  assert.equal(result.offset, 100);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, '/api/v1/staff/orders.php?limit=50&offset=100');
+  assert.deepEqual(pagination, originalPagination);
+});
+
+test('invalid pagination values are rejected before listOrders sends a request', async () => {
+  let requestCount = 0;
+  const client = staffApiClientModule.createForgeStaffApiClient({
+    fetchImpl: async () => {
+      requestCount += 1;
+      throw new Error('fetch should not be called');
+    }
+  });
+
+  await assert.rejects(
+    () => client.listOrders({ limit: 0 }),
+    (error) => {
+      assert.equal(error.code, 'invalid_request');
+      assert.equal(error.message, 'A valid order-page limit is required.');
+      return true;
+    }
+  );
+
+  await assert.rejects(
+    () => client.listOrders({ offset: -1 }),
+    (error) => {
+      assert.equal(error.code, 'invalid_request');
+      assert.equal(error.message, 'A valid order-page offset is required.');
+      return true;
+    }
+  );
+
+  await assert.rejects(
+    () => client.listOrders({ limit: 25.5 }),
+    (error) => {
+      assert.equal(error.code, 'invalid_request');
+      assert.equal(error.message, 'A valid order-page limit is required.');
+      return true;
+    }
+  );
+
+  assert.equal(requestCount, 0);
 });
 
 test('listTrays sends GET and same-origin credentials and returns normalized trays safely', async () => {

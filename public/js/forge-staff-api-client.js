@@ -152,9 +152,12 @@
       }
     }
 
-    async function listOrders() {
+    async function listOrders(options = {}) {
+      const pagination = normalizeListOrdersOptions(options);
+      const requestUrl = buildOrdersRequestUrl(baseUrl, pagination);
+
       try {
-        const response = await performJsonRequest(fetchImpl, `${baseUrl}/${ORDERS_ENDPOINT}`, timeoutMs, {
+        const response = await performJsonRequest(fetchImpl, requestUrl, timeoutMs, {
           method: 'GET',
           headers: {
             Accept: 'application/json'
@@ -411,6 +414,32 @@
     };
   }
 
+  function normalizeListOrdersOptions(options) {
+    const normalizedOptions = options && typeof options === 'object' ? options : {};
+    const limit = normalizeOptionalPositiveInteger(normalizedOptions.limit, 'A valid order-page limit is required.');
+    const offset = normalizeOptionalNonNegativeInteger(normalizedOptions.offset, 'A valid order-page offset is required.');
+
+    return {
+      ...(limit === undefined ? {} : { limit }),
+      ...(offset === undefined ? {} : { offset })
+    };
+  }
+
+  function buildOrdersRequestUrl(baseUrl, pagination) {
+    const query = new URLSearchParams();
+    if (pagination.limit !== undefined) {
+      query.set('limit', String(pagination.limit));
+    }
+    if (pagination.offset !== undefined) {
+      query.set('offset', String(pagination.offset));
+    }
+
+    const queryString = query.toString();
+    return queryString
+      ? `${baseUrl}/${ORDERS_ENDPOINT}?${queryString}`
+      : `${baseUrl}/${ORDERS_ENDPOINT}`;
+  }
+
   function normalizeTraysPayload(payload) {
     const application = asTrimmedString(payload && payload.application);
     const apiVersion = asTrimmedString(payload && payload.api_version);
@@ -565,6 +594,26 @@
       throw new ForgeStaffApiError('invalid_request', 'A valid production tray is required.');
     }
     return numericValue;
+  }
+
+  function normalizeOptionalPositiveInteger(value, errorMessage) {
+    if (value === undefined || value === null || value === '') {
+      return undefined;
+    }
+    if (!Number.isInteger(value) || value <= 0) {
+      throw new ForgeStaffApiError('invalid_request', errorMessage);
+    }
+    return value;
+  }
+
+  function normalizeOptionalNonNegativeInteger(value, errorMessage) {
+    if (value === undefined || value === null || value === '') {
+      return undefined;
+    }
+    if (!Number.isInteger(value) || value < 0) {
+      throw new ForgeStaffApiError('invalid_request', errorMessage);
+    }
+    return value;
   }
 
   function normalizeExpectedCompletedQuantity(value) {
