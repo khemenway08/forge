@@ -840,6 +840,330 @@ function loadForgeHostedStaffAppForTrayDetail() {
   };
 }
 
+function loadForgeStaffDemoApp({
+  protocol = 'http:',
+  hostname = 'localhost',
+  initialOrders = []
+} = {}) {
+  const env = createQueryEnvironment();
+  const appBody = createElement('body');
+  const localStorageData = new Map();
+  const documentListeners = new Map();
+  const screens = [
+    createElement('section'),
+    createElement('section'),
+    createElement('section'),
+    createElement('section')
+  ];
+  screens[0].dataset.screen = 'welcome';
+  screens[1].dataset.screen = 'categories';
+  screens[2].dataset.screen = 'staff-orders';
+  screens[3].dataset.screen = 'ready-to-pack';
+
+  const startButton = attachActionDataset(createElement('button'), 'start');
+  const staffButton = attachActionDataset(createElement('button'), 'staff');
+  const staffPanel = createElement('div');
+  staffPanel.hidden = true;
+  const staffDefaultActions = createElement('div');
+  const staffConfirmActions = createElement('div');
+  const staffOrdersScreen = screens[2];
+  const staffOrdersSummary = createElement('div');
+  const staffOrdersSearch = createElement('input');
+  const staffOrdersFilters = createElement('div');
+  const staffBatchGroups = createElement('div');
+  const staffOrdersList = createElement('div');
+  const staffOrdersStatus = createElement('p');
+  const staffOrdersLead = createElement('p');
+  const readyLead = createElement('p');
+  const readyCount = createElement('p');
+  const readyList = createElement('div');
+  const sourceStatus = createElement('span');
+  const readySourceStatus = createElement('span');
+  const demoLoadButton = attachActionDataset(createElement('button'), 'staff-load-demo-orders');
+  const demoClearButton = attachActionDataset(createElement('button'), 'staff-clear-demo-orders');
+  const demoControls = createElement('div');
+  demoControls.hidden = true;
+  demoControls.querySelector = (selector) => {
+    if (selector === '[data-action="staff-load-demo-orders"]') {
+      return demoLoadButton;
+    }
+    if (selector === '[data-action="staff-clear-demo-orders"]') {
+      return demoClearButton;
+    }
+    return null;
+  };
+  const detailDialog = createElement('div');
+  const detailBackdrop = createElement('div');
+
+  let listOrdersCalls = 0;
+  let fetchCalls = 0;
+  let currentOrders = structuredClone(initialOrders);
+
+  env.registerSelector('.app-shell', createElement('div'));
+  env.registerSelector('[data-form="tree-ornament"]', createElement('form'));
+  env.registerSelector('[data-staff-panel]', staffPanel);
+  env.registerSelector('[data-staff-actions="default"]', staffDefaultActions);
+  env.registerSelector('[data-staff-actions="confirm"]', staffConfirmActions);
+  env.registerSelector('[data-screen="staff-orders"]', staffOrdersScreen);
+  env.registerSelector('[data-screen="ready-to-pack"]', screens[3]);
+  env.registerSelector('[data-staff-orders-summary]', staffOrdersSummary);
+  env.registerSelector('[data-staff-orders-search]', staffOrdersSearch);
+  env.registerSelector('[data-staff-orders-filters]', staffOrdersFilters);
+  env.registerSelector('[data-staff-demo-controls]', demoControls);
+  env.registerSelector('[data-staff-batch-groups]', staffBatchGroups);
+  env.registerSelector('[data-staff-orders-list]', staffOrdersList);
+  env.registerSelector('[data-staff-orders-status]', staffOrdersStatus);
+  env.registerSelector('[data-staff-orders-lead]', staffOrdersLead);
+  env.registerSelector('[data-ready-to-pack-lead]', readyLead);
+  env.registerSelector('[data-ready-to-pack-count]', readyCount);
+  env.registerSelector('[data-ready-to-pack-list]', readyList);
+  env.registerSelector('[data-action="start"]', startButton);
+  env.registerSelector('[data-action="staff"]', staffButton);
+  env.registerSelector('[data-action="staff-load-demo-orders"]', demoLoadButton);
+  env.registerSelector('[data-action="staff-clear-demo-orders"]', demoClearButton);
+  env.registerSelector('[data-staff-order-detail-backdrop]', detailBackdrop);
+  env.registerSelector('[data-staff-order-detail-dialog]', detailDialog);
+
+  env.registerSelectorAll('[data-screen]', screens);
+  env.registerSelectorAll('[data-payment-method]', []);
+  env.registerSelectorAll('[data-contact-choice]', []);
+  env.registerSelectorAll('[data-fulfillment-choice]', []);
+  env.registerSelectorAll('[data-view-current-order-utility]', []);
+  env.registerSelectorAll('[data-discard-panel]', []);
+  env.registerSelectorAll('[data-debug-order-tools]', []);
+  env.registerSelectorAll('[data-option-choice-field]', []);
+  env.registerSelectorAll('[data-choice-field]', []);
+  env.registerSelectorAll('[data-product]', []);
+  env.registerSelectorAll('[data-staff-source-status], [data-ready-source-status]', [sourceStatus, readySourceStatus]);
+  env.registerSelectorAll('[data-staff-logout-button]', []);
+
+  appBody.insertAdjacentHTML = (_position, html) => {
+    if (html.includes('data-staff-order-detail-backdrop')) {
+      env.registerSelector('[data-staff-order-detail-backdrop]', detailBackdrop);
+      env.registerSelector('[data-staff-order-detail-dialog]', detailDialog);
+    }
+    if (html.includes('data-staff-tray-assignment-backdrop')) {
+      env.registerSelector('[data-staff-tray-assignment-backdrop]', createElement('div'));
+      env.registerSelector('[data-staff-tray-assignment-dialog]', createElement('div'));
+    }
+    if (html.includes('data-staff-batch-backdrop')) {
+      env.registerSelector('[data-staff-batch-backdrop]', createElement('div'));
+      env.registerSelector('[data-staff-batch-dialog]', createElement('div'));
+    }
+    if (html.includes('data-staff-packing-backdrop')) {
+      env.registerSelector('[data-staff-packing-backdrop]', createElement('div'));
+      env.registerSelector('[data-staff-packing-dialog]', createElement('div'));
+    }
+  };
+
+  const context = {
+    console,
+    setTimeout,
+    clearTimeout,
+    URLSearchParams,
+    AbortController,
+    structuredClone,
+    fetch: async () => {
+      fetchCalls += 1;
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            application: 'Forge',
+            api_version: '1',
+            status: 'ok',
+            data: { authenticated: false }
+          };
+        }
+      };
+    },
+    crypto: {
+      randomUUID: () => '123e4567-e89b-42d3-a456-426614174111',
+      getRandomValues(array) {
+        return array;
+      }
+    },
+    localStorage: {
+      getItem(key) {
+        return localStorageData.has(key) ? localStorageData.get(key) : null;
+      },
+      setItem(key, value) {
+        localStorageData.set(String(key), String(value));
+      },
+      removeItem(key) {
+        localStorageData.delete(String(key));
+      },
+      clear() {
+        localStorageData.clear();
+      }
+    },
+    sessionStorage: { getItem() { return null; }, setItem() {}, removeItem() {}, clear() {} },
+    navigator: {
+      clipboard: { writeText: async () => {} },
+      serviceWorker: { register: async () => ({}) }
+    },
+    location: { protocol, hostname, search: '', href: `${protocol}//${hostname}/` },
+    CustomEvent: function CustomEvent(type, init) { this.type = type; this.detail = init?.detail; },
+    Event: function Event(type) { this.type = type; },
+    HTMLElement: function HTMLElement() {},
+    HTMLInputElement: function HTMLInputElement() {},
+    HTMLTextAreaElement: function HTMLTextAreaElement() {},
+    HTMLButtonElement: function HTMLButtonElement() {},
+    HTMLSelectElement: function HTMLSelectElement() {},
+    Node: function Node() {},
+    alert() {},
+    window: null,
+    globalThis: null
+  };
+
+  if (protocol === 'https:' && hostname === 'forge.thehilltopshop.com') {
+    context.ForgeStaffApiClient = {
+      createForgeStaffApiClient() {
+        return {};
+      }
+    };
+    context.ForgeStaffOrdersRuntime = {
+      createStaffOrdersRuntime() {
+        return {
+          environment: {
+            protocol: 'https:',
+            hostname: 'forge.thehilltopshop.com',
+            usesHostedServer: true,
+            requiresAuthentication: true,
+            dataSource: 'server'
+          },
+          async checkAccess() {
+            return {
+              ok: true,
+              authenticated: true,
+              requiresAuthentication: true,
+              nextScreen: 'staff-orders',
+              dataSource: 'server',
+              readOnly: true
+            };
+          },
+          async login() {
+            return {
+              ok: true,
+              authenticated: true,
+              requiresAuthentication: true,
+              nextScreen: 'staff-orders',
+              dataSource: 'server',
+              readOnly: true
+            };
+          },
+          async logout() {
+            return {
+              ok: true,
+              authenticated: false,
+              nextScreen: 'staff-access',
+              dataSource: 'server',
+              readOnly: true
+            };
+          },
+          async loadOrders() {
+            return {
+              ok: true,
+              authenticated: true,
+              dataSource: 'server',
+              readOnly: true,
+              records: []
+            };
+          }
+        };
+      }
+    };
+  }
+
+  context.document = {
+    body: appBody,
+    documentElement: createElement('html'),
+    activeElement: null,
+    querySelector: env.querySelector,
+    querySelectorAll: env.querySelectorAll,
+    getElementById(id) {
+      return env.querySelector(`#${id}`);
+    },
+    createElement(tag) {
+      return createElement(tag);
+    },
+    addEventListener(type, handler) {
+      if (!documentListeners.has(type)) {
+        documentListeners.set(type, []);
+      }
+      documentListeners.get(type).push(handler);
+    },
+    removeEventListener(type, handler) {
+      if (!documentListeners.has(type)) {
+        return;
+      }
+      documentListeners.set(type, documentListeners.get(type).filter((candidate) => candidate !== handler));
+    },
+    dispatchEvent(event) {
+      const handlers = documentListeners.get(event.type) || [];
+      handlers.forEach((handler) => handler.call(this, event));
+      return true;
+    }
+  };
+
+  context.window = context;
+  context.globalThis = context;
+  context.window.document = context.document;
+  context.window.navigator = context.navigator;
+  context.window.location = context.location;
+  context.window.history = { pushState() {}, replaceState() {} };
+  context.window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+  context.window.addEventListener = () => {};
+  context.window.removeEventListener = () => {};
+  context.window.dispatchEvent = () => true;
+  context.window.scrollTo = () => {};
+
+  vm.createContext(context);
+
+  const files = [
+    'public/js/forge-product-catalog.js',
+    'public/js/forge-order-payload-builder.js',
+    'public/js/forge-order-payload-preview.js',
+    'public/js/forge-api-client.js',
+    'public/js/forge-order-store.js',
+    'public/js/forge-order-server-sync.js',
+    'public/js/forge-order-submission.js',
+    'public/js/forge-local-orders-queue.js',
+    'public/js/app.js'
+  ];
+
+  for (const file of files) {
+    const source = fs.readFileSync(path.join(process.cwd(), file), 'utf8');
+    vm.runInContext(source, context, { filename: file });
+  }
+
+  context.__testListOrders = async () => {
+    listOrdersCalls += 1;
+    return structuredClone(currentOrders);
+  };
+  vm.runInContext('orderStore.listOrders = globalThis.__testListOrders;', context);
+
+  return {
+    context,
+    demoControls,
+    demoLoadButton,
+    demoClearButton,
+    staffOrdersList,
+    readyList,
+    detailDialog,
+    getListOrdersCalls() {
+      return listOrdersCalls;
+    },
+    getFetchCalls() {
+      return fetchCalls;
+    },
+    setOrders(nextOrders) {
+      currentOrders = structuredClone(nextOrders);
+    }
+  };
+}
+
 test('localhost app bootstrap survives missing staff tray modules and keeps Start Order and Staff Tools interactive', () => {
   const { startButton, staffButton, staffPanel, categoriesScreen } = loadForgeAppWithoutStaffModules();
 
@@ -1054,4 +1378,70 @@ test('shared server order detail completion button binds to the rendered button 
   await context.openStaffOrderDetail('shared-order-1');
   completionButton = getCompletionButton();
   assert.equal(completionButton, null);
+});
+
+test('localhost staff demo controls are available and hosted https keeps them unavailable', async () => {
+  const localHarness = loadForgeStaffDemoApp({ hostname: 'localhost' });
+  await localHarness.context.openStaffAccessScreen('staff-orders');
+
+  assert.equal(localHarness.demoControls.hidden, false);
+  assert.equal(localHarness.demoLoadButton.disabled, false);
+  assert.equal(localHarness.demoClearButton.disabled, true);
+
+  const hostedHarness = loadForgeStaffDemoApp({
+    protocol: 'https:',
+    hostname: 'forge.thehilltopshop.com'
+  });
+  await hostedHarness.context.openStaffAccessScreen('staff-orders');
+
+  assert.equal(hostedHarness.demoControls.hidden, true);
+  assert.equal(await hostedHarness.context.loadStaffDemoOrdersForVisualQa(), false);
+});
+
+test('loading localhost demo orders performs no IndexedDB reads or API calls and clearing restores the normal local queue', async () => {
+  const harness = loadForgeStaffDemoApp({ hostname: 'localhost', initialOrders: [] });
+  await harness.context.openStaffAccessScreen('staff-orders');
+
+  assert.equal(harness.getListOrdersCalls(), 1);
+  assert.equal(harness.getFetchCalls(), 0);
+  assert.match(String(harness.staffOrdersList.innerHTML || ''), /No orders match these filters/);
+
+  assert.equal(harness.context.loadStaffDemoOrdersForVisualQa(), true);
+  assert.equal(harness.getListOrdersCalls(), 1);
+  assert.equal(harness.getFetchCalls(), 0);
+  assert.match(String(harness.staffOrdersList.innerHTML || ''), /Sarah Williams/);
+  assert.match(String(harness.staffOrdersList.innerHTML || ''), /NO TRAY ASSIGNED/);
+  assert.match(String(harness.staffOrdersList.innerHTML || ''), /Ready to Pack/);
+  assert.equal(harness.demoLoadButton.disabled, true);
+  assert.equal(harness.demoClearButton.disabled, false);
+
+  await harness.context.clearStaffDemoOrdersForVisualQa();
+  assert.equal(harness.getListOrdersCalls(), 2);
+  assert.equal(harness.getFetchCalls(), 0);
+  assert.match(String(harness.staffOrdersList.innerHTML || ''), /No orders match these filters/);
+  assert.equal(harness.demoLoadButton.disabled, false);
+  assert.equal(harness.demoClearButton.disabled, true);
+});
+
+test('localhost demo orders use the normal queue and detail rendering path', async () => {
+  const harness = loadForgeStaffDemoApp({ hostname: '127.0.0.1', initialOrders: [] });
+  await harness.context.openStaffAccessScreen('staff-orders');
+
+  harness.context.loadStaffDemoOrdersForVisualQa();
+
+  assert.match(String(harness.staffOrdersList.innerHTML || ''), /Michael Thompson/);
+  assert.match(String(harness.staffOrdersList.innerHTML || ''), /TRAY 5/);
+  assert.match(String(harness.staffOrdersList.innerHTML || ''), /Blocked/);
+  assert.match(String(harness.staffOrdersList.innerHTML || ''), /Open Flags/);
+  assert.match(String(harness.readyList.innerHTML || ''), /David Anderson/);
+
+  await harness.context.openStaffOrderDetail('demo-order-jessica-005');
+  assert.match(String(harness.detailDialog.innerHTML || ''), /Jessica Martinez/);
+  assert.match(String(harness.detailDialog.innerHTML || ''), /Missing personalization/);
+
+  await harness.context.openStaffOrderDetail('demo-order-sarah-001');
+  assert.match(String(harness.detailDialog.innerHTML || ''), /Sarah Williams/);
+  assert.match(String(harness.detailDialog.innerHTML || ''), /Family Tree Ornament/);
+  assert.match(String(harness.detailDialog.innerHTML || ''), /0 of 3 Complete/);
+  assert.match(String(harness.detailDialog.innerHTML || ''), /Shipping/);
 });

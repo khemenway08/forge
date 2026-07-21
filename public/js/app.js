@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260721-17';
+const FORGE_BUILD_VERSION = '20260721-18';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
 
@@ -55,6 +55,7 @@ const staffAuthDescription = document.querySelector('[data-staff-auth-descriptio
 const staffOrdersSummary = document.querySelector('[data-staff-orders-summary]');
 const staffOrdersSearchInput = document.querySelector('[data-staff-orders-search]');
 const staffOrdersFilters = document.querySelector('[data-staff-orders-filters]');
+const staffDemoControls = document.querySelector('[data-staff-demo-controls]');
 const staffBatchGroups = document.querySelector('[data-staff-batch-groups]');
 const staffOrdersList = document.querySelector('[data-staff-orders-list]');
 const staffOrdersStatus = document.querySelector('[data-staff-orders-status]');
@@ -110,6 +111,8 @@ const staffOrdersState = {
   errorCanRetry: false,
   loading: false,
   records: [],
+  demoMode: false,
+  demoRecords: [],
   searchTerm: '',
   filters: {},
   error: '',
@@ -814,6 +817,398 @@ function isLoopbackHost(locationLike) {
     || hostname === '127.0.0.1'
     || hostname === '::1'
     || hostname.endsWith('.local');
+}
+
+function isLocalStaffDemoAvailable() {
+  return isLoopbackHost(window.location) && !isHostedStaffMode();
+}
+
+function getCurrentStaffQueueRecords() {
+  return staffOrdersState.demoMode ? staffOrdersState.demoRecords : staffOrdersState.records;
+}
+
+function createDemoShippingAddress(address1, city, state, postalCode) {
+  return {
+    address_1: address1,
+    address_2: '',
+    city,
+    state,
+    postal_code: postalCode,
+    country: 'United States'
+  };
+}
+
+function createDemoLinePricing(unitPriceCents, quantity) {
+  const normalizedQuantity = Number.isInteger(quantity) && quantity > 0 ? quantity : 1;
+  return {
+    mode: 'fixed',
+    regular_unit_price_cents: unitPriceCents,
+    final_unit_price_cents: unitPriceCents,
+    line_total_cents: unitPriceCents * normalizedQuantity
+  };
+}
+
+function createDemoOrderItem({
+  lineId,
+  productDefinitionId,
+  productDisplayName,
+  quantity,
+  completedQuantity,
+  productionStatus,
+  unitPriceCents,
+  structuredAttributes,
+  configurationSnapshot,
+  personalizationOrder = [],
+  openFlags = []
+}) {
+  const normalizedQuantity = Number.isInteger(quantity) && quantity > 0 ? quantity : 1;
+  const normalizedCompletedQuantity = Number.isInteger(completedQuantity)
+    ? Math.max(Math.min(completedQuantity, normalizedQuantity), 0)
+    : 0;
+  return {
+    line_id: lineId,
+    order_item_id: lineId,
+    product_definition_id: productDefinitionId,
+    product_display_name: productDisplayName,
+    quantity: normalizedQuantity,
+    production_status: productionStatus,
+    completed_quantity: normalizedCompletedQuantity,
+    completed_at: normalizedCompletedQuantity >= normalizedQuantity ? '2026-07-21T15:45:00.000Z' : null,
+    structured_attributes: structuredAttributes,
+    configuration_snapshot: configurationSnapshot,
+    personalization_order: personalizationOrder,
+    open_flags: openFlags,
+    pricing: createDemoLinePricing(unitPriceCents, normalizedQuantity)
+  };
+}
+
+function createDemoOrderRecord({
+  forgeOrderUuid,
+  forgeOrderNumber,
+  submittedAt,
+  customer,
+  fulfillmentMethod,
+  shippingAddress,
+  neededBy,
+  currentTrayNumber,
+  productionStatus,
+  totalItemCount,
+  completedItemCount,
+  syncStatus,
+  items,
+  openFlags = [],
+  readyToPackAt = null,
+  estimatedTotalCents
+}) {
+  return {
+    forge_order_uuid: forgeOrderUuid,
+    forge_order_number: forgeOrderNumber,
+    submitted_at: submittedAt,
+    local_saved_at: submittedAt,
+    received_at: submittedAt,
+    updated_at: submittedAt,
+    sync_status: syncStatus,
+    current_tray_number: currentTrayNumber,
+    production_status: productionStatus,
+    total_item_count: totalItemCount,
+    completed_item_count: completedItemCount,
+    ready_to_pack_at: readyToPackAt,
+    packed_at: null,
+    staff_read_only: true,
+    staff_can_assign_tray: false,
+    staff_can_complete_items: false,
+    sync_attempt_count: syncStatus === 'pending' ? 1 : 0,
+    payload: {
+      forge_order_uuid: forgeOrderUuid,
+      customer: {
+        full_name: customer.fullName,
+        email: customer.email,
+        phone: customer.phone,
+        preferred_contact: customer.preferredContact
+      },
+      fulfillment: {
+        method: fulfillmentMethod,
+        needed_by: neededBy,
+        shipping_address: fulfillmentMethod === 'shipping' ? shippingAddress : null
+      },
+      pricing: {
+        estimated_total_cents: estimatedTotalCents
+      },
+      items,
+      open_flags: openFlags
+    }
+  };
+}
+
+function createLocalStaffDemoOrders() {
+  return forgeLocalOrdersQueue.sortLocalOrdersNewestFirst([
+    createDemoOrderRecord({
+      forgeOrderUuid: 'demo-order-sarah-001',
+      forgeOrderNumber: '2001',
+      submittedAt: '2026-07-21T10:00:00.000Z',
+      customer: {
+        fullName: 'Sarah Williams',
+        email: 'sarah.williams@example.com',
+        phone: '(817) 555-0101',
+        preferredContact: 'Email'
+      },
+      fulfillmentMethod: 'shipping',
+      shippingAddress: createDemoShippingAddress('1400 Lake View Drive', 'Fort Worth', 'TX', '76102'),
+      neededBy: '2026-12-05',
+      currentTrayNumber: null,
+      productionStatus: 'submitted',
+      totalItemCount: 3,
+      completedItemCount: 0,
+      syncStatus: 'synced',
+      estimatedTotalCents: 2600,
+      items: [
+        createDemoOrderItem({
+          lineId: 'demo-line-sarah-tree',
+          productDefinitionId: 'tree_ornament',
+          productDisplayName: 'Family Tree Ornament',
+          quantity: 3,
+          completedQuantity: 0,
+          productionStatus: 'pending',
+          unitPriceCents: 2600,
+          structuredAttributes: {
+            product_definition_id: 'tree_ornament',
+            category: 'ornament',
+            ornament_type: 'tree_ornament',
+            size: 'Small',
+            tree_color: 'Green',
+            bow_color: 'Red',
+            year: '2026',
+            fulfillment_method: 'shipping'
+          },
+          configurationSnapshot: {
+            size: 'Small',
+            treeColor: 'Green',
+            bowColor: 'Red',
+            familyName: 'Williams',
+            year: '2026'
+          }
+        })
+      ]
+    }),
+    createDemoOrderRecord({
+      forgeOrderUuid: 'demo-order-michael-002',
+      forgeOrderNumber: '2002',
+      submittedAt: '2026-07-21T10:30:00.000Z',
+      customer: {
+        fullName: 'Michael Thompson',
+        email: 'michael.thompson@example.com',
+        phone: '(254) 555-0119',
+        preferredContact: 'Text'
+      },
+      fulfillmentMethod: 'pickup',
+      shippingAddress: null,
+      neededBy: '2026-11-28',
+      currentTrayNumber: 5,
+      productionStatus: 'tray_assigned',
+      totalItemCount: 1,
+      completedItemCount: 0,
+      syncStatus: 'synced',
+      estimatedTotalCents: 2500,
+      items: [
+        createDemoOrderItem({
+          lineId: 'demo-line-michael-flag',
+          productDefinitionId: 'veteran_flag',
+          productDisplayName: 'Veteran Flag Ornament',
+          quantity: 1,
+          completedQuantity: 0,
+          productionStatus: 'pending',
+          unitPriceCents: 2500,
+          structuredAttributes: {
+            product_definition_id: 'veteran_flag',
+            category: 'ornament',
+            ornament_type: 'veteran_flag',
+            fulfillment_method: 'pickup'
+          },
+          configurationSnapshot: {
+            personalizationMode: 'As Shown'
+          }
+        })
+      ]
+    }),
+    createDemoOrderRecord({
+      forgeOrderUuid: 'demo-order-emily-003',
+      forgeOrderNumber: '2003',
+      submittedAt: '2026-07-21T11:00:00.000Z',
+      customer: {
+        fullName: 'Emily Johnson',
+        email: 'emily.johnson@example.com',
+        phone: '(972) 555-0155',
+        preferredContact: 'Text'
+      },
+      fulfillmentMethod: 'shipping',
+      shippingAddress: createDemoShippingAddress('88 Oak Hollow Lane', 'Plano', 'TX', '75024'),
+      neededBy: '2026-12-10',
+      currentTrayNumber: 8,
+      productionStatus: 'in_production',
+      totalItemCount: 4,
+      completedItemCount: 2,
+      syncStatus: 'synced',
+      estimatedTotalCents: 3000,
+      items: [
+        createDemoOrderItem({
+          lineId: 'demo-line-emily-present',
+          productDefinitionId: 'present_stack',
+          productDisplayName: 'Present Stack Ornament',
+          quantity: 4,
+          completedQuantity: 2,
+          productionStatus: 'in_production',
+          unitPriceCents: 3000,
+          structuredAttributes: {
+            product_definition_id: 'present_stack',
+            category: 'ornament',
+            ornament_type: 'present_stack',
+            bow_color: 'White',
+            year: '2026',
+            fulfillment_method: 'shipping'
+          },
+          configurationSnapshot: {
+            bowColor: 'White',
+            familyName: 'Johnson',
+            year: '2026'
+          }
+        })
+      ]
+    }),
+    createDemoOrderRecord({
+      forgeOrderUuid: 'demo-order-david-004',
+      forgeOrderNumber: '2004',
+      submittedAt: '2026-07-21T11:30:00.000Z',
+      customer: {
+        fullName: 'David Anderson',
+        email: 'david.anderson@example.com',
+        phone: '(469) 555-0193',
+        preferredContact: 'Email'
+      },
+      fulfillmentMethod: 'pickup',
+      shippingAddress: null,
+      neededBy: '2026-11-20',
+      currentTrayNumber: 3,
+      productionStatus: 'ready_to_pack',
+      totalItemCount: 1,
+      completedItemCount: 1,
+      syncStatus: 'synced',
+      readyToPackAt: '2026-07-21T13:20:00.000Z',
+      estimatedTotalCents: 2800,
+      items: [
+        createDemoOrderItem({
+          lineId: 'demo-line-david-baby',
+          productDefinitionId: 'babys_first_christmas',
+          productDisplayName: "Baby's First Christmas",
+          quantity: 1,
+          completedQuantity: 1,
+          productionStatus: 'complete',
+          unitPriceCents: 2800,
+          structuredAttributes: {
+            product_definition_id: 'babys_first_christmas',
+            category: 'ornament',
+            ornament_type: 'babys_first_christmas',
+            bow_color: 'Blue',
+            year: '2026',
+            fulfillment_method: 'pickup'
+          },
+          configurationSnapshot: {
+            bowColor: 'Blue',
+            babyName: 'Luca',
+            year: '2026'
+          }
+        })
+      ]
+    }),
+    createDemoOrderRecord({
+      forgeOrderUuid: 'demo-order-jessica-005',
+      forgeOrderNumber: '2005',
+      submittedAt: '2026-07-21T12:00:00.000Z',
+      customer: {
+        fullName: 'Jessica Martinez',
+        email: 'jessica.martinez@example.com',
+        phone: '(214) 555-0144',
+        preferredContact: 'Text'
+      },
+      fulfillmentMethod: 'shipping',
+      shippingAddress: createDemoShippingAddress('512 Cedar Ridge Road', 'Dallas', 'TX', '75201'),
+      neededBy: '2026-12-15',
+      currentTrayNumber: 9,
+      productionStatus: 'blocked',
+      totalItemCount: 2,
+      completedItemCount: 1,
+      syncStatus: 'synced',
+      estimatedTotalCents: 3000,
+      openFlags: [
+        { code: 'missing_personalization', message: 'Missing personalization' }
+      ],
+      items: [
+        createDemoOrderItem({
+          lineId: 'demo-line-jessica-reindeer',
+          productDefinitionId: 'little_reindeer_letter',
+          productDisplayName: 'Reindeer Ornament',
+          quantity: 2,
+          completedQuantity: 1,
+          productionStatus: 'blocked',
+          unitPriceCents: 1500,
+          structuredAttributes: {
+            product_definition_id: 'little_reindeer_letter',
+            category: 'ornament',
+            ornament_type: 'little_reindeer_letter',
+            fulfillment_method: 'shipping'
+          },
+          configurationSnapshot: {
+            name: 'Noah',
+            letter: 'N'
+          },
+          openFlags: [
+            { code: 'missing_personalization', message: 'Missing personalization' }
+          ]
+        })
+      ]
+    }),
+    createDemoOrderRecord({
+      forgeOrderUuid: 'demo-order-robert-006',
+      forgeOrderNumber: '2006',
+      submittedAt: '2026-07-21T12:30:00.000Z',
+      customer: {
+        fullName: 'Robert Davis',
+        email: 'robert.davis@example.com',
+        phone: '(817) 555-0177',
+        preferredContact: 'Email'
+      },
+      fulfillmentMethod: 'pickup',
+      shippingAddress: null,
+      neededBy: '2026-11-30',
+      currentTrayNumber: null,
+      productionStatus: 'submitted',
+      totalItemCount: 1,
+      completedItemCount: 0,
+      syncStatus: 'pending',
+      estimatedTotalCents: 3200,
+      items: [
+        createDemoOrderItem({
+          lineId: 'demo-line-robert-memorial',
+          productDefinitionId: 'custom_request',
+          productDisplayName: 'Memorial Ornament',
+          quantity: 1,
+          completedQuantity: 0,
+          productionStatus: 'pending',
+          unitPriceCents: 3200,
+          structuredAttributes: {
+            product_definition_id: 'custom_request',
+            category: 'ornament',
+            ornament_type: 'custom_request',
+            year: '2026',
+            fulfillment_method: 'pickup'
+          },
+          configurationSnapshot: {
+            familyName: 'In Loving Memory',
+            year: '2026'
+          }
+        })
+      ]
+    })
+  ]);
 }
 
 function getProductConfig(productDefinitionId = draft.productDefinitionId) {
@@ -1586,6 +1981,8 @@ function renderStaffAuthScreen() {
 
 function clearStaffOrderData() {
   staffOrdersState.records = [];
+  staffOrdersState.demoMode = false;
+  staffOrdersState.demoRecords = [];
   staffOrdersState.loading = false;
   staffOrdersState.error = '';
   staffOrdersState.errorCanRetry = false;
@@ -1599,6 +1996,56 @@ function clearStaffOrderData() {
   closeStaffPackingDialog({ restoreFocus: false });
   closeStaffTrayAssignment();
   closeStaffOrderDetail();
+}
+
+function renderStaffDemoControls() {
+  if (!staffDemoControls) {
+    return;
+  }
+  const available = isLocalStaffDemoAvailable();
+  staffDemoControls.hidden = !available;
+  if (!available) {
+    return;
+  }
+
+  const loadButton = staffDemoControls.querySelector('[data-action="staff-load-demo-orders"]');
+  const clearButton = staffDemoControls.querySelector('[data-action="staff-clear-demo-orders"]');
+  if (loadButton) {
+    loadButton.disabled = staffOrdersState.demoMode;
+  }
+  if (clearButton) {
+    clearButton.disabled = !staffOrdersState.demoMode;
+  }
+}
+
+function loadStaffDemoOrdersForVisualQa() {
+  if (!isLocalStaffDemoAvailable()) {
+    return false;
+  }
+  staffOrdersState.demoMode = true;
+  staffOrdersState.demoRecords = createLocalStaffDemoOrders();
+  staffOrdersState.error = '';
+  staffOrdersState.errorCanRetry = false;
+  staffOrdersState.notice = 'Demo orders loaded for localhost staff visual QA.';
+  staffOrdersState.noticeTone = 'muted';
+  renderStaffOrdersQueue();
+  renderReadyToPackQueue();
+  return true;
+}
+
+async function clearStaffDemoOrdersForVisualQa() {
+  if (!isLocalStaffDemoAvailable()) {
+    return false;
+  }
+  closeStaffBatchDialog({ restoreFocus: false });
+  closeStaffTrayAssignment();
+  closeStaffOrderDetail();
+  staffOrdersState.demoMode = false;
+  staffOrdersState.demoRecords = [];
+  staffOrdersState.notice = '';
+  staffOrdersState.noticeTone = 'success';
+  await loadStaffOrdersQueue();
+  return true;
 }
 
 function showUnauthenticatedStaffAccess() {
@@ -4182,6 +4629,9 @@ function getOrderProductionStatus(record) {
 
 function getOrderProductionStatusLabel(record) {
   const status = getOrderProductionStatus(record);
+  if (status === 'blocked') {
+    return 'Blocked';
+  }
   if (status === forgeOrderStore.PRODUCTION_STATUSES?.trayAssigned) {
     return 'Tray Assigned';
   }
@@ -4208,6 +4658,9 @@ function getOrderProductionStatusLabel(record) {
 
 function getOrderProductionStatusBadgeClass(record) {
   const status = getOrderProductionStatus(record);
+  if (status === 'blocked') {
+    return 'staff-status-badge--production-blocked';
+  }
   if (status === forgeOrderStore.PRODUCTION_STATUSES?.trayAssigned) {
     return 'staff-status-badge--production-tray-assigned';
   }
@@ -4309,6 +4762,17 @@ function getStaffSyncStatusBadgeClass(record) {
   return 'staff-status-badge--sync-pending';
 }
 
+function shouldShowProminentSyncBadge(record) {
+  return !(isStaffReadOnlyRecord(record) && getStaffSyncStatus(record) === 'synced');
+}
+
+function buildStaffSyncBadgeMarkup(record) {
+  if (!shouldShowProminentSyncBadge(record)) {
+    return '';
+  }
+  return `<span class="staff-status-badge ${escapeHtml(getStaffSyncStatusBadgeClass(record))}">${escapeHtml(getStaffSyncStatusLabel(record))}</span>`;
+}
+
 function getStaffItemProductionStatus(item) {
   return sanitizeText(
     item?.production_status
@@ -4392,6 +4856,20 @@ function buildStaffNoticeMarkup(message, tone = 'success') {
   return `
     <div class="staff-inline-notice staff-inline-notice--${escapeHtml(tone)}" role="status" aria-live="polite">
       ${escapeHtml(message)}
+    </div>
+  `;
+}
+
+function buildStaffUtilityActionMarkup(record) {
+  if (!isLoopbackHost(window.location)) {
+    return '';
+  }
+
+  return `
+    <div class="staff-order-detail-utility">
+      <button class="staff-order-detail-utility-button" type="button" data-action="staff-view-order-json" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">
+        View Raw JSON
+      </button>
     </div>
   `;
 }
@@ -4482,7 +4960,7 @@ async function openStaffBatchDialog(kind, key) {
       throw new Error('That production batch could not be found.');
     }
     const filteredRecords = forgeLocalOrdersQueue.filterLocalOrders(
-      staffOrdersState.records,
+      getCurrentStaffQueueRecords(),
       staffOrdersState.filters,
       staffOrdersState.searchTerm
     );
@@ -4643,15 +5121,17 @@ function renderStaffOrdersQueue() {
     return;
   }
 
+  renderStaffDemoControls();
   renderStaffSourceUi();
+  const queueRecords = getCurrentStaffQueueRecords();
   const sourceConfig = getStaffSourceConfig();
   const filteredRecords = forgeLocalOrdersQueue.filterLocalOrders(
-    staffOrdersState.records,
+    queueRecords,
     staffOrdersState.filters,
     staffOrdersState.searchTerm
   );
   const summary = forgeLocalOrdersQueue.summarizeLocalOrders(filteredRecords, staffOrdersState.filters);
-  const availableFilters = forgeLocalOrdersQueue.getAvailableOrderFilters(staffOrdersState.records, {
+  const availableFilters = forgeLocalOrdersQueue.getAvailableOrderFilters(queueRecords, {
     activeFilters: staffOrdersState.filters,
     searchTerm: staffOrdersState.searchTerm
   });
@@ -4738,6 +5218,7 @@ function renderReadyToPackQueue() {
     return;
   }
 
+  renderStaffDemoControls();
   renderStaffSourceUi();
   const sourceConfig = getStaffSourceConfig();
   if (staffOrdersState.loading) {
@@ -4752,7 +5233,7 @@ function renderReadyToPackQueue() {
     return;
   }
 
-  const readyRecords = forgeLocalOrdersQueue.filterReadyToPackOrders(staffOrdersState.records);
+  const readyRecords = forgeLocalOrdersQueue.filterReadyToPackOrders(getCurrentStaffQueueRecords());
   readyToPackCount.textContent = getReadyToPackCountLabel(readyRecords);
   readyToPackList.innerHTML = readyRecords.length
     ? `
@@ -4897,7 +5378,7 @@ function buildStaffOrderCardMarkup(record, filters) {
         <div class="staff-order-card-badges">
           <span class="staff-tray-badge ${escapeHtml(getOrderTrayBadgeClass(record))}">${escapeHtml(trayLabel)}</span>
           <span class="staff-status-badge ${escapeHtml(getOrderProductionStatusBadgeClass(record))}">${escapeHtml(productionStatusLabel)}</span>
-          <span class="staff-status-badge ${escapeHtml(syncStatusBadgeClass)}">${escapeHtml(syncStatusLabel)}</span>
+          ${buildStaffSyncBadgeMarkup(record)}
           ${hasFlags ? '<span class="staff-flag-badge">Open Flags</span>' : ''}
         </div>
       </div>
@@ -4935,6 +5416,15 @@ function buildStaffProductSummary(items) {
 
 async function loadStaffOrdersQueue() {
   if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled)) {
+    return;
+  }
+
+  if (staffOrdersState.demoMode && isLocalStaffDemoAvailable()) {
+    staffOrdersState.loading = false;
+    staffOrdersState.error = '';
+    staffOrdersState.errorCanRetry = false;
+    renderStaffOrdersQueue();
+    renderReadyToPackQueue();
     return;
   }
 
@@ -4989,8 +5479,8 @@ async function openStaffOrderDetail(forgeOrderUuid) {
   try {
     let record = null;
     let packingVerification = null;
-    if (staffOrdersState.readOnly) {
-      record = staffOrdersState.records.find((candidate) => candidate?.forge_order_uuid === forgeOrderUuid) || null;
+    if (staffOrdersState.readOnly || staffOrdersState.demoMode) {
+      record = getCurrentStaffQueueRecords().find((candidate) => candidate?.forge_order_uuid === forgeOrderUuid) || null;
     } else {
       [record, packingVerification] = await Promise.all([
         orderStore.getOrder(forgeOrderUuid),
@@ -5100,6 +5590,7 @@ function renderStaffOrderDetail() {
   const isPackedOrder = getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.packed;
   const syncStatusLabel = getStaffSyncStatusLabel(record);
   const syncStatusBadgeClass = getStaffSyncStatusBadgeClass(record);
+  const showRawJsonAction = isLoopbackHost(window.location);
   const showOpenFlagProgressNote = getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.inProduction
     && completionCounts.totalItemCount > 0
     && completionCounts.completedItemCount >= completionCounts.totalItemCount
@@ -5115,26 +5606,26 @@ function renderStaffOrderDetail() {
         <div class="staff-order-detail-badges">
           <span class="staff-tray-badge ${escapeHtml(getOrderTrayBadgeClass(record))}">${escapeHtml(trayLabel)}</span>
           <span class="staff-status-badge ${escapeHtml(getOrderProductionStatusBadgeClass(record))}">${escapeHtml(productionStatusLabel)}</span>
-          <span class="staff-status-badge ${escapeHtml(syncStatusBadgeClass)}">${escapeHtml(syncStatusLabel)}</span>
+          ${buildStaffSyncBadgeMarkup(record)}
           ${openFlags.length ? '<span class="staff-flag-badge">Open Flags</span>' : ''}
         </div>
         <p class="staff-order-progress-text">${escapeHtml(completionSummary)}</p>
       </div>
       <div class="staff-order-card-actions staff-order-detail-actions">
         ${showAssignTrayAction ? `<button class="primary-button" type="button" data-action="staff-open-tray-assignment" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Assign Tray</button>` : ''}
-        <button class="secondary-button" type="button" data-action="staff-view-order-json" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">View Raw JSON</button>
         <button class="text-button" type="button" data-action="close-staff-order-detail">Close</button>
       </div>
     </div>
 
     ${buildStaffNoticeMarkup(staffOrdersState.notice, staffOrdersState.noticeTone)}
     ${staffOrdersState.detailError ? buildStaffNoticeMarkup(staffOrdersState.detailError, 'error') : ''}
-    ${isReadOnlyRecord && sourceConfig.readOnlyNote ? buildStaffNoticeMarkup(sourceConfig.readOnlyNote, 'success') : ''}
+    ${isReadOnlyRecord && sourceConfig.readOnlyNote ? buildStaffNoticeMarkup(sourceConfig.readOnlyNote, 'muted') : ''}
+    ${staffOrdersState.demoMode ? buildStaffNoticeMarkup('Demo order detail is for localhost visual QA only and does not save changes.', 'muted') : ''}
+    ${showRawJsonAction ? buildStaffUtilityActionMarkup(record) : ''}
 
     <div class="staff-order-detail-meta">
       <div><span>Order Number</span><strong>${escapeHtml(shortOrderReference)}</strong></div>
       <div><span>Fulfillment</span><strong>${escapeHtml(fulfillment.method === 'pickup' ? 'Pickup' : 'Shipping')}</strong></div>
-      <div><span>Needed By</span><strong>${escapeHtml(fulfillment.needed_by ? formatReadableDate(fulfillment.needed_by) : 'Not provided')}</strong></div>
       <div><span>UUID</span><strong>${escapeHtml(record.forge_order_uuid)}</strong></div>
       <div><span>Submitted</span><strong>${escapeHtml(formatReadableDateTime(record.submitted_at || ''))}</strong></div>
       <div><span>${escapeHtml(sourceConfig.savedTimestampLabel)}</span><strong>${escapeHtml(formatReadableDateTime(record.local_saved_at || record.received_at || ''))}</strong></div>
@@ -5146,8 +5637,6 @@ function renderStaffOrderDetail() {
       <div class="staff-order-detail-grid">
         <div><span>Tray State</span><strong>${escapeHtml(trayLabel)}</strong></div>
         <div><span>Production Progress</span><strong>${escapeHtml(completionSummary)}</strong></div>
-        <div><span>Production Status</span><strong>${escapeHtml(productionStatusLabel)}</strong></div>
-        <div><span>${escapeHtml(sourceConfig.syncAttemptsLabel)}</span><strong>${escapeHtml(sourceConfig.syncAttemptsValue || String(record.sync_attempt_count ?? 0))}</strong></div>
       </div>
       ${showOpenFlagProgressNote ? '<p class="staff-order-detail-note">All required pieces are complete, but this order still has an open flag and cannot move to Ready to Pack yet.</p>' : ''}
       <div class="staff-order-detail-flags">
@@ -5158,8 +5647,11 @@ function renderStaffOrderDetail() {
 
     <section class="staff-order-detail-section">
       <h3>Customer</h3>
+      <div class="staff-order-detail-feature">
+        <span>Name</span>
+        <strong>${escapeHtml(customer.full_name || 'Not provided')}</strong>
+      </div>
       <div class="staff-order-detail-grid">
-        <div><span>Name</span><strong>${escapeHtml(customer.full_name || 'Not provided')}</strong></div>
         <div><span>Email</span><strong>${escapeHtml(customer.email || 'Not provided')}</strong></div>
         <div><span>Phone</span><strong>${escapeHtml(formatCustomerPhone(customer.phone || 'Not provided'))}</strong></div>
         <div><span>Preferred Contact</span><strong>${escapeHtml(customer.preferred_contact || 'Not provided')}</strong></div>
@@ -5168,9 +5660,12 @@ function renderStaffOrderDetail() {
 
     <section class="staff-order-detail-section">
       <h3>Fulfillment</h3>
+      <div class="staff-needed-by-callout" data-needed-by-state="normal">
+        <span>Needed By</span>
+        <strong>${escapeHtml(fulfillment.needed_by ? formatReadableDate(fulfillment.needed_by) : 'Not provided')}</strong>
+      </div>
       <div class="staff-order-detail-grid">
         <div><span>Method</span><strong>${escapeHtml(fulfillment.method === 'pickup' ? 'Pickup' : 'Shipping')}</strong></div>
-        <div><span>Needed By</span><strong>${escapeHtml(fulfillment.needed_by ? formatReadableDate(fulfillment.needed_by) : 'Not provided')}</strong></div>
       </div>
       ${shippingAddress ? `
         <div class="staff-order-detail-row">
@@ -5805,7 +6300,6 @@ function getStaffOrderItemsMarkup(record, items) {
 
   return items.map((item) => {
     const flags = Array.isArray(item.open_flags) ? item.open_flags : [];
-    const pricing = item.pricing || {};
     const itemDetails = buildStaffItemDetailRows(item);
     const showPersonalizationOrder = usesPeopleAndPetsPersonalization(item);
     const customerNote = sanitizeText(item.customer_note || '');
@@ -5816,12 +6310,13 @@ function getStaffOrderItemsMarkup(record, items) {
     const isReadOnlyRecord = isStaffReadOnlyRecord(record);
     const isSaving = staffOrdersState.detailSavingLineId === item.line_id;
     const completionActionLabel = isSaving ? 'Saving...' : getStaffItemCompletionActionLabel(item);
+    const quantityLabel = `${Number.isInteger(item.quantity) ? item.quantity : 1} × Piece${Number.isInteger(item.quantity) && item.quantity === 1 ? '' : 's'}`;
     return `
       <article>
         <div class="staff-order-card-header">
           <div class="staff-order-item-title">
             <h4>${escapeHtml(item.product_display_name || item.product_definition_id || 'Custom Item')}</h4>
-            <p>${escapeHtml(`${Number.isInteger(item.quantity) ? item.quantity : 1} × ${Number.isInteger(pricing.final_unit_price_cents) ? formatPrice(pricing.final_unit_price_cents / 100) : 'Quote Required'}`)}</p>
+            <p>${escapeHtml(quantityLabel)}</p>
           </div>
           <div class="staff-order-card-badges">
             <span class="staff-status-badge ${escapeHtml(getStaffItemProductionStatusBadgeClass(item))}">${escapeHtml(itemStatusLabel)}</span>
@@ -5849,10 +6344,9 @@ function getStaffOrderItemsMarkup(record, items) {
           ${itemDetails.map((detail) => `
             <div>
               <span>${escapeHtml(detail.label)}</span>
-              <strong>${escapeHtml(detail.value)}</strong>
+              <strong>${detail.isHtml ? detail.value : escapeHtml(detail.value)}</strong>
             </div>
           `).join('')}
-          <div><span>Price</span><strong>${Number.isInteger(pricing.line_total_cents) ? escapeHtml(formatPrice(pricing.line_total_cents / 100)) : 'Quote Required'}</strong></div>
           ${customerNote ? `<div><span>Customer Note</span><strong>${escapeHtml(customerNote)}</strong></div>` : ''}
           ${productionNote ? `<div><span>Production Note</span><strong>${escapeHtml(productionNote)}</strong></div>` : ''}
         </div>
@@ -5920,12 +6414,13 @@ function buildStaffItemDetailRows(item) {
   const productDefinitionId = resolveConfiguredProductDefinitionId(
     item?.product_definition_id || attributes.product_definition_id || item?.productDefinitionId || ''
   );
-  const familyFieldLabel = getFamilyFieldLabel(productDefinitionId);
+  const familyFieldLabel = getStaffItemFamilyDetailLabel(productDefinitionId);
+  const treeColorValue = sanitizeText(attributes.tree_color || configurationSnapshot.treeColor || configurationSnapshot.tree_color || '');
+  const bowColorValue = sanitizeText(attributes.bow_color || configurationSnapshot.bowColor || configurationSnapshot.bow_color || configurationSnapshot.bow_and_stocking_color || '');
   const rows = [
-    { label: 'Fulfillment', value: formatFulfillmentMethodLabel(attributes.fulfillment_method) },
     { label: 'Size', value: sanitizeText(attributes.size || configurationSnapshot.size || '') },
-    { label: 'Tree Color', value: sanitizeText(attributes.tree_color || configurationSnapshot.treeColor || configurationSnapshot.tree_color || '') },
-    { label: getBowColorDetailLabel(productDefinitionId), value: sanitizeText(attributes.bow_color || configurationSnapshot.bowColor || configurationSnapshot.bow_color || configurationSnapshot.bow_and_stocking_color || '') },
+    { label: 'Tree Color', value: treeColorValue ? getColorDisplayMarkup(treeColorValue) : '', isHtml: Boolean(treeColorValue) },
+    { label: getBowColorDetailLabel(productDefinitionId), value: bowColorValue ? getColorDisplayMarkup(bowColorValue) : '', isHtml: Boolean(bowColorValue) },
     { label: familyFieldLabel, value: sanitizeText(attributes.family_name || configurationSnapshot.familyName || configurationSnapshot.family_name || configurationSnapshot.lastName || configurationSnapshot.last_name || '') },
     { label: 'Personalization', value: formatPersonalizationModeLabel(configurationSnapshot.personalizationMode || configurationSnapshot.personalization_mode || '') },
     { label: 'Edge Text', value: sanitizeText(configurationSnapshot.edgeText || configurationSnapshot.edge_text || '') },
@@ -5937,6 +6432,25 @@ function buildStaffItemDetailRows(item) {
 
 function getBowColorDetailLabel(productDefinitionId) {
   return productDefinitionId === 'babys_first_christmas' ? 'Bow and Stocking Color' : 'Bow Color';
+}
+
+function getStaffItemFamilyDetailLabel(productDefinitionId) {
+  const normalized = resolveConfiguredProductDefinitionId(productDefinitionId);
+  if (normalized === 'tree_ornament' || normalized === 'present_stack' || normalized === 'grinch_tree') {
+    return 'Family Name';
+  }
+  if (normalized === 'babys_first_christmas') {
+    return 'Baby Name';
+  }
+  if (normalized === 'veteran_flag') {
+    return 'Personalization';
+  }
+
+  const fallbackLabel = getFamilyFieldLabel(productDefinitionId);
+  if (fallbackLabel === 'Engraved Text' && sanitizeText(productDefinitionId) === 'custom_request') {
+    return 'Memorial Text';
+  }
+  return fallbackLabel;
 }
 
 function formatFulfillmentMethodLabel(value) {
@@ -7688,6 +8202,16 @@ if (treeForm) {
       staffOrdersState.searchTerm = '';
       staffOrdersState.filters = forgeLocalOrdersQueue.createEmptyOrderFilters();
       renderStaffOrdersQueue();
+      return;
+    }
+
+    if (action === 'staff-load-demo-orders') {
+      loadStaffDemoOrdersForVisualQa();
+      return;
+    }
+
+    if (action === 'staff-clear-demo-orders') {
+      clearStaffDemoOrdersForVisualQa();
       return;
     }
 
