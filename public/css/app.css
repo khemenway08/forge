@@ -2364,6 +2364,53 @@ h1 {
   gap: 14px;
 }
 
+.staff-catalog-panel {
+  gap: 18px;
+}
+
+.staff-catalog-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.staff-catalog-tab {
+  min-width: 132px;
+}
+
+.staff-catalog-tab[aria-selected="true"],
+.staff-catalog-tab--active {
+  background: rgba(239, 108, 26, .18);
+  border-color: rgba(239, 108, 26, .42);
+  color: var(--staff-text);
+}
+
+.staff-catalog-content {
+  min-height: 240px;
+}
+
+.staff-catalog-placeholder {
+  min-height: 100%;
+  padding: 22px;
+  border: 1px dashed rgba(239, 108, 26, .26);
+  border-radius: 22px;
+  background: rgba(239, 108, 26, .06);
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.staff-catalog-placeholder h3 {
+  margin: 0;
+  color: var(--staff-text);
+  font-size: clamp(22px, 2.1vw, 28px);
+}
+
+.staff-catalog-placeholder p {
+  margin: 0;
+  color: var(--staff-muted);
+}
+
 .staff-orders-controls {
   gap: 14px;
 }
@@ -3649,6 +3696,14 @@ h1 {
 
   .staff-orders-shell {
     padding: 14px;
+  }
+
+  .staff-catalog-tabs {
+    flex-direction: column;
+  }
+
+  .staff-catalog-tab {
+    width: 100%;
   }
 
   .staff-personalization-grid-header,

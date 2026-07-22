@@ -4,8 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const BUILD_VERSION = '20260722-19';
-const CACHE_NAME = 'forge-starter-v19';
+const BUILD_VERSION = '20260722-21';
+const CACHE_NAME = 'forge-starter-v21';
 
 function normalizeRequestUrl(input) {
   if (typeof input === 'string') {
@@ -160,6 +160,12 @@ test('service worker install fetches current precache assets with cache reload a
     'forge-starter-v18': {
       '/js/app.js?v=20260721-18': 'stale prior category build'
     },
+    'forge-starter-v19': {
+      '/js/app.js?v=20260722-19': 'stale prior dashboard build'
+    },
+    'forge-starter-v20': {
+      '/js/app.js?v=20260722-20': 'stale prior dashboard cleanup build'
+    },
     'unrelated-cache': {
       '/misc.txt': 'keep me'
     }
@@ -189,6 +195,8 @@ test('service worker install fetches current precache assets with cache reload a
   assert.ok(!cacheKeys.includes('forge-starter-v15'));
   assert.ok(!cacheKeys.includes('forge-starter-v16'));
   assert.ok(!cacheKeys.includes('forge-starter-v18'));
+  assert.ok(!cacheKeys.includes('forge-starter-v19'));
+  assert.ok(!cacheKeys.includes('forge-starter-v20'));
   assert.ok(cacheKeys.includes('unrelated-cache'));
 });
 

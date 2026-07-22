@@ -4,6 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
+const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'), 'utf8');
+
 function createClassList() {
   const classes = new Set();
   return {
@@ -1463,4 +1465,21 @@ test('localhost demo orders use the normal queue and detail rendering path', asy
   assert.match(String(harness.detailDialog.innerHTML || ''), /Family Tree Ornament/);
   assert.match(String(harness.detailDialog.innerHTML || ''), /0 of 3 Complete/);
   assert.match(String(harness.detailDialog.innerHTML || ''), /Shipping/);
+});
+
+test('staff orders remains the default protected destination and the catalog shell is staff-only', () => {
+  const removedDashboardScreenToken = 'staff-' + 'dashboard';
+  const removedDashboardActionToken = 'staff-open-' + 'dashboard';
+  assert.equal(indexSource.includes(`data-screen="${removedDashboardScreenToken}"`), false);
+  assert.equal(indexSource.includes(`data-action="${removedDashboardActionToken}"`), false);
+  assert.match(indexSource, /data-screen="staff-catalog"/);
+  assert.match(indexSource, /Hilltop Design Catalog/);
+  assert.match(indexSource, /data-screen="staff-orders"[\s\S]*?data-action="staff-open-catalog">Hilltop Design Catalog<\/button>/);
+  assert.match(indexSource, /data-screen="staff-catalog"[\s\S]*?data-action="staff-open-orders">Back to Staff Orders<\/button>/);
+  assert.match(indexSource, />Designs<\/button>/);
+  assert.match(indexSource, />Hats<\/button>/);
+  assert.match(indexSource, />Materials<\/button>/);
+  assert.match(indexSource, />Shortlist<\/button>/);
+  assert.doesNotMatch(indexSource, /forge-staff-design-catalog\.js/);
+  assert.doesNotMatch(indexSource, /data-category="staff-catalog"/);
 });

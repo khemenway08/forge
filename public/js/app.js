@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260722-19';
+const FORGE_BUILD_VERSION = '20260722-21';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
 
@@ -61,6 +61,8 @@ const staffOrdersList = document.querySelector('[data-staff-orders-list]');
 const staffOrdersStatus = document.querySelector('[data-staff-orders-status]');
 const staffOrdersLead = document.querySelector('[data-staff-orders-lead]');
 const readyToPackLead = document.querySelector('[data-ready-to-pack-lead]');
+const staffCatalogContent = document.querySelector('[data-staff-catalog-content]');
+const staffCatalogTabs = [...document.querySelectorAll('[data-action="staff-catalog-section"]')];
 const staffSourceStatusNodes = [...document.querySelectorAll('[data-staff-source-status], [data-ready-source-status]')];
 const staffLogoutButtons = [...document.querySelectorAll('[data-staff-logout-button]')];
 const readyToPackCount = document.querySelector('[data-ready-to-pack-count]');
@@ -578,6 +580,10 @@ const appState = {
   reviewedItemId: '',
   activeOrderSessionId: '',
   lastSubmittedOrderUuid: ''
+};
+
+const staffCatalogState = {
+  activeSection: 'designs'
 };
 
 const reviewState = {
@@ -1242,7 +1248,7 @@ function showScreen(name) {
   screens.forEach((screen) => {
     screen.classList.toggle('active', screen.dataset.screen === name);
   });
-  const isStaffScreen = name === 'staff-orders' || name === 'ready-to-pack';
+  const isStaffScreen = ['staff-orders', 'ready-to-pack', 'staff-catalog'].includes(name);
   document.body.classList.toggle('is-staff-screen', isStaffScreen);
   appShell?.classList.toggle('is-staff-screen', isStaffScreen);
   appState.currentScreen = name;
@@ -1642,6 +1648,7 @@ function hasRestorableFinalReviewState() {
 
 function normalizeRestoredScreenState() {
   const completionReceipt = completionReceiptManager.getReceipt();
+  const restoredStaffScreen = ['staff-access', 'staff-orders', 'ready-to-pack', 'staff-catalog'].includes(appState.currentScreen);
   const normalizedScreen = forgeOrderSubmission.resolveRestoredScreen({
     currentScreen: appState.currentScreen,
     hasUsableActiveOrder: hasRestorableFinalReviewState(),
@@ -1661,6 +1668,11 @@ function normalizeRestoredScreenState() {
 
   if (!completionReceipt && !hasRestorableFinalReviewState() && appState.lastSubmittedOrderUuid) {
     appState.lastSubmittedOrderUuid = '';
+    stateChanged = true;
+  }
+
+  if (restoredStaffScreen && !['staff-access', 'staff-orders', 'ready-to-pack', 'staff-catalog'].includes(normalizedScreen)) {
+    appState.currentScreen = 'staff-access';
     stateChanged = true;
   }
 
@@ -2066,9 +2078,90 @@ function showUnauthenticatedStaffAccess() {
   window.setTimeout(() => staffAuthPinInput?.focus(), 0);
 }
 
+function getNormalizedStaffTargetScreen(screenName = 'staff-orders') {
+  return ['staff-orders', 'ready-to-pack', 'staff-catalog'].includes(screenName)
+    ? screenName
+    : 'staff-orders';
+}
+
+function getStaffCatalogSectionContent(sectionKey) {
+  const sections = {
+    designs: {
+      title: 'Designs',
+      message: 'The visual design library will be built in the next step.'
+    },
+    hats: {
+      title: 'Hats',
+      message: 'Hat records will be added in a later catalog milestone.'
+    },
+    materials: {
+      title: 'Materials',
+      message: 'Patch and production materials will be added in a later catalog milestone.'
+    },
+    shortlist: {
+      title: 'Shortlist',
+      message: 'Saved design and hat combinations will appear here later.'
+    }
+  };
+
+  return sections[sectionKey] || sections.designs;
+}
+
+function renderStaffCatalog() {
+  renderStaffSourceUi();
+  const activeSection = ['designs', 'hats', 'materials', 'shortlist'].includes(staffCatalogState.activeSection)
+    ? staffCatalogState.activeSection
+    : 'designs';
+  const sectionContent = getStaffCatalogSectionContent(activeSection);
+  staffCatalogState.activeSection = activeSection;
+
+  staffCatalogTabs.forEach((button) => {
+    const isActive = button.dataset.catalogSection === activeSection;
+    button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    button.setAttribute('tabindex', isActive ? '0' : '-1');
+    button.classList.toggle('staff-catalog-tab--active', isActive);
+  });
+
+  if (!staffCatalogContent) {
+    return;
+  }
+
+  staffCatalogContent.innerHTML = `
+    <section class="staff-catalog-placeholder" role="tabpanel" aria-labelledby="staff-catalog-tab-${escapeHtml(activeSection)}">
+      <p class="eyebrow staff-orders-eyebrow">Coming Next</p>
+      <h3>${escapeHtml(sectionContent.title)}</h3>
+      <p>${escapeHtml(sectionContent.message)}</p>
+    </section>
+  `;
+}
+
+function setStaffCatalogSection(sectionKey) {
+  if (!['designs', 'hats', 'materials', 'shortlist'].includes(sectionKey)) {
+    return;
+  }
+  staffCatalogState.activeSection = sectionKey;
+  renderStaffCatalog();
+}
+
+function openStaffCatalogScreen() {
+  staffCatalogState.activeSection = 'designs';
+  return openStaffAccessScreen('staff-catalog');
+}
+
+function returnToWelcomeFromStaff() {
+  staffOrdersState.notice = '';
+  staffOrdersState.enabled = false;
+  closeStaffBatchDialog({ restoreFocus: false });
+  closeStaffPackingDialog({ restoreFocus: false });
+  closeStaffTrayAssignment();
+  closeStaffOrderDetail();
+  showScreen('welcome');
+}
+
 async function openStaffAccessScreen(screenName = 'staff-orders') {
+  const targetScreen = getNormalizedStaffTargetScreen(screenName);
   staffOrdersState.enabled = true;
-  staffOrdersState.desiredScreen = screenName;
+  staffOrdersState.desiredScreen = targetScreen;
   ensureStaffOrderDetailUi();
   ensureStaffTrayAssignmentUi();
   ensureStaffBatchUi();
@@ -2079,18 +2172,24 @@ async function openStaffAccessScreen(screenName = 'staff-orders') {
   if (!isHostedStaffMode()) {
     staffOrdersState.authenticated = true;
     staffOrdersState.readOnly = false;
-    showScreen(screenName);
+    showScreen(targetScreen);
+    renderStaffCatalog();
     renderStaffOrdersQueue();
     renderReadyToPackQueue();
-    await loadStaffOrdersQueue();
+    if (targetScreen === 'staff-orders' || targetScreen === 'ready-to-pack') {
+      await loadStaffOrdersQueue();
+    }
     return;
   }
 
   if (staffOrdersState.authenticated) {
-    showScreen(screenName);
+    showScreen(targetScreen);
+    renderStaffCatalog();
     renderStaffOrdersQueue();
     renderReadyToPackQueue();
-    await loadStaffOrdersQueue();
+    if (targetScreen === 'staff-orders' || targetScreen === 'ready-to-pack') {
+      await loadStaffOrdersQueue();
+    }
     return;
   }
 
@@ -2117,10 +2216,13 @@ async function openStaffAccessScreen(screenName = 'staff-orders') {
       return;
     }
 
-    showScreen(screenName);
+    showScreen(targetScreen);
+    renderStaffCatalog();
     renderStaffOrdersQueue();
     renderReadyToPackQueue();
-    await loadStaffOrdersQueue();
+    if (targetScreen === 'staff-orders' || targetScreen === 'ready-to-pack') {
+      await loadStaffOrdersQueue();
+    }
   } catch (error) {
     console.error('Forge staff session check failed', error);
     staffOrdersState.authChecking = false;
@@ -2166,10 +2268,13 @@ async function submitStaffPin() {
     staffOrdersState.authenticated = true;
     staffOrdersState.authError = '';
     renderStaffSourceUi();
-    showScreen(staffOrdersState.desiredScreen || 'staff-orders');
+    showScreen(getNormalizedStaffTargetScreen(staffOrdersState.desiredScreen || 'staff-orders'));
+    renderStaffCatalog();
     renderStaffOrdersQueue();
     renderReadyToPackQueue();
-    await loadStaffOrdersQueue();
+    if (appState.currentScreen === 'staff-orders' || appState.currentScreen === 'ready-to-pack') {
+      await loadStaffOrdersQueue();
+    }
   } catch (error) {
     console.error('Forge staff login failed', error);
     staffAuthPinInput.value = '';
@@ -7326,11 +7431,12 @@ if (treeForm) {
   ensureStaffBatchUi();
   renderDebugOrderTools();
   renderPlaceOrderButton();
+  renderStaffCatalog();
   renderStaffOrdersQueue();
   renderReadyToPackQueue();
 
-  if (['staff-orders', 'ready-to-pack', 'staff-access'].includes(appState.currentScreen)) {
-    openStaffAccessScreen(appState.currentScreen === 'ready-to-pack' ? 'ready-to-pack' : 'staff-orders');
+  if (['staff-access', 'staff-orders', 'ready-to-pack', 'staff-catalog'].includes(appState.currentScreen)) {
+    openStaffAccessScreen(appState.currentScreen);
   } else if (appState.currentScreen === 'tree-customization') {
     showScreen('tree-customization');
   } else if (appState.currentScreen === 'tree-review') {
@@ -8175,6 +8281,12 @@ if (treeForm) {
       return;
     }
 
+    if (action === 'staff-open-catalog') {
+      staffOrdersState.notice = '';
+      openStaffCatalogScreen();
+      return;
+    }
+
     if (action === 'staff-open-ready-to-pack') {
       staffOrdersState.notice = '';
       openReadyToPackScreen();
@@ -8187,13 +8299,7 @@ if (treeForm) {
     }
 
     if (action === 'staff-return-welcome') {
-      staffOrdersState.notice = '';
-      staffOrdersState.enabled = false;
-      closeStaffBatchDialog({ restoreFocus: false });
-      closeStaffPackingDialog({ restoreFocus: false });
-      closeStaffTrayAssignment();
-      closeStaffOrderDetail();
-      showScreen('welcome');
+      returnToWelcomeFromStaff();
       return;
     }
 
@@ -8262,18 +8368,39 @@ if (treeForm) {
     }
 
     if (action === 'staff-return-welcome') {
-      staffOrdersState.notice = '';
-      staffOrdersState.enabled = false;
-      closeStaffBatchDialog({ restoreFocus: false });
-      closeStaffPackingDialog({ restoreFocus: false });
-      closeStaffTrayAssignment();
-      closeStaffOrderDetail();
-      showScreen('welcome');
+      returnToWelcomeFromStaff();
       return;
     }
 
     if (action === 'staff-view-order' && orderUuid) {
       openStaffOrderDetail(orderUuid);
+    }
+  });
+
+  document.querySelector('[data-screen="staff-catalog"]')?.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    if (!action) {
+      return;
+    }
+
+    if (action === 'staff-open-orders') {
+      openStaffOrdersScreen();
+      return;
+    }
+
+    if (action === 'staff-catalog-section') {
+      const section = event.target.closest('[data-catalog-section]')?.dataset.catalogSection || '';
+      setStaffCatalogSection(section);
+      return;
+    }
+
+    if (action === 'staff-logout') {
+      logoutStaffAccess();
+      return;
+    }
+
+    if (action === 'staff-return-welcome') {
+      returnToWelcomeFromStaff();
     }
   });
 

@@ -109,6 +109,7 @@
             </div>
             <div class="staff-orders-header-actions">
               <span class="staff-source-pill" data-staff-source-status aria-live="polite"></span>
+              <button class="secondary-button" type="button" data-action="staff-open-catalog">Hilltop Design Catalog</button>
               <button class="secondary-button" type="button" data-action="staff-open-ready-to-pack">Ready to Pack</button>
               <button class="secondary-button" type="button" data-action="staff-refresh-orders">Refresh Queue</button>
               <button class="secondary-button" type="button" data-action="staff-logout" data-staff-logout-button hidden>Logout</button>
@@ -190,6 +191,43 @@
               <p class="staff-orders-status" data-ready-to-pack-count aria-live="polite"></p>
             </div>
             <div class="staff-orders-list staff-ready-list" data-ready-to-pack-list></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="screen staff-orders-screen" data-screen="staff-catalog">
+        <div class="staff-orders-shell staff-catalog-shell">
+          <header class="staff-orders-header">
+            <div class="staff-orders-brand">
+              <img class="staff-orders-logo" src="assets/brand/forge-logo.png" alt="Forge">
+              <div>
+                <p class="eyebrow staff-orders-eyebrow">Development Only</p>
+                <h1>Hilltop Design Catalog</h1>
+                <p class="lead">Browse future catalog modules using the existing protected Forge staff workspace.</p>
+              </div>
+            </div>
+            <div class="staff-orders-header-actions">
+              <span class="staff-source-pill" data-staff-source-status aria-live="polite"></span>
+              <button class="secondary-button" type="button" data-action="staff-open-orders">Back to Staff Orders</button>
+              <button class="secondary-button" type="button" data-action="staff-logout" data-staff-logout-button hidden>Logout</button>
+              <button class="secondary-button" type="button" data-action="staff-return-welcome">Return to Welcome</button>
+            </div>
+          </header>
+
+          <section class="staff-panel-surface staff-catalog-panel">
+            <div class="staff-section-heading">
+              <div>
+                <p class="eyebrow staff-orders-eyebrow">Catalog Modules</p>
+                <h2>Hilltop Design Catalog</h2>
+              </div>
+            </div>
+            <div class="staff-catalog-tabs" role="tablist" aria-label="Catalog sections">
+              <button class="secondary-button staff-catalog-tab" id="staff-catalog-tab-designs" type="button" role="tab" data-action="staff-catalog-section" data-catalog-section="designs">Designs</button>
+              <button class="secondary-button staff-catalog-tab" id="staff-catalog-tab-hats" type="button" role="tab" data-action="staff-catalog-section" data-catalog-section="hats">Hats</button>
+              <button class="secondary-button staff-catalog-tab" id="staff-catalog-tab-materials" type="button" role="tab" data-action="staff-catalog-section" data-catalog-section="materials">Materials</button>
+              <button class="secondary-button staff-catalog-tab" id="staff-catalog-tab-shortlist" type="button" role="tab" data-action="staff-catalog-section" data-catalog-section="shortlist">Shortlist</button>
+            </div>
+            <div class="staff-catalog-content" data-staff-catalog-content></div>
           </section>
         </div>
       </section>
@@ -718,16 +756,16 @@
     </div>
   </div>
 
-  <script src="js/forge-product-catalog.js?v=20260722-19"></script>
-  <script src="js/forge-order-payload-builder.js?v=20260722-19"></script>
-  <script src="js/forge-order-payload-preview.js?v=20260722-19"></script>
-  <script src="js/forge-api-client.js?v=20260722-19"></script>
-  <script src="js/forge-order-store.js?v=20260722-19"></script>
-  <script src="js/forge-order-server-sync.js?v=20260722-19"></script>
-  <script src="js/forge-order-submission.js?v=20260722-19"></script>
-  <script src="js/forge-staff-api-client.js?v=20260722-19"></script>
-  <script src="js/forge-staff-orders-runtime.js?v=20260722-19"></script>
-  <script src="js/forge-local-orders-queue.js?v=20260722-19"></script>
-  <script src="js/app.js?v=20260722-19"></script>
+  <script src="js/forge-product-catalog.js?v=20260722-21"></script>
+  <script src="js/forge-order-payload-builder.js?v=20260722-21"></script>
+  <script src="js/forge-order-payload-preview.js?v=20260722-21"></script>
+  <script src="js/forge-api-client.js?v=20260722-21"></script>
+  <script src="js/forge-order-store.js?v=20260722-21"></script>
+  <script src="js/forge-order-server-sync.js?v=20260722-21"></script>
+  <script src="js/forge-order-submission.js?v=20260722-21"></script>
+  <script src="js/forge-staff-api-client.js?v=20260722-21"></script>
+  <script src="js/forge-staff-orders-runtime.js?v=20260722-21"></script>
+  <script src="js/forge-local-orders-queue.js?v=20260722-21"></script>
+  <script src="js/app.js?v=20260722-21"></script>
 </body>
 </html>
