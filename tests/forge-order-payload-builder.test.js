@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const childProcess = require('node:child_process');
 
 const productCatalog = require('../public/js/forge-product-catalog.js');
 const { buildForgeOrderPayload } = require('../public/js/forge-order-payload-builder.js');
@@ -98,8 +99,36 @@ test('shared runtime source is authoritative for app and builder pricing', () =>
   assert.match(appSource, /applyCatalogPricingToItems/);
   assert.match(
     indexSource,
-    /<script src="js\/forge-product-catalog\.js\?v=20260721-18"><\/script>\s*<script src="js\/forge-order-payload-builder\.js\?v=20260721-18"><\/script>\s*<script src="js\/forge-order-payload-preview\.js\?v=20260721-18"><\/script>\s*<script src="js\/forge-api-client\.js\?v=20260721-18"><\/script>\s*<script src="js\/forge-order-store\.js\?v=20260721-18"><\/script>\s*<script src="js\/forge-order-server-sync\.js\?v=20260721-18"><\/script>\s*<script src="js\/forge-order-submission\.js\?v=20260721-18"><\/script>\s*<script src="js\/forge-staff-api-client\.js\?v=20260721-18"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260721-18"><\/script>\s*<script src="js\/forge-local-orders-queue\.js\?v=20260721-18"><\/script>\s*<script src="js\/app\.js\?v=20260721-18"><\/script>/
+    /<script src="js\/forge-product-catalog\.js\?v=20260722-19"><\/script>\s*<script src="js\/forge-order-payload-builder\.js\?v=20260722-19"><\/script>\s*<script src="js\/forge-order-payload-preview\.js\?v=20260722-19"><\/script>\s*<script src="js\/forge-api-client\.js\?v=20260722-19"><\/script>\s*<script src="js\/forge-order-store\.js\?v=20260722-19"><\/script>\s*<script src="js\/forge-order-server-sync\.js\?v=20260722-19"><\/script>\s*<script src="js\/forge-order-submission\.js\?v=20260722-19"><\/script>\s*<script src="js\/forge-staff-api-client\.js\?v=20260722-19"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260722-19"><\/script>\s*<script src="js\/forge-local-orders-queue\.js\?v=20260722-19"><\/script>\s*<script src="js\/app\.js\?v=20260722-19"><\/script>/
   );
+});
+
+test('customer category screen is limited to the working ornament hero for the pilot', () => {
+  assert.match(indexSource, /welcome-ornaments-hero\.png/);
+  assert.match(indexSource, /Christmas Ornaments/);
+  assert.match(indexSource, /Personalized ornaments for families, babies, memorials, veterans, pets, and more\./);
+  assert.match(indexSource, /Browse Ornament Designs/);
+  assert.doesNotMatch(indexSource, /Ornament Pilot/);
+  assert.doesNotMatch(indexSource, /<h3>Custom Ornament<\/h3>/);
+  assert.doesNotMatch(indexSource, /<h3>Custom Sign<\/h3>/);
+  assert.doesNotMatch(indexSource, /<h3>Custom Request<\/h3>/);
+  assert.doesNotMatch(indexSource, /welcome-category-signs\.png/);
+  assert.doesNotMatch(indexSource, /welcome-category-custom\.png/);
+});
+
+test('ornament-selection screen markup remains unchanged from commit 43b5ef4', () => {
+  const committedIndexSource = childProcess.execSync('git show 43b5ef4:public/index.html', {
+    cwd: path.join(__dirname, '..'),
+    encoding: 'utf8'
+  });
+
+  const sectionPattern = /<section class="screen" data-screen="ornaments">[\s\S]*?<\/section>/;
+  const currentSection = indexSource.match(sectionPattern)?.[0] || '';
+  const committedSection = committedIndexSource.match(sectionPattern)?.[0] || '';
+
+  assert.ok(currentSection);
+  assert.ok(committedSection);
+  assert.equal(currentSection, committedSection);
 });
 
 test('submitted payloads preserve approved external payment metadata and reject unsupported values', () => {

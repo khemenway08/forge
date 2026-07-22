@@ -194,6 +194,8 @@ function createDispatchTarget({ action = '', orderUuid = '', trayNumber = '' } =
 function loadForgeAppWithoutStaffModules() {
   const env = createQueryEnvironment();
   const startButton = attachActionDataset(createElement('button'), 'start');
+  const ornamentCategoryButton = attachActionDataset(createElement('button'), 'browse-ornament-designs');
+  ornamentCategoryButton.dataset.category = 'ornaments';
   const staffButton = attachActionDataset(createElement('button'), 'staff');
   const placeOrderButton = attachActionDataset(createElement('button'), 'place-order-development');
   const paymentHandoffSubmitButton = attachActionDataset(createElement('button'), 'payment-handoff-submit');
@@ -215,6 +217,8 @@ function loadForgeAppWithoutStaffModules() {
   welcomeScreen.dataset.screen = 'welcome';
   const categoriesScreen = createElement('section');
   categoriesScreen.dataset.screen = 'categories';
+  const ornamentsScreen = createElement('section');
+  ornamentsScreen.dataset.screen = 'ornaments';
   const finalReviewScreen = createElement('section');
   finalReviewScreen.dataset.screen = 'final-review';
   const paymentHandoffScreen = createElement('section');
@@ -224,7 +228,7 @@ function loadForgeAppWithoutStaffModules() {
     button.dataset.paymentMethod = paymentMethod;
     return button;
   });
-  const allScreens = [welcomeScreen, categoriesScreen, finalReviewScreen, paymentHandoffScreen];
+  const allScreens = [welcomeScreen, categoriesScreen, ornamentsScreen, finalReviewScreen, paymentHandoffScreen];
   const appBody = createElement('body');
   const localStorageData = new Map();
   const documentListeners = new Map();
@@ -244,13 +248,14 @@ function loadForgeAppWithoutStaffModules() {
   env.registerSelector('[data-payment-handoff-summary]', paymentHandoffSummary);
   env.registerSelector('[data-payment-handoff-total]', paymentHandoffTotal);
   env.registerSelector('[data-payment-handoff-cancel-panel]', paymentHandoffCancelPanel);
+  env.registerSelector('[data-screen="ornaments"]', ornamentsScreen);
   env.registerSelector('[data-screen="final-review"]', finalReviewScreen);
   env.registerSelector('[data-screen="payment-handoff"]', paymentHandoffScreen);
   env.registerSelector('.app-shell', appShell);
 
   env.registerSelectorAll('[data-screen]', allScreens);
   env.registerSelectorAll('[data-payment-method]', paymentMethodButtons);
-  env.registerSelectorAll('[data-category]', []);
+  env.registerSelectorAll('[data-category]', [ornamentCategoryButton]);
   env.registerSelectorAll('[data-action="back-categories"]', []);
   env.registerSelectorAll('[data-action="back-ornaments"]', []);
   env.registerSelectorAll('[data-action="view-current-order-utility"]', []);
@@ -405,9 +410,11 @@ function loadForgeAppWithoutStaffModules() {
   return {
     context,
     startButton,
+    ornamentCategoryButton,
     staffButton,
     staffPanel,
     categoriesScreen,
+    ornamentsScreen,
     finalReviewScreen,
     paymentHandoffScreen,
     placeOrderButton,
@@ -1172,6 +1179,18 @@ test('localhost app bootstrap survives missing staff tray modules and keeps Star
 
   assert.doesNotThrow(() => staffButton.click());
   assert.equal(staffPanel.hidden, false);
+});
+
+test('customer category hero continues into the existing ornaments flow', () => {
+  const { context, startButton, ornamentCategoryButton, categoriesScreen, ornamentsScreen } = loadForgeAppWithoutStaffModules();
+
+  startButton.click();
+  assert.equal(categoriesScreen.classList.contains('active'), true);
+  assert.equal(vm.runInContext('appState.currentScreen', context), 'categories');
+
+  ornamentCategoryButton.click();
+  assert.equal(ornamentsScreen.classList.contains('active'), true);
+  assert.equal(vm.runInContext('appState.currentScreen', context), 'ornaments');
 });
 
 test('Review & Pay relabels the final review action and opening the payment handoff creates no submission context or completion receipt', () => {

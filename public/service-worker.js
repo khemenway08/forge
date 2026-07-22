@@ -1,5 +1,5 @@
-const BUILD_VERSION = '20260721-18';
-const CACHE_NAME = 'forge-starter-v18';
+const BUILD_VERSION = '20260722-19';
+const CACHE_NAME = 'forge-starter-v19';
 const FORGE_CACHE_PREFIX = 'forge-starter-v';
 const PRECACHE_ASSETS = [
   './',
@@ -19,9 +19,7 @@ const PRECACHE_ASSETS = [
   './manifest.webmanifest',
   './assets/brand/hilltop-logo.png',
   './assets/brand/forge-mark.png',
-  '/assets/images/categories/welcome-category-ornaments.png',
-  '/assets/images/categories/welcome-category-signs.png',
-  '/assets/images/categories/welcome-category-custom.png',
+  '/assets/images/categories/welcome-ornaments-hero.png',
   '/assets/products/family-tree-ornament-small.jpeg',
   '/assets/products/family-tree-ornament-large.jpeg',
   '/assets/products/antler-family-ornament-small.jpeg',
