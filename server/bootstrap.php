@@ -12,6 +12,9 @@ require_once __DIR__ . '/lib/staff-auth.php';
 require_once __DIR__ . '/lib/staff-order-repository.php';
 require_once __DIR__ . '/lib/staff-design-catalog-importer.php';
 require_once __DIR__ . '/lib/staff-design-catalog-repository.php';
+require_once __DIR__ . '/lib/staff-hat-catalog-importer.php';
+require_once __DIR__ . '/lib/staff-hat-catalog-repository.php';
+require_once __DIR__ . '/lib/staff-hat-catalog-metadata-backfill.php';
 
 function buildOrderHandlerFromEnvironment(?callable $unexpectedExceptionReporter = null): OrderHandler
 {
@@ -31,6 +34,12 @@ function buildStaffDesignCatalogRepositoryFromEnvironment(): PdoStaffDesignCatal
 {
     $pdo = DatabaseConnectionFactory::createFromEnvironment(loadPrivateDatabaseConfig());
     return new PdoStaffDesignCatalogRepository($pdo);
+}
+
+function buildStaffHatCatalogRepositoryFromEnvironment(): PdoStaffHatCatalogRepository
+{
+    $pdo = DatabaseConnectionFactory::createFromEnvironment(loadPrivateDatabaseConfig());
+    return new PdoStaffHatCatalogRepository($pdo);
 }
 
 function loadPrivateStaffPinHashFromEnvironment(): string

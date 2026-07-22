@@ -6,4 +6,5 @@ node_modules/
 vendor/
 server/config.php
 public/uploads/design-thumbnails/
+public/uploads/hat-photos/
 server/logs/

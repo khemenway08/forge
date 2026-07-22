@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS forge_catalog_hats (
+    id CHAR(36) NOT NULL,
+    hat_name VARCHAR(160) NOT NULL,
+    photo_path VARCHAR(255) DEFAULT NULL,
+    manufacturer VARCHAR(160) DEFAULT NULL,
+    model VARCHAR(160) DEFAULT NULL,
+    color VARCHAR(160) DEFAULT NULL,
+    vendor VARCHAR(160) DEFAULT NULL,
+    base_cost DECIMAL(10,2) DEFAULT NULL,
+    status VARCHAR(16) NOT NULL,
+    notes TEXT DEFAULT NULL,
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (id),
+    KEY idx_forge_catalog_hats_hat_name (hat_name),
+    KEY idx_forge_catalog_hats_manufacturer (manufacturer),
+    KEY idx_forge_catalog_hats_model (model),
+    KEY idx_forge_catalog_hats_status (status),
+    KEY idx_forge_catalog_hats_updated_at (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -8,11 +8,12 @@ const catalogModule = require('../public/js/forge-staff-design-catalog.js');
 const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'), 'utf8');
 const catalogApiSource = fs.readFileSync(path.join(process.cwd(), 'public/js/forge-staff-design-catalog-api.js'), 'utf8');
 const catalogModuleSource = fs.readFileSync(path.join(process.cwd(), 'public/js/forge-staff-design-catalog.js'), 'utf8');
+const catalogCssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
 
 test('catalog scripts load before app.js and only in the protected staff shell', () => {
   assert.match(
     indexSource,
-    /<script src="js\/forge-staff-api-client\.js\?v=20260722-22"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260722-22"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260722-22"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260722-22"><\/script>\s*<script src="js\/forge-local-orders-queue\.js\?v=20260722-22"><\/script>\s*<script src="js\/app\.js\?v=20260722-22"><\/script>/
+    /<script src="js\/forge-staff-api-client\.js\?v=20260722-22"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260722-22"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260722-22"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260722-22"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260722-22"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260722-22"><\/script>\s*<script src="js\/forge-local-orders-queue\.js\?v=20260722-22"><\/script>\s*<script src="js\/app\.js\?v=20260722-22"><\/script>/
   );
   assert.match(indexSource, /data-screen="staff-catalog"/);
   assert.match(indexSource, /data-staff-catalog-content/);
@@ -94,6 +95,13 @@ test('catalog thumbnail helper renders a restrained placeholder when no thumbnai
 
   assert.equal(display.type, 'placeholder');
   assert.match(display.html, /No thumbnail yet/);
+});
+
+test('design edit preview uses the shared contain-based preview frame instead of the old wide-strip crop', () => {
+  assert.match(catalogModuleSource, /staff-design-thumbnail-preview/);
+  assert.match(catalogCssSource, /\.staff-design-thumbnail-preview\s*\{[\s\S]*min-height:\s*240px;[\s\S]*max-height:\s*320px;[\s\S]*aspect-ratio:\s*4\s*\/\s*3;/);
+  assert.match(catalogCssSource, /\.staff-design-thumbnail-preview img\s*\{[\s\S]*object-fit:\s*contain;[\s\S]*object-position:\s*center;/);
+  assert.doesNotMatch(catalogCssSource, /\.staff-design-thumbnail-preview img\s*\{[\s\S]*object-fit:\s*cover;/);
 });
 
 test('catalog client and module do not introduce local browser persistence for catalog records', () => {
@@ -193,6 +201,7 @@ test('authenticated catalog render loads protected design records immediately', 
 
   assert.equal(calls.length, 1);
   assert.match(container.innerHTML, /Patriot Badge Shield/);
+  assert.match(container.innerHTML, /Add Design/);
 });
 
 test('failed catalog authentication keeps a safe authentication-required state until access is granted', async () => {
@@ -264,9 +273,9 @@ test('catalog api and network failures remain safe and retryable', async () => {
   assert.match(container.innerHTML, /data-action="catalog-retry-load"/);
 });
 
-test('hats, materials, and shortlist remain placeholders in app integration', () => {
+test('materials and shortlist remain placeholders in app integration while hats are activated separately', () => {
   const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
-  assert.match(appSource, /Hat records will be added in a later catalog milestone\./);
+  assert.match(appSource, /The shared hat library is currently unavailable on this device\./);
   assert.match(appSource, /Patch and production materials will be added in a later catalog milestone\./);
   assert.match(appSource, /Saved design and hat combinations will appear here later\./);
 });

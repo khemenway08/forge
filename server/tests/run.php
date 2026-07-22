@@ -1470,6 +1470,338 @@ $runner->run('catalog list endpoint source requires staff authentication and doe
     assertTrue(strpos($repositorySource, 'forge_tray_assignment_history') === false);
 });
 
+$runner->run('hat catalog migration creates the isolated forge_catalog_hats table', static function (): void {
+    $migrationSource = file_get_contents(dirname(__DIR__, 2) . '/server/migrations/005_create_forge_catalog_hats.sql');
+
+    assertTrue(is_string($migrationSource));
+    assertTrue(strpos($migrationSource, 'CREATE TABLE IF NOT EXISTS forge_catalog_hats') !== false);
+    assertTrue(strpos($migrationSource, 'base_cost DECIMAL(10,2) DEFAULT NULL') !== false);
+    assertTrue(strpos($migrationSource, 'status VARCHAR(16) NOT NULL') !== false);
+});
+
+$runner->run('hat catalog validation accepts approved optional fields and blank base cost remains null', static function (): void {
+    $normalized = \Forge\Server\validateAndNormalizeStaffCatalogHatInput([
+        'hat_name' => '  Richardson 112 Navy White  ',
+        'manufacturer' => ' Richardson ',
+        'model' => ' 112 ',
+        'color' => ' Navy / White ',
+        'vendor' => ' Hilltop Vendor ',
+        'base_cost' => ' ',
+        'status' => 'review',
+        'notes' => '  Local favorite  ',
+    ]);
+
+    assertSame('Richardson 112 Navy White', $normalized['hat_name']);
+    assertSame('Richardson', $normalized['manufacturer']);
+    assertSame('112', $normalized['model']);
+    assertSame('Navy / White', $normalized['color']);
+    assertSame('Hilltop Vendor', $normalized['vendor']);
+    assertSame(null, $normalized['base_cost']);
+    assertSame('review', $normalized['status']);
+    assertSame('Local favorite', $normalized['notes']);
+});
+
+$runner->run('hat catalog validation rejects missing names invalid statuses and invalid base cost safely', static function (): void {
+    assertThrows(
+        static function (): void {
+            \Forge\Server\validateAndNormalizeStaffCatalogHatInput([
+                'hat_name' => ' ',
+                'status' => 'archived',
+                'base_cost' => '-1.00',
+            ]);
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof \Forge\Server\StaffHatCatalogValidationException);
+            assertSame('Hat name is required.', $exception->getFieldErrors()['hat_name'] ?? null);
+            assertSame('Select a valid status.', $exception->getFieldErrors()['status'] ?? null);
+            assertSame('Base cost must be a nonnegative amount with up to two decimals.', $exception->getFieldErrors()['base_cost'] ?? null);
+        }
+    );
+});
+
+$runner->run('hat catalog importer derives readable hat names and excludes hidden or unsupported files', static function (): void {
+    assertSame('Richardson 112 Navy White Front High', \Forge\Server\deriveStaffCatalogHatNameFromFileName('Richardson_112_Navy-_White_Front_High.jpg'));
+    assertSame('Blackhawk R Zapped Headwear 5 Panel Patriotic Side', \Forge\Server\deriveStaffCatalogHatNameFromFileName('Blackhawk_R_Zapped_Headwear_5_Panel__patriotic_Side.png'));
+    assertTrue(\Forge\Server\isSupportedStaffCatalogHatImportFile('Richardson_112_Navy-_White_Front_High.jpg'));
+    assertTrue(\Forge\Server\isSupportedStaffCatalogHatImportFile('whiteoldschoolfrontside.png'));
+    assertTrue(!\Forge\Server\isSupportedStaffCatalogHatImportFile('.DS_Store'));
+    assertTrue(!\Forge\Server\isSupportedStaffCatalogHatImportFile('notes.ai'));
+});
+
+$runner->run('hat catalog importer dry-run makes no database or filesystem changes', static function (): void {
+    $sourceDirectory = createTempImportDirectory();
+    $uploadDirectory = createTempImportDirectory();
+
+    try {
+        file_put_contents($sourceDirectory . '/Richardson_112_Navy-_White_Front_High.jpg', 'hat-preview');
+        $repository = new class implements \Forge\Server\StaffHatCatalogImportRepositoryInterface {
+            public int $createdCount = 0;
+            public function listHats(): array
+            {
+                return [];
+            }
+            public function createImportedHat(array $input, string $photoPath): array
+            {
+                $this->createdCount++;
+                return [];
+            }
+        };
+
+        $importer = new \Forge\Server\StaffHatCatalogImporter($repository, $uploadDirectory);
+        $summary = $importer->importDirectory($sourceDirectory, true);
+
+        assertSame(1, $summary['imported']);
+        assertSame(0, $repository->createdCount);
+        assertSame([], array_values(array_diff(scandir($uploadDirectory) ?: [], ['.', '..'])));
+    } finally {
+        removeTempImportDirectory($sourceDirectory);
+        removeTempImportDirectory($uploadDirectory);
+    }
+});
+
+$runner->run('hat catalog importer rerun is idempotent when the hat already exists with a managed photo', static function (): void {
+    $sourceDirectory = createTempImportDirectory();
+    $uploadDirectory = createTempImportDirectory();
+
+    try {
+        file_put_contents($sourceDirectory . '/Richardson_112_Navy-_White_Front_High.jpg', 'same-hat-photo');
+        $repository = new class implements \Forge\Server\StaffHatCatalogImportRepositoryInterface {
+            public int $createdCount = 0;
+            public function listHats(): array
+            {
+                return [[
+                    'id' => '123e4567-e89b-42d3-a456-426614174889',
+                    'hat_name' => 'Richardson 112 Navy White Front High',
+                    'photo_path' => '/uploads/hat-photos/hat-existing.png',
+                ]];
+            }
+            public function createImportedHat(array $input, string $photoPath): array
+            {
+                $this->createdCount++;
+                return [];
+            }
+        };
+
+        $importer = new \Forge\Server\StaffHatCatalogImporter($repository, $uploadDirectory);
+        $summary = $importer->importDirectory($sourceDirectory, false);
+
+        assertSame(0, $summary['imported']);
+        assertSame(1, $summary['skipped']);
+        assertSame('already_imported', $summary['skipped_records'][0]['reason']);
+        assertSame(0, $repository->createdCount);
+    } finally {
+        removeTempImportDirectory($sourceDirectory);
+        removeTempImportDirectory($uploadDirectory);
+    }
+});
+
+$runner->run('hat catalog importer reports duplicate-name collisions and partial failures safely', static function (): void {
+    $sourceDirectory = createTempImportDirectory();
+    $uploadDirectory = createTempImportDirectory();
+
+    try {
+        file_put_contents($sourceDirectory . '/Osprey R+ black red front side photo.png', 'osprey-one');
+        file_put_contents($sourceDirectory . '/whiteoldschoolfrontside.png', 'white-old-school');
+        $repository = new class implements \Forge\Server\StaffHatCatalogImportRepositoryInterface {
+            public function listHats(): array
+            {
+                return [[
+                    'id' => '123e4567-e89b-42d3-a456-426614174888',
+                    'hat_name' => 'Osprey R+ Black Red Front Side Photo',
+                    'photo_path' => null,
+                ]];
+            }
+            public function createImportedHat(array $input, string $photoPath): array
+            {
+                if (($input['hat_name'] ?? '') === 'Whiteoldschoolfrontside') {
+                    throw new RuntimeException('Synthetic repository failure.');
+                }
+                return [];
+            }
+        };
+
+        $importer = new \Forge\Server\StaffHatCatalogImporter($repository, $uploadDirectory);
+        $summary = $importer->importDirectory($sourceDirectory, false);
+
+        assertSame(0, $summary['imported']);
+        assertSame(1, $summary['collisions']);
+        assertSame('existing_hat_name_conflict', $summary['collision_records'][0]['reason']);
+        assertSame(1, $summary['failed']);
+        assertSame('import_failed', $summary['failed_records'][0]['reason']);
+    } finally {
+        removeTempImportDirectory($sourceDirectory);
+        removeTempImportDirectory($uploadDirectory);
+    }
+});
+
+$runner->run('hat metadata backfill parses clear manufacturer model and compound colors from source filenames', static function (): void {
+    $richardson = \Forge\Server\proposeStaffCatalogHatMetadataFromFileName('Richardson_356_Cream-_Wheat_Front_High.jpg');
+    $blackhawk = \Forge\Server\proposeStaffCatalogHatMetadataFromFileName('Blackhawk_R_Zapped_Headwear_5_Panel__graphite-grey_Chainlink_Side (1).png');
+
+    assertSame('Richardson', $richardson['manufacturer']);
+    assertSame('356', $richardson['model']);
+    assertSame('Cream / Wheat', $richardson['color']);
+    assertSame('high', $richardson['confidence']);
+    assertSame([], $richardson['review_reasons']);
+
+    assertSame('Zapped Headwear', $blackhawk['manufacturer']);
+    assertSame('Blackhawk R 5 Panel', $blackhawk['model']);
+    assertSame('Graphite Grey / Chainlink', $blackhawk['color']);
+    assertSame('high', $blackhawk['confidence']);
+    assertSame([], $blackhawk['review_reasons']);
+});
+
+$runner->run('hat metadata color parsing removes photo-description words and preserves compound color display names', static function (): void {
+    $navyRope = \Forge\Server\parseStaffCatalogHatColorProposal('navy_whiterope_front_side_photo');
+    $heatherGrey = \Forge\Server\parseStaffCatalogHatColorProposal('Black-_White-_Heather_Grey_Front_High');
+
+    assertSame('Navy / White Rope', $navyRope['color']);
+    assertSame([], $navyRope['review_reasons']);
+    assertSame('Black / White / Heather Grey', $heatherGrey['color']);
+    assertSame([], $heatherGrey['review_reasons']);
+});
+
+$runner->run('hat metadata backfill flags ambiguous filenames for manual review instead of guessing', static function (): void {
+    $osprey = \Forge\Server\proposeStaffCatalogHatMetadataFromFileName('Osprey R+ black red front side photo.png');
+    $cmb = \Forge\Server\proposeStaffCatalogHatMetadataFromFileName('Richardson_112_White-_Red_CMB_Front_High.jpg');
+    $oldSchool = \Forge\Server\proposeStaffCatalogHatMetadataFromFileName('whiteoldschoolfrontside.png');
+
+    assertSame('review', $osprey['confidence']);
+    assertSame(null, $osprey['manufacturer']);
+    assertSame('Osprey R+', $osprey['model']);
+    assertSame('Black / Red', $osprey['color']);
+    assertTrue(count($osprey['review_reasons']) > 0);
+
+    assertSame('review', $cmb['confidence']);
+    assertSame('Richardson', $cmb['manufacturer']);
+    assertSame('112', $cmb['model']);
+    assertSame(null, $cmb['color']);
+    assertTrue(strpos($cmb['review_reasons'][0] ?? '', 'CMB') !== false);
+
+    assertSame('review', $oldSchool['confidence']);
+    assertSame(null, $oldSchool['manufacturer']);
+    assertSame(null, $oldSchool['model']);
+    assertSame(null, $oldSchool['color']);
+});
+
+$runner->run('hat metadata backfill dry-run makes no repository writes and preserves existing metadata while proposing blank-field updates', static function (): void {
+    $sourceDirectory = createTempImportDirectory();
+
+    try {
+        file_put_contents($sourceDirectory . '/Richardson_112_Navy-_White_Front_High.jpg', 'hat-preview');
+        $repository = new class {
+            public int $updates = 0;
+            public function listHats(): array
+            {
+                return [[
+                    'id' => '123e4567-e89b-42d3-a456-426614174100',
+                    'hat_name' => 'Richardson 112 Navy White Front High',
+                    'manufacturer' => 'Already Set',
+                    'model' => null,
+                    'color' => null,
+                    'vendor' => null,
+                    'base_cost' => null,
+                    'status' => 'review',
+                    'notes' => null,
+                ]];
+            }
+            public function updateHat(string $id, array $input): array
+            {
+                $this->updates++;
+                return $input;
+            }
+        };
+
+        $backfill = new \Forge\Server\StaffHatCatalogMetadataBackfill($repository);
+        $summary = $backfill->backfillDirectory($sourceDirectory, true);
+
+        assertSame(0, $repository->updates);
+        assertSame(1, $summary['updated']);
+        assertSame(0, $summary['ambiguous']);
+        assertSame(1, $summary['skipped_populated_fields']);
+        assertSame('Already Set', $summary['updated_records'][0]['current_manufacturer']);
+        assertSame('112', $summary['updated_records'][0]['proposed_model']);
+        assertSame('Navy / White', $summary['updated_records'][0]['proposed_color']);
+    } finally {
+        removeTempImportDirectory($sourceDirectory);
+    }
+});
+
+$runner->run('hat metadata backfill applies only high-confidence blank-field updates and is safe to rerun', static function (): void {
+    $sourceDirectory = createTempImportDirectory();
+
+    try {
+        file_put_contents($sourceDirectory . '/Richardson_220_Stone_Front_High.jpg', 'hat-preview');
+        $repository = new class {
+            /** @var array<int, array<string, mixed>> */
+            public array $records = [[
+                'id' => '123e4567-e89b-42d3-a456-426614174101',
+                'hat_name' => 'Richardson 220 Stone Front High',
+                'manufacturer' => null,
+                'model' => null,
+                'color' => null,
+                'vendor' => null,
+                'base_cost' => null,
+                'status' => 'review',
+                'notes' => null,
+            ]];
+            public int $updates = 0;
+            public function listHats(): array
+            {
+                return $this->records;
+            }
+            public function updateHat(string $id, array $input): array
+            {
+                $this->updates++;
+                $this->records[0] = array_merge($this->records[0], $input);
+                return $this->records[0];
+            }
+        };
+
+        $backfill = new \Forge\Server\StaffHatCatalogMetadataBackfill($repository);
+        $firstPass = $backfill->backfillDirectory($sourceDirectory, false);
+        $secondPass = $backfill->backfillDirectory($sourceDirectory, false);
+
+        assertSame(1, $firstPass['updated']);
+        assertSame(1, $repository->updates);
+        assertSame('Richardson', $repository->records[0]['manufacturer']);
+        assertSame('220', $repository->records[0]['model']);
+        assertSame('Stone', $repository->records[0]['color']);
+
+        assertSame(0, $secondPass['updated']);
+        assertSame(1, $secondPass['unchanged']);
+        assertSame(3, $secondPass['skipped_populated_fields']);
+        assertSame(1, $repository->updates);
+    } finally {
+        removeTempImportDirectory($sourceDirectory);
+    }
+});
+
+$runner->run('hat catalog endpoints require staff authentication and enforce approved image upload constraints', static function (): void {
+    $listEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/hats.php');
+    $singleEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/hat.php');
+    $photoEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/hat-photo.php');
+    $sharedEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/_shared.php');
+    $repositorySource = file_get_contents(dirname(__DIR__) . '/lib/staff-hat-catalog-repository.php');
+
+    assertTrue(is_string($listEndpointSource));
+    assertTrue(is_string($singleEndpointSource));
+    assertTrue(is_string($photoEndpointSource));
+    assertTrue(is_string($sharedEndpointSource));
+    assertTrue(is_string($repositorySource));
+    assertTrue(strpos($listEndpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($singleEndpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($photoEndpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($photoEndpointSource, 'FILEINFO_MIME_TYPE') !== false);
+    assertTrue(strpos($photoEndpointSource, "'image/png'") !== false);
+    assertTrue(strpos($photoEndpointSource, "'image/jpeg'") !== false);
+    assertTrue(strpos($photoEndpointSource, "'image/webp'") !== false);
+    assertTrue(strpos($photoEndpointSource, 'FORGE_HAT_CATALOG_MAX_UPLOAD_BYTES = 5242880') !== false);
+    assertTrue(strpos($sharedEndpointSource, 'function forge_hat_catalog_resolve_absolute_photo_path(?string $photoPath): ?string') !== false);
+    assertTrue(strpos($repositorySource, 'forge_catalog_hats') !== false);
+    assertTrue(strpos($repositorySource, 'forge_orders') === false);
+});
+
 $runner->run('invalid stored staff order payload fails safely', static function (): void {
     assertThrows(
         static function (): void {

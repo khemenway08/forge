@@ -91,6 +91,8 @@ const forgeOrderSubmission = globalThis.ForgeOrderSubmission;
 const forgeStaffApiClient = globalThis.ForgeStaffApiClient;
 const forgeStaffDesignCatalogApi = globalThis.ForgeStaffDesignCatalogApi;
 const forgeStaffDesignCatalog = globalThis.ForgeStaffDesignCatalog;
+const forgeStaffHatCatalogApi = globalThis.ForgeStaffHatCatalogApi;
+const forgeStaffHatCatalog = globalThis.ForgeStaffHatCatalog;
 const forgeStaffOrdersRuntime = globalThis.ForgeStaffOrdersRuntime;
 const forgeLocalOrdersQueue = globalThis.ForgeLocalOrdersQueue;
 const storageKey = 'forge-tree-ornament-draft';
@@ -667,6 +669,8 @@ const orderSyncApiClient = forgeApiClient.createForgeApiClient();
 const staffApiClient = createOptionalStaffApiClient();
 const staffDesignCatalogApiClient = createOptionalStaffDesignCatalogApiClient();
 const staffDesignCatalogModule = createOptionalStaffDesignCatalogModule(staffDesignCatalogApiClient);
+const staffHatCatalogApiClient = createOptionalStaffHatCatalogApiClient();
+const staffHatCatalogModule = createOptionalStaffHatCatalogModule(staffHatCatalogApiClient);
 const staffRuntime = createSafeStaffRuntime(orderStore, staffApiClient);
 const orderSyncService = forgeOrderServerSync.createOrderServerSyncService({
   orderStore,
@@ -748,6 +752,43 @@ function createOptionalStaffDesignCatalogModule(apiClient) {
     });
   } catch (error) {
     console.error('Forge staff design catalog module bootstrap failed', error);
+    return null;
+  }
+}
+
+function createOptionalStaffHatCatalogApiClient() {
+  if (!forgeStaffHatCatalogApi || typeof forgeStaffHatCatalogApi.createForgeStaffHatCatalogApiClient !== 'function') {
+    console.error('Forge staff hat catalog API bootstrap skipped because ForgeStaffHatCatalogApi was unavailable.');
+    return null;
+  }
+
+  try {
+    return forgeStaffHatCatalogApi.createForgeStaffHatCatalogApiClient();
+  } catch (error) {
+    console.error('Forge staff hat catalog API bootstrap failed', error);
+    return null;
+  }
+}
+
+function createOptionalStaffHatCatalogModule(apiClient) {
+  if (!forgeStaffHatCatalog || typeof forgeStaffHatCatalog.createStaffHatCatalogModule !== 'function') {
+    console.error('Forge staff hat catalog module bootstrap skipped because ForgeStaffHatCatalog was unavailable.');
+    return null;
+  }
+
+  try {
+    return forgeStaffHatCatalog.createStaffHatCatalogModule({
+      apiClient,
+      document,
+      window,
+      canLoadProtectedRecords() {
+        return staffOrdersState.authenticated === true
+          && staffOrdersState.dataSource === 'server'
+          && appState.currentScreen === 'staff-catalog';
+      }
+    });
+  } catch (error) {
+    console.error('Forge staff hat catalog module bootstrap failed', error);
     return null;
   }
 }
@@ -2136,7 +2177,7 @@ function getStaffCatalogSectionContent(sectionKey) {
     },
     hats: {
       title: 'Hats',
-      message: 'Hat records will be added in a later catalog milestone.'
+      message: 'The shared hat library is currently unavailable on this device.'
     },
     materials: {
       title: 'Materials',
@@ -2186,6 +2227,22 @@ function renderStaffCatalog() {
     return;
   }
 
+  if (activeSection === 'hats') {
+    if (staffHatCatalogModule && typeof staffHatCatalogModule.render === 'function') {
+      staffHatCatalogModule.render(staffCatalogContent);
+      return;
+    }
+
+    staffCatalogContent.innerHTML = `
+      <section class="staff-catalog-placeholder" role="tabpanel" aria-labelledby="staff-catalog-tab-hats">
+        <p class="eyebrow staff-orders-eyebrow">Unavailable</p>
+        <h3>Hats</h3>
+        <p>The shared hat library is currently unavailable on this device.</p>
+      </section>
+    `;
+    return;
+  }
+
   staffCatalogContent.innerHTML = `
     <section class="staff-catalog-placeholder" role="tabpanel" aria-labelledby="staff-catalog-tab-${escapeHtml(activeSection)}">
       <p class="eyebrow staff-orders-eyebrow">Coming Next</p>
@@ -2202,6 +2259,9 @@ function setStaffCatalogSection(sectionKey) {
   if (sectionKey !== 'designs' && staffDesignCatalogModule && typeof staffDesignCatalogModule.closeDialog === 'function') {
     staffDesignCatalogModule.closeDialog();
   }
+  if (sectionKey !== 'hats' && staffHatCatalogModule && typeof staffHatCatalogModule.closeDialog === 'function') {
+    staffHatCatalogModule.closeDialog();
+  }
   staffCatalogState.activeSection = sectionKey;
   renderStaffCatalog();
 }
@@ -2216,6 +2276,9 @@ function returnToWelcomeFromStaff() {
   staffOrdersState.enabled = false;
   if (staffDesignCatalogModule && typeof staffDesignCatalogModule.closeDialog === 'function') {
     staffDesignCatalogModule.closeDialog();
+  }
+  if (staffHatCatalogModule && typeof staffHatCatalogModule.closeDialog === 'function') {
+    staffHatCatalogModule.closeDialog();
   }
   closeStaffBatchDialog({ restoreFocus: false });
   closeStaffPackingDialog({ restoreFocus: false });
