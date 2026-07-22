@@ -10,6 +10,7 @@ require_once __DIR__ . '/lib/database.php';
 require_once __DIR__ . '/lib/order-repository.php';
 require_once __DIR__ . '/lib/staff-auth.php';
 require_once __DIR__ . '/lib/staff-order-repository.php';
+require_once __DIR__ . '/lib/staff-design-catalog-importer.php';
 require_once __DIR__ . '/lib/staff-design-catalog-repository.php';
 
 function buildOrderHandlerFromEnvironment(?callable $unexpectedExceptionReporter = null): OrderHandler

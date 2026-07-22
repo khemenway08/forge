@@ -1247,6 +1247,195 @@ $runner->run('catalog design validation rejects invalid enum values safely', sta
     );
 });
 
+$runner->run('catalog importer derives readable design names from filenames', static function (): void {
+    assertSame(
+        'Texas Landscape Patch V2',
+        \Forge\Server\deriveStaffCatalogDesignNameFromFileName('TEXAS LANDSCAPE_PATCH_V2.png')
+    );
+    assertSame(
+        'Hilltop Ridgeline Acrylic',
+        \Forge\Server\deriveStaffCatalogDesignNameFromFileName('hilltop_Ridgeline_Acrylic.jpg')
+    );
+    assertSame(
+        'Don’t Mess With Texas Snake',
+        \Forge\Server\deriveStaffCatalogDesignNameFromFileName('Don’t Mess with Texas Snake.jpg')
+    );
+});
+
+$runner->run('catalog importer recognizes supported images and excludes hidden or unsupported files', static function (): void {
+    assertSame(true, \Forge\Server\isSupportedStaffCatalogPreviewImageFile('preview.png'));
+    assertSame(true, \Forge\Server\isSupportedStaffCatalogPreviewImageFile('preview.jpeg'));
+    assertSame(true, \Forge\Server\isSupportedStaffCatalogPreviewImageFile('preview.webp'));
+    assertSame(false, \Forge\Server\isSupportedStaffCatalogPreviewImageFile('.DS_Store'));
+    assertSame(false, \Forge\Server\isSupportedStaffCatalogPreviewImageFile('DESIGN PREVIEW_TEMPLATE.ai'));
+    assertSame(true, \Forge\Server\shouldSkipStaffCatalogImportFile('.hidden-file'));
+    assertSame(true, \Forge\Server\shouldSkipStaffCatalogImportFile('~tempfile.png'));
+});
+
+$runner->run('catalog importer generates deterministic managed thumbnail filenames safely', static function (): void {
+    $file = createTempImportPreviewFile('deterministic-source.png', 'preview-a');
+
+    try {
+        $fileNameOne = \Forge\Server\buildStaffCatalogManagedThumbnailFileName($file);
+        $fileNameTwo = \Forge\Server\buildStaffCatalogManagedThumbnailFileName($file);
+
+        assertSame($fileNameOne, $fileNameTwo);
+        assertTrue(str_starts_with($fileNameOne, 'design-'));
+        assertTrue(str_ends_with($fileNameOne, '.png'));
+        assertSame('/uploads/design-thumbnails/' . $fileNameOne, \Forge\Server\buildStaffCatalogManagedThumbnailRelativePath($fileNameOne));
+    } finally {
+        @unlink($file);
+    }
+});
+
+$runner->run('catalog importer dry-run makes no database or filesystem changes', static function (): void {
+    $sourceDirectory = createTempImportDirectory();
+    $uploadDirectory = createTempImportDirectory();
+
+    try {
+        file_put_contents($sourceDirectory . '/TEXAS LANDSCAPE_PATCH_V2.png', 'dry-run-preview');
+        $repository = new class implements \Forge\Server\StaffDesignCatalogImportRepositoryInterface {
+            public int $createdCount = 0;
+            public function listDesigns(): array
+            {
+                return [];
+            }
+            public function createImportedDesign(array $input, string $thumbnailPath): array
+            {
+                $this->createdCount++;
+                return [];
+            }
+        };
+
+        $importer = new \Forge\Server\StaffDesignCatalogImporter($repository, $uploadDirectory);
+        $summary = $importer->importDirectory($sourceDirectory, true);
+
+        assertSame(1, $summary['imported']);
+        assertSame(0, $repository->createdCount);
+        assertSame([], array_values(array_diff(scandir($uploadDirectory) ?: [], ['.', '..'])));
+    } finally {
+        removeTempImportDirectory($sourceDirectory);
+        removeTempImportDirectory($uploadDirectory);
+    }
+});
+
+$runner->run('catalog importer rerun is idempotent when the design and managed thumbnail already exist', static function (): void {
+    $sourceDirectory = createTempImportDirectory();
+    $uploadDirectory = createTempImportDirectory();
+
+    try {
+        $sourceFile = $sourceDirectory . '/Texas Raised Hill Country Tough.jpg';
+        file_put_contents($sourceFile, 'same-preview-file');
+        $fileName = \Forge\Server\buildStaffCatalogManagedThumbnailFileName($sourceFile);
+        $relativePath = \Forge\Server\buildStaffCatalogManagedThumbnailRelativePath($fileName);
+        file_put_contents($uploadDirectory . '/' . $fileName, 'same-preview-file');
+
+        $repository = new class($relativePath) implements \Forge\Server\StaffDesignCatalogImportRepositoryInterface {
+            private string $relativePath;
+            public int $createdCount = 0;
+            public function __construct(string $relativePath)
+            {
+                $this->relativePath = $relativePath;
+            }
+            public function listDesigns(): array
+            {
+                return [[
+                    'id' => '123e4567-e89b-42d3-a456-426614174999',
+                    'design_name' => 'Texas Raised Hill Country Tough',
+                    'thumbnail_path' => $this->relativePath,
+                ]];
+            }
+            public function createImportedDesign(array $input, string $thumbnailPath): array
+            {
+                $this->createdCount++;
+                return [];
+            }
+        };
+
+        $importer = new \Forge\Server\StaffDesignCatalogImporter($repository, $uploadDirectory);
+        $summary = $importer->importDirectory($sourceDirectory, false);
+
+        assertSame(0, $summary['imported']);
+        assertSame(1, $summary['skipped']);
+        assertSame('already_imported', $summary['skipped_records'][0]['reason']);
+        assertSame(0, $repository->createdCount);
+    } finally {
+        removeTempImportDirectory($sourceDirectory);
+        removeTempImportDirectory($uploadDirectory);
+    }
+});
+
+$runner->run('catalog importer reports duplicate-name collisions instead of importing', static function (): void {
+    $sourceDirectory = createTempImportDirectory();
+    $uploadDirectory = createTempImportDirectory();
+
+    try {
+        file_put_contents($sourceDirectory . '/Texas Team First.jpg', 'preview-team-first');
+        $repository = new class implements \Forge\Server\StaffDesignCatalogImportRepositoryInterface {
+            public function listDesigns(): array
+            {
+                return [[
+                    'id' => '123e4567-e89b-42d3-a456-426614174998',
+                    'design_name' => 'Texas Team First',
+                    'thumbnail_path' => '/uploads/design-thumbnails/other-file.jpg',
+                ]];
+            }
+            public function createImportedDesign(array $input, string $thumbnailPath): array
+            {
+                throw new RuntimeException('Should not create during collision handling.');
+            }
+        };
+
+        $importer = new \Forge\Server\StaffDesignCatalogImporter($repository, $uploadDirectory);
+        $summary = $importer->importDirectory($sourceDirectory, false);
+
+        assertSame(0, $summary['imported']);
+        assertSame(1, $summary['collisions']);
+        assertSame('existing_design_name_conflict', $summary['collision_records'][0]['reason']);
+    } finally {
+        removeTempImportDirectory($sourceDirectory);
+        removeTempImportDirectory($uploadDirectory);
+    }
+});
+
+$runner->run('catalog importer continues after a partial failure and reports the error safely', static function (): void {
+    $sourceDirectory = createTempImportDirectory();
+    $uploadDirectory = createTempImportDirectory();
+
+    try {
+        file_put_contents($sourceDirectory . '/Texas Team First.jpg', 'ok-preview');
+        file_put_contents($sourceDirectory . '/Texas Overwatch.jpg', 'fail-preview');
+        $repository = new class implements \Forge\Server\StaffDesignCatalogImportRepositoryInterface {
+            public function listDesigns(): array
+            {
+                return [];
+            }
+            public function createImportedDesign(array $input, string $thumbnailPath): array
+            {
+                if (($input['design_name'] ?? '') === 'Texas Overwatch') {
+                    throw new RuntimeException('Synthetic repository failure.');
+                }
+                return [
+                    'id' => '123e4567-e89b-42d3-a456-426614174997',
+                    'design_name' => $input['design_name'],
+                    'thumbnail_path' => $thumbnailPath,
+                ];
+            }
+        };
+
+        $importer = new \Forge\Server\StaffDesignCatalogImporter($repository, $uploadDirectory);
+        $summary = $importer->importDirectory($sourceDirectory, false);
+
+        assertSame(1, $summary['imported']);
+        assertSame(1, $summary['failed']);
+        assertSame('import_failed', $summary['failed_records'][0]['reason']);
+        assertSame('Texas Overwatch', $summary['failed_records'][0]['design_name']);
+    } finally {
+        removeTempImportDirectory($sourceDirectory);
+        removeTempImportDirectory($uploadDirectory);
+    }
+});
+
 $runner->run('catalog thumbnail endpoint source enforces authenticated png jpeg webp uploads with a 5mb limit', static function (): void {
     $endpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/design-thumbnail.php');
 
@@ -1301,5 +1490,52 @@ $runner->run('invalid stored staff order payload fails safely', static function 
         }
     );
 });
+
+function createTempImportDirectory(): string
+{
+    $baseDirectory = sys_get_temp_dir() . '/forge-catalog-import-' . bin2hex(random_bytes(6));
+    if (!mkdir($baseDirectory, 0777, true) && !is_dir($baseDirectory)) {
+        throw new RuntimeException('Temporary import directory could not be created.');
+    }
+
+    return $baseDirectory;
+}
+
+function createTempImportPreviewFile(string $fileName, string $contents): string
+{
+    $directory = createTempImportDirectory();
+    $filePath = $directory . '/' . $fileName;
+    file_put_contents($filePath, $contents);
+    return $filePath;
+}
+
+function removeTempImportDirectory(string $directory): void
+{
+    if (!is_dir($directory)) {
+        return;
+    }
+
+    $entries = scandir($directory);
+    if (!is_array($entries)) {
+        @rmdir($directory);
+        return;
+    }
+
+    foreach ($entries as $entry) {
+        if ($entry === '.' || $entry === '..') {
+            continue;
+        }
+
+        $path = $directory . '/' . $entry;
+        if (is_dir($path)) {
+            removeTempImportDirectory($path);
+            continue;
+        }
+
+        @unlink($path);
+    }
+
+    @rmdir($directory);
+}
 
 $runner->finish();

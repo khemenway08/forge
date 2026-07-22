@@ -33,7 +33,7 @@ final class StaffDesignCatalogValidationException extends \RuntimeException
     }
 }
 
-final class PdoStaffDesignCatalogRepository
+final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportRepositoryInterface
 {
     public const CATEGORY_OPTIONS = [
         'boutique_womens',
@@ -209,6 +209,73 @@ final class PdoStaffDesignCatalogRepository
                 ':id' => $id,
                 ':design_name' => $normalized['design_name'],
                 ':thumbnail_path' => $normalized['thumbnail_path'],
+                ':category' => $normalized['category'],
+                ':store_fit' => $normalized['store_fit'],
+                ':status' => $normalized['status'],
+                ':production_method' => $normalized['production_method'],
+                ':production_file_location' => $normalized['production_file_location'],
+                ':made_on_hat' => $normalized['made_on_hat'],
+                ':notes' => $normalized['notes'],
+                ':created_at' => $timestamp,
+                ':updated_at' => $timestamp,
+            ]);
+        } catch (PDOException $exception) {
+            throw new StorageUnavailableException('Design catalog storage is currently unavailable.', 0, $exception);
+        }
+
+        $created = $this->getDesign($id);
+        if ($created === null) {
+            throw new StorageUnavailableException('Design catalog storage is currently unavailable.');
+        }
+
+        return $created;
+    }
+
+    /**
+     * @param array<string, mixed> $input
+     * @return array<string, mixed>
+     */
+    public function createImportedDesign(array $input, string $thumbnailPath): array
+    {
+        $normalized = validateAndNormalizeStaffCatalogDesignInput($input);
+        $normalizedThumbnailPath = normalizeStaffCatalogThumbnailPath($thumbnailPath);
+        $id = createStaffCatalogDesignUuid();
+        $timestamp = gmdate('Y-m-d H:i:s.u');
+
+        try {
+            $statement = $this->pdo->prepare(
+                'INSERT INTO forge_catalog_designs (
+                    id,
+                    design_name,
+                    thumbnail_path,
+                    category,
+                    store_fit,
+                    status,
+                    production_method,
+                    production_file_location,
+                    made_on_hat,
+                    notes,
+                    created_at,
+                    updated_at
+                 ) VALUES (
+                    :id,
+                    :design_name,
+                    :thumbnail_path,
+                    :category,
+                    :store_fit,
+                    :status,
+                    :production_method,
+                    :production_file_location,
+                    :made_on_hat,
+                    :notes,
+                    :created_at,
+                    :updated_at
+                 )'
+            );
+            $statement->execute([
+                ':id' => $id,
+                ':design_name' => $normalized['design_name'],
+                ':thumbnail_path' => $normalizedThumbnailPath,
                 ':category' => $normalized['category'],
                 ':store_fit' => $normalized['store_fit'],
                 ':status' => $normalized['status'],
