@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260722-21';
+const FORGE_BUILD_VERSION = '20260722-22';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
 
@@ -89,6 +89,8 @@ const forgeOrderStore = globalThis.ForgeOrderStore;
 const forgeOrderServerSync = globalThis.ForgeOrderServerSync;
 const forgeOrderSubmission = globalThis.ForgeOrderSubmission;
 const forgeStaffApiClient = globalThis.ForgeStaffApiClient;
+const forgeStaffDesignCatalogApi = globalThis.ForgeStaffDesignCatalogApi;
+const forgeStaffDesignCatalog = globalThis.ForgeStaffDesignCatalog;
 const forgeStaffOrdersRuntime = globalThis.ForgeStaffOrdersRuntime;
 const forgeLocalOrdersQueue = globalThis.ForgeLocalOrdersQueue;
 const storageKey = 'forge-tree-ornament-draft';
@@ -663,6 +665,8 @@ const payloadPreviewContextStore = forgeOrderPayloadPreview.createPayloadPreview
 const orderStore = forgeOrderStore.createOrderStore();
 const orderSyncApiClient = forgeApiClient.createForgeApiClient();
 const staffApiClient = createOptionalStaffApiClient();
+const staffDesignCatalogApiClient = createOptionalStaffDesignCatalogApiClient();
+const staffDesignCatalogModule = createOptionalStaffDesignCatalogModule(staffDesignCatalogApiClient);
 const staffRuntime = createSafeStaffRuntime(orderStore, staffApiClient);
 const orderSyncService = forgeOrderServerSync.createOrderServerSyncService({
   orderStore,
@@ -708,6 +712,43 @@ function createOptionalStaffApiClient() {
       return null;
     }
     throw error;
+  }
+}
+
+function createOptionalStaffDesignCatalogApiClient() {
+  if (!forgeStaffDesignCatalogApi || typeof forgeStaffDesignCatalogApi.createForgeStaffDesignCatalogApiClient !== 'function') {
+    console.error('Forge staff design catalog API bootstrap skipped because ForgeStaffDesignCatalogApi was unavailable.');
+    return null;
+  }
+
+  try {
+    return forgeStaffDesignCatalogApi.createForgeStaffDesignCatalogApiClient();
+  } catch (error) {
+    console.error('Forge staff design catalog API bootstrap failed', error);
+    return null;
+  }
+}
+
+function createOptionalStaffDesignCatalogModule(apiClient) {
+  if (!forgeStaffDesignCatalog || typeof forgeStaffDesignCatalog.createStaffDesignCatalogModule !== 'function') {
+    console.error('Forge staff design catalog module bootstrap skipped because ForgeStaffDesignCatalog was unavailable.');
+    return null;
+  }
+
+  try {
+    return forgeStaffDesignCatalog.createStaffDesignCatalogModule({
+      apiClient,
+      document,
+      window,
+      canLoadProtectedRecords() {
+        return staffOrdersState.authenticated === true
+          && staffOrdersState.dataSource === 'server'
+          && appState.currentScreen === 'staff-catalog';
+      }
+    });
+  } catch (error) {
+    console.error('Forge staff design catalog module bootstrap failed', error);
+    return null;
   }
 }
 
@@ -2004,6 +2045,9 @@ function clearStaffOrderData() {
   staffOrdersState.batchError = '';
   staffOrdersState.searchTerm = '';
   staffOrdersState.filters = forgeLocalOrdersQueue.createEmptyOrderFilters();
+  if (staffDesignCatalogModule && typeof staffDesignCatalogModule.closeDialog === 'function') {
+    staffDesignCatalogModule.closeDialog();
+  }
   closeStaffBatchDialog({ restoreFocus: false });
   closeStaffPackingDialog({ restoreFocus: false });
   closeStaffTrayAssignment();
@@ -2126,6 +2170,22 @@ function renderStaffCatalog() {
     return;
   }
 
+  if (activeSection === 'designs') {
+    if (staffDesignCatalogModule && typeof staffDesignCatalogModule.render === 'function') {
+      staffDesignCatalogModule.render(staffCatalogContent);
+      return;
+    }
+
+    staffCatalogContent.innerHTML = `
+      <section class="staff-catalog-placeholder" role="tabpanel" aria-labelledby="staff-catalog-tab-designs">
+        <p class="eyebrow staff-orders-eyebrow">Unavailable</p>
+        <h3>Designs</h3>
+        <p>The shared design library is currently unavailable on this device.</p>
+      </section>
+    `;
+    return;
+  }
+
   staffCatalogContent.innerHTML = `
     <section class="staff-catalog-placeholder" role="tabpanel" aria-labelledby="staff-catalog-tab-${escapeHtml(activeSection)}">
       <p class="eyebrow staff-orders-eyebrow">Coming Next</p>
@@ -2139,6 +2199,9 @@ function setStaffCatalogSection(sectionKey) {
   if (!['designs', 'hats', 'materials', 'shortlist'].includes(sectionKey)) {
     return;
   }
+  if (sectionKey !== 'designs' && staffDesignCatalogModule && typeof staffDesignCatalogModule.closeDialog === 'function') {
+    staffDesignCatalogModule.closeDialog();
+  }
   staffCatalogState.activeSection = sectionKey;
   renderStaffCatalog();
 }
@@ -2151,11 +2214,18 @@ function openStaffCatalogScreen() {
 function returnToWelcomeFromStaff() {
   staffOrdersState.notice = '';
   staffOrdersState.enabled = false;
+  if (staffDesignCatalogModule && typeof staffDesignCatalogModule.closeDialog === 'function') {
+    staffDesignCatalogModule.closeDialog();
+  }
   closeStaffBatchDialog({ restoreFocus: false });
   closeStaffPackingDialog({ restoreFocus: false });
   closeStaffTrayAssignment();
   closeStaffOrderDetail();
   showScreen('welcome');
+}
+
+function requiresServerStaffSession(screenName) {
+  return screenName === 'staff-catalog';
 }
 
 async function openStaffAccessScreen(screenName = 'staff-orders') {
@@ -2166,10 +2236,19 @@ async function openStaffAccessScreen(screenName = 'staff-orders') {
   ensureStaffTrayAssignmentUi();
   ensureStaffBatchUi();
   ensureStaffPackingUi();
+  if (staffDesignCatalogModule && typeof staffDesignCatalogModule.closeDialog === 'function') {
+    staffDesignCatalogModule.closeDialog();
+  }
   closeStaffPanel();
   renderStaffSourceUi();
 
+  if (requiresServerStaffSession(targetScreen)) {
+    await openProtectedStaffCatalogAccess(targetScreen);
+    return;
+  }
+
   if (!isHostedStaffMode()) {
+    staffOrdersState.dataSource = staffRuntime.environment.dataSource;
     staffOrdersState.authenticated = true;
     staffOrdersState.readOnly = false;
     showScreen(targetScreen);
@@ -2233,6 +2312,61 @@ async function openStaffAccessScreen(screenName = 'staff-orders') {
   }
 }
 
+async function openProtectedStaffCatalogAccess(targetScreen) {
+  const hadAuthenticatedServerSession = staffOrdersState.authenticated && staffOrdersState.dataSource === 'server';
+  staffOrdersState.dataSource = 'server';
+  staffOrdersState.readOnly = true;
+
+  if (!staffApiClient || typeof staffApiClient.checkSession !== 'function') {
+    staffOrdersState.authenticated = false;
+    staffOrdersState.authChecking = false;
+    staffOrdersState.authSubmitting = false;
+    staffOrdersState.authError = 'Unable to connect. Try again.';
+    renderStaffSourceUi();
+    renderStaffAuthScreen();
+    showScreen('staff-access');
+    window.setTimeout(() => staffAuthPinInput?.focus(), 0);
+    return;
+  }
+
+  if (hadAuthenticatedServerSession) {
+    showScreen(targetScreen);
+    renderStaffCatalog();
+    return;
+  }
+
+  staffOrdersState.authenticated = false;
+  staffOrdersState.authChecking = true;
+  staffOrdersState.authSubmitting = false;
+  staffOrdersState.authError = '';
+  renderStaffSourceUi();
+  renderStaffAuthScreen();
+  showScreen('staff-access');
+
+  try {
+    const access = await staffApiClient.checkSession();
+    staffOrdersState.authChecking = false;
+
+    if (!access || (!access.ok && access.unauthenticated) || access.authenticated === false) {
+      renderStaffAuthScreen();
+      window.setTimeout(() => staffAuthPinInput?.focus(), 0);
+      return;
+    }
+
+    staffOrdersState.authenticated = true;
+    renderStaffSourceUi();
+    showScreen(targetScreen);
+    renderStaffCatalog();
+  } catch (error) {
+    console.error('Forge staff catalog session check failed', error);
+    staffOrdersState.authChecking = false;
+    staffOrdersState.authenticated = false;
+    staffOrdersState.authError = 'Unable to connect. Try again.';
+    renderStaffAuthScreen();
+    window.setTimeout(() => staffAuthPinInput?.focus(), 0);
+  }
+}
+
 async function submitStaffPin() {
   if (!staffAuthPinInput) {
     return;
@@ -2251,7 +2385,10 @@ async function submitStaffPin() {
   renderStaffAuthScreen();
 
   try {
-    const result = await staffRuntime.login(pin);
+    const requiresServerSession = requiresServerStaffSession(staffOrdersState.desiredScreen || 'staff-orders');
+    const result = requiresServerSession
+      ? await submitProtectedStaffCatalogPin(pin)
+      : await staffRuntime.login(pin);
     staffAuthPinInput.value = '';
     staffOrdersState.authSubmitting = false;
 
@@ -2286,9 +2423,49 @@ async function submitStaffPin() {
   }
 }
 
+async function submitProtectedStaffCatalogPin(pin) {
+  if (!staffApiClient || typeof staffApiClient.login !== 'function') {
+    return {
+      ok: false,
+      authenticated: false,
+      requiresAuthentication: true,
+      nextScreen: 'staff-access',
+      dataSource: 'server',
+      readOnly: true,
+      errorMessage: 'Unable to connect. Try again.'
+    };
+  }
+
+  const result = await staffApiClient.login(pin);
+  if (!result || (!result.ok && result.unauthenticated) || result.authenticated === false) {
+    return {
+      ok: false,
+      authenticated: false,
+      requiresAuthentication: true,
+      nextScreen: 'staff-access',
+      dataSource: 'server',
+      readOnly: true,
+      errorMessage: 'Incorrect PIN.'
+    };
+  }
+
+  return {
+    ok: true,
+    authenticated: true,
+    requiresAuthentication: true,
+    nextScreen: 'staff-catalog',
+    dataSource: 'server',
+    readOnly: true
+  };
+}
+
 async function logoutStaffAccess() {
   try {
-    await staffRuntime.logout();
+    if (requiresServerStaffSession(appState.currentScreen) && staffApiClient && typeof staffApiClient.logout === 'function') {
+      await staffApiClient.logout();
+    } else {
+      await staffRuntime.logout();
+    }
     showUnauthenticatedStaffAccess();
   } catch (error) {
     console.error('Forge staff logout failed', error);

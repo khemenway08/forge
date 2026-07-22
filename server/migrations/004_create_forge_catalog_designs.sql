@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS forge_catalog_designs (
+    id CHAR(36) NOT NULL,
+    design_name VARCHAR(160) NOT NULL,
+    thumbnail_path VARCHAR(255) NULL,
+    category VARCHAR(64) NOT NULL,
+    store_fit VARCHAR(64) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    production_method VARCHAR(64) NOT NULL,
+    production_file_location VARCHAR(512) NULL,
+    made_on_hat VARCHAR(16) NOT NULL,
+    notes TEXT NULL,
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (id),
+    KEY idx_forge_catalog_designs_design_name (design_name),
+    KEY idx_forge_catalog_designs_category (category),
+    KEY idx_forge_catalog_designs_status (status),
+    KEY idx_forge_catalog_designs_production_method (production_method),
+    KEY idx_forge_catalog_designs_updated_at (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

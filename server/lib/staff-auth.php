@@ -122,7 +122,7 @@ function isStaffSessionAuthenticated(array $server = []): bool
 {
     startStaffSession($server);
 
-    return $_SESSION[StaffAuth::SESSION_AUTHENTICATED_KEY] === true;
+    return ($_SESSION[StaffAuth::SESSION_AUTHENTICATED_KEY] ?? false) === true;
 }
 
 /**

@@ -32,7 +32,8 @@ function forge_staff_bootstrap_candidates($serverRoot = null, ?string $currentDi
         ? $currentDirectory
         : __DIR__;
 
-    $candidates[] = dirname($baseDirectory, 5) . '/forge_server_test/bootstrap.php';
+    $candidates[] = dirname($baseDirectory, 4) . '/forge_server_test/bootstrap.php';
+    $candidates[] = dirname($baseDirectory, 3) . '/server/bootstrap.php';
     $candidates[] = dirname($baseDirectory, 4) . '/server/bootstrap.php';
     $candidates[] = dirname($baseDirectory, 4) . '/forge_server_test/bootstrap.php';
 

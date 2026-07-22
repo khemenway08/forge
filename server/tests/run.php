@@ -224,7 +224,7 @@ function createValidPayload(array $overrides = []): array
     return $payload;
 }
 
-function createHandler(?InMemoryOrderRepository $repository = null, ?callable $unexpectedExceptionReporter = null): array
+function createHandler(?OrderRepositoryInterface $repository = null, ?callable $unexpectedExceptionReporter = null): array
 {
     $repository = $repository ?? new InMemoryOrderRepository();
     $handler = new OrderHandler(
@@ -1194,6 +1194,91 @@ $runner->run('configured tray numbers reject non-numeric tokens safely', static 
             assertSame('A valid positive tray number is required.', $exception->getMessage());
         }
     );
+});
+
+$runner->run('catalog migration creates the isolated forge_catalog_designs table', static function (): void {
+    $migrationSource = file_get_contents(dirname(__DIR__) . '/migrations/004_create_forge_catalog_designs.sql');
+
+    assertTrue(is_string($migrationSource));
+    assertTrue(strpos($migrationSource, 'CREATE TABLE IF NOT EXISTS forge_catalog_designs') !== false);
+    assertTrue(strpos($migrationSource, 'forge_orders') === false);
+    assertTrue(strpos($migrationSource, 'forge_production_trays') === false);
+});
+
+$runner->run('catalog design validation accepts approved enum values', static function (): void {
+    $normalized = \Forge\Server\validateAndNormalizeStaffCatalogDesignInput([
+        'design_name' => '  Lone Star Ranch Stamp  ',
+        'category' => 'western_rodeo',
+        'store_fit' => 'feed_western',
+        'status' => 'review',
+        'production_method' => 'leatherette_engraving',
+        'production_file_location' => ' Shared Drive / Western / Ranch Stamp.ai ',
+        'made_on_hat' => 'unknown',
+        'notes' => ' First proof pending. ',
+    ]);
+
+    assertSame('Lone Star Ranch Stamp', $normalized['design_name']);
+    assertSame('western_rodeo', $normalized['category']);
+    assertSame('feed_western', $normalized['store_fit']);
+    assertSame('review', $normalized['status']);
+    assertSame('leatherette_engraving', $normalized['production_method']);
+    assertSame('Shared Drive / Western / Ranch Stamp.ai', $normalized['production_file_location']);
+    assertSame('unknown', $normalized['made_on_hat']);
+});
+
+$runner->run('catalog design validation rejects invalid enum values safely', static function (): void {
+    assertThrows(
+        static function (): void {
+            \Forge\Server\validateAndNormalizeStaffCatalogDesignInput([
+                'design_name' => 'Hill Country Floral Patch',
+                'category' => 'not_real',
+                'store_fit' => 'boutique',
+                'status' => 'active',
+                'production_method' => 'uv_print',
+                'production_file_location' => 'Shared Drive',
+                'made_on_hat' => 'yes',
+                'notes' => '',
+            ]);
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof \Forge\Server\StaffDesignCatalogValidationException);
+            assertSame('Select a valid category.', $exception->getFieldErrors()['category']);
+        }
+    );
+});
+
+$runner->run('catalog thumbnail endpoint source enforces authenticated png jpeg webp uploads with a 5mb limit', static function (): void {
+    $endpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/design-thumbnail.php');
+
+    assertTrue(is_string($endpointSource));
+    assertTrue(strpos($endpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($endpointSource, 'FILEINFO_MIME_TYPE') !== false);
+    assertTrue(strpos($endpointSource, "'image/png'") !== false);
+    assertTrue(strpos($endpointSource, "'image/jpeg'") !== false);
+    assertTrue(strpos($endpointSource, "'image/webp'") !== false);
+    assertTrue(strpos($endpointSource, 'FORGE_DESIGN_CATALOG_MAX_UPLOAD_BYTES = 5242880') !== false);
+});
+
+$runner->run('catalog list endpoint no longer seeds localhost development fixtures', static function (): void {
+    $endpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/designs.php');
+    $repositorySource = file_get_contents(dirname(__DIR__) . '/lib/staff-design-catalog-repository.php');
+
+    assertTrue(is_string($endpointSource));
+    assertTrue(is_string($repositorySource));
+    assertTrue(strpos($endpointSource, 'seedDevelopmentFixtureRecordsIfEmpty') === false);
+    assertTrue(strpos($repositorySource, 'shouldSeedDevelopmentDesignCatalogFixtures') === false);
+    assertTrue(strpos($repositorySource, 'buildStaffCatalogDevelopmentFixtures') === false);
+});
+
+$runner->run('catalog list endpoint source requires staff authentication and does not reference order tables', static function (): void {
+    $endpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/designs.php');
+    $repositorySource = file_get_contents(dirname(__DIR__) . '/lib/staff-design-catalog-repository.php');
+
+    assertTrue(is_string($endpointSource));
+    assertTrue(is_string($repositorySource));
+    assertTrue(strpos($endpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($repositorySource, 'forge_orders') === false);
+    assertTrue(strpos($repositorySource, 'forge_tray_assignment_history') === false);
 });
 
 $runner->run('invalid stored staff order payload fails safely', static function (): void {

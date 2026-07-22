@@ -5,3 +5,5 @@ storage/*.log
 node_modules/
 vendor/
 server/config.php
+public/uploads/design-thumbnails/
+server/logs/

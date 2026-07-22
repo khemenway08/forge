@@ -10,6 +10,7 @@ require_once __DIR__ . '/lib/database.php';
 require_once __DIR__ . '/lib/order-repository.php';
 require_once __DIR__ . '/lib/staff-auth.php';
 require_once __DIR__ . '/lib/staff-order-repository.php';
+require_once __DIR__ . '/lib/staff-design-catalog-repository.php';
 
 function buildOrderHandlerFromEnvironment(?callable $unexpectedExceptionReporter = null): OrderHandler
 {
@@ -23,6 +24,12 @@ function buildStaffOrderRepositoryFromEnvironment(): PdoStaffOrderRepository
 {
     $pdo = DatabaseConnectionFactory::createFromEnvironment(loadPrivateDatabaseConfig());
     return new PdoStaffOrderRepository($pdo, loadPrivateTrayConfig());
+}
+
+function buildStaffDesignCatalogRepositoryFromEnvironment(): PdoStaffDesignCatalogRepository
+{
+    $pdo = DatabaseConnectionFactory::createFromEnvironment(loadPrivateDatabaseConfig());
+    return new PdoStaffDesignCatalogRepository($pdo);
 }
 
 function loadPrivateStaffPinHashFromEnvironment(): string

@@ -1480,6 +1480,9 @@ test('staff orders remains the default protected destination and the catalog she
   assert.match(indexSource, />Hats<\/button>/);
   assert.match(indexSource, />Materials<\/button>/);
   assert.match(indexSource, />Shortlist<\/button>/);
-  assert.doesNotMatch(indexSource, /forge-staff-design-catalog\.js/);
+  assert.match(
+    indexSource,
+    /<script src="js\/forge-staff-api-client\.js\?v=20260722-22"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260722-22"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260722-22"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260722-22"><\/script>/
+  );
   assert.doesNotMatch(indexSource, /data-category="staff-catalog"/);
 });

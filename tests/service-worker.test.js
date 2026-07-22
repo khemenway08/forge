@@ -4,8 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const BUILD_VERSION = '20260722-21';
-const CACHE_NAME = 'forge-starter-v21';
+const BUILD_VERSION = '20260722-22';
+const CACHE_NAME = 'forge-starter-v22';
 
 function normalizeRequestUrl(input) {
   if (typeof input === 'string') {
@@ -166,6 +166,9 @@ test('service worker install fetches current precache assets with cache reload a
     'forge-starter-v20': {
       '/js/app.js?v=20260722-20': 'stale prior dashboard cleanup build'
     },
+    'forge-starter-v21': {
+      '/js/app.js?v=20260722-21': 'stale prior catalog shell build'
+    },
     'unrelated-cache': {
       '/misc.txt': 'keep me'
     }
@@ -197,7 +200,10 @@ test('service worker install fetches current precache assets with cache reload a
   assert.ok(!cacheKeys.includes('forge-starter-v18'));
   assert.ok(!cacheKeys.includes('forge-starter-v19'));
   assert.ok(!cacheKeys.includes('forge-starter-v20'));
+  assert.ok(!cacheKeys.includes('forge-starter-v21'));
   assert.ok(cacheKeys.includes('unrelated-cache'));
+  assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-design-catalog-api.js?v=${BUILD_VERSION}`)));
+  assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-design-catalog.js?v=${BUILD_VERSION}`)));
 });
 
 test('service worker fetches app.js from the network when online and updates the current cache', async () => {
@@ -276,7 +282,7 @@ test('index.html versions every Forge JavaScript bootstrap URL with the same bui
   const scriptMatches = [...html.matchAll(/<script\s+src="([^"]+)"><\/script>/g)];
   const scriptSources = scriptMatches.map((match) => match[1]);
 
-  assert.equal(scriptSources.length, 11);
+  assert.equal(scriptSources.length, 13);
   assert.ok(scriptSources.every((src) => src.includes(`?v=${BUILD_VERSION}`)));
   assert.deepEqual(scriptSources, [
     `js/forge-product-catalog.js?v=${BUILD_VERSION}`,
@@ -287,6 +293,8 @@ test('index.html versions every Forge JavaScript bootstrap URL with the same bui
     `js/forge-order-server-sync.js?v=${BUILD_VERSION}`,
     `js/forge-order-submission.js?v=${BUILD_VERSION}`,
     `js/forge-staff-api-client.js?v=${BUILD_VERSION}`,
+    `js/forge-staff-design-catalog-api.js?v=${BUILD_VERSION}`,
+    `js/forge-staff-design-catalog.js?v=${BUILD_VERSION}`,
     `js/forge-staff-orders-runtime.js?v=${BUILD_VERSION}`,
     `js/forge-local-orders-queue.js?v=${BUILD_VERSION}`,
     `js/app.js?v=${BUILD_VERSION}`
