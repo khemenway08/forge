@@ -13,7 +13,7 @@ const catalogCssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/ap
 test('catalog scripts load before app.js and only in the protected staff shell', () => {
   assert.match(
     indexSource,
-    /<script src="js\/forge-staff-api-client\.js\?v=20260722-22"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260722-22"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260722-22"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260722-22"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260722-22"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260722-22"><\/script>\s*<script src="js\/forge-local-orders-queue\.js\?v=20260722-22"><\/script>\s*<script src="js\/app\.js\?v=20260722-22"><\/script>/
+    /<script src="js\/forge-staff-api-client\.js\?v=20260723-23"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260723-23"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260723-23"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260723-23"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260723-23"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260723-23"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260723-23"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260723-23"><\/script>\s*<script src="js\/forge-local-orders-queue\.js\?v=20260723-23"><\/script>\s*<script src="js\/app\.js\?v=20260723-23"><\/script>/
   );
   assert.match(indexSource, /data-screen="staff-catalog"/);
   assert.match(indexSource, /data-staff-catalog-content/);
@@ -273,10 +273,13 @@ test('catalog api and network failures remain safe and retryable', async () => {
   assert.match(container.innerHTML, /data-action="catalog-retry-load"/);
 });
 
-test('materials and shortlist remain placeholders in app integration while hats are activated separately', () => {
+test('materials and hats are activated through the shared protected catalog shell while shortlist remains a placeholder', () => {
   const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
   assert.match(appSource, /The shared hat library is currently unavailable on this device\./);
-  assert.match(appSource, /Patch and production materials will be added in a later catalog milestone\./);
+  assert.match(appSource, /The shared material library is currently unavailable on this device\./);
+  assert.match(appSource, /ForgeStaffMaterialCatalogApi/);
+  assert.match(appSource, /createOptionalStaffMaterialCatalogApiClient/);
+  assert.match(appSource, /createOptionalStaffMaterialCatalogModule/);
   assert.match(appSource, /Saved design and hat combinations will appear here later\./);
 });
 

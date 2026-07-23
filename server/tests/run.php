@@ -1802,6 +1802,188 @@ $runner->run('hat catalog endpoints require staff authentication and enforce app
     assertTrue(strpos($repositorySource, 'forge_orders') === false);
 });
 
+$runner->run('material catalog migration creates the isolated forge_catalog_materials table', static function (): void {
+    $migrationSource = file_get_contents(dirname(__DIR__, 2) . '/server/migrations/006_create_forge_catalog_materials.sql');
+
+    assertTrue(is_string($migrationSource));
+    assertTrue(strpos($migrationSource, 'CREATE TABLE IF NOT EXISTS forge_catalog_materials') !== false);
+    assertTrue(strpos($migrationSource, 'purchase_cost DECIMAL(10,2) DEFAULT NULL') !== false);
+    assertTrue(strpos($migrationSource, 'purchase_quantity INT UNSIGNED DEFAULT NULL') !== false);
+    assertTrue(strpos($migrationSource, 'image_width INT UNSIGNED DEFAULT NULL') !== false);
+    assertTrue(strpos($migrationSource, 'image_height INT UNSIGNED DEFAULT NULL') !== false);
+});
+
+$runner->run('material catalog validation accepts optional metadata blank costs remain null and per-unit reference can be derived safely', static function (): void {
+    $normalized = \Forge\Server\validateAndNormalizeStaffCatalogMaterialInput([
+        'material_name' => '  Brushed Stainless Black Acrylic  ',
+        'material_type' => ' Acrylic ',
+        'color' => ' Brushed Stainless / Black ',
+        'supplier' => ' JDS ',
+        'production_method' => ' Laserable ',
+        'purchase_cost' => ' ',
+        'purchase_quantity' => ' ',
+        'cost_basis' => 'per_sheet',
+        'status' => 'review',
+        'notes' => '  Premium panel  ',
+        'image_width' => '1000',
+        'image_height' => '1000',
+    ]);
+
+    assertSame('Brushed Stainless Black Acrylic', $normalized['material_name']);
+    assertSame('Acrylic', $normalized['material_type']);
+    assertSame('Brushed Stainless / Black', $normalized['color']);
+    assertSame('JDS', $normalized['supplier']);
+    assertSame('Laserable', $normalized['production_method']);
+    assertSame(null, $normalized['purchase_cost']);
+    assertSame(null, $normalized['purchase_quantity']);
+    assertSame('per_sheet', $normalized['cost_basis']);
+    assertSame('review', $normalized['status']);
+    assertSame('Premium panel', $normalized['notes']);
+    assertSame(1000, $normalized['image_width']);
+    assertSame(1000, $normalized['image_height']);
+});
+
+$runner->run('material catalog validation rejects missing names invalid statuses and invalid cost values safely', static function (): void {
+    assertThrows(
+        static function (): void {
+            \Forge\Server\validateAndNormalizeStaffCatalogMaterialInput([
+                'material_name' => ' ',
+                'status' => 'archived',
+                'purchase_cost' => '-1.00',
+                'purchase_quantity' => '0',
+                'cost_basis' => 'per_roll',
+            ]);
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof \Forge\Server\StaffMaterialCatalogValidationException);
+            assertSame('Material name is required.', $exception->getFieldErrors()['material_name'] ?? null);
+            assertSame('Select a valid status.', $exception->getFieldErrors()['status'] ?? null);
+            assertSame('Purchase cost must be a nonnegative amount with up to two decimals.', $exception->getFieldErrors()['purchase_cost'] ?? null);
+            assertSame('Purchase quantity must be a positive whole number.', $exception->getFieldErrors()['purchase_quantity'] ?? null);
+            assertSame('Select a valid cost basis.', $exception->getFieldErrors()['cost_basis'] ?? null);
+        }
+    );
+});
+
+$runner->run('material importer derives readable names recognizes supported files and classifies aspect ratios safely', static function (): void {
+    assertSame('Brushed Stainless Black Acrylic 12x24', \Forge\Server\deriveStaffCatalogMaterialNameFromFileName('brushed-stainless-black-acrylic-12x24.png'));
+    assertTrue(\Forge\Server\isSupportedStaffCatalogMaterialImportFile('rawhide-black-durra-bull-premium-leatherette-sheets-12x24-917884.png'));
+    assertTrue(!\Forge\Server\isSupportedStaffCatalogMaterialImportFile('.DS_Store'));
+    assertTrue(!\Forge\Server\isSupportedStaffCatalogMaterialImportFile('notes.ai'));
+    assertSame('approximately_square', \Forge\Server\classifyStaffCatalogMaterialAspectRatio(1000, 1000));
+    assertSame('portrait', \Forge\Server\classifyStaffCatalogMaterialAspectRatio(1500, 2000));
+    assertSame('landscape', \Forge\Server\classifyStaffCatalogMaterialAspectRatio(2000, 1500));
+    assertSame(true, \Forge\Server\shouldUseContainForStaffCatalogMaterialCard(1000, 1000));
+    assertSame(false, \Forge\Server\shouldUseContainForStaffCatalogMaterialCard(1500, 2000));
+});
+
+$runner->run('material importer dry-run makes no database or filesystem changes', static function (): void {
+    $sourceDirectory = createTempImportDirectory();
+    $uploadDirectory = createTempImportDirectory();
+
+    try {
+        createPngFixture($sourceDirectory . '/brushed-stainless-black-acrylic-12x24.png', 1000, 1000);
+        $repository = new class implements \Forge\Server\StaffMaterialCatalogImportRepositoryInterface {
+            public int $createdCount = 0;
+            public function listMaterials(): array
+            {
+                return [];
+            }
+            public function createImportedMaterial(array $input, string $swatchPath): array
+            {
+                $this->createdCount++;
+                return [];
+            }
+        };
+
+        $importer = new \Forge\Server\StaffMaterialCatalogImporter($repository, $uploadDirectory);
+        $summary = $importer->importDirectory($sourceDirectory, true);
+
+        assertSame(1, $summary['imported']);
+        assertSame(1, $summary['approximately_square']);
+        assertSame(0, $repository->createdCount);
+        assertSame([], array_values(array_diff(scandir($uploadDirectory) ?: [], ['.', '..'])));
+    } finally {
+        removeTempImportDirectory($sourceDirectory);
+        removeTempImportDirectory($uploadDirectory);
+    }
+});
+
+$runner->run('material importer rerun is idempotent and duplicate-name collisions and partial failures are reported safely', static function (): void {
+    $sourceDirectory = createTempImportDirectory();
+    $uploadDirectory = createTempImportDirectory();
+
+    try {
+        createPngFixture($sourceDirectory . '/brushed-stainless-black-acrylic-12x24.png', 1000, 1000);
+        createPngFixture($sourceDirectory . '/rawhide-black-durra-bull-premium-leatherette-sheets-12x24-917884.png', 1500, 2000);
+        $repository = new class implements \Forge\Server\StaffMaterialCatalogImportRepositoryInterface {
+            public function listMaterials(): array
+            {
+                return [[
+                    'id' => '123e4567-e89b-42d3-a456-426614174777',
+                    'material_name' => 'Brushed Stainless Black Acrylic 12x24',
+                    'swatch_path' => '/uploads/material-swatches/material-existing.png',
+                ]];
+            }
+            public function createImportedMaterial(array $input, string $swatchPath): array
+            {
+                throw new RuntimeException('Synthetic repository failure.');
+            }
+        };
+
+        $importer = new \Forge\Server\StaffMaterialCatalogImporter($repository, $uploadDirectory);
+        $summary = $importer->importDirectory($sourceDirectory, false);
+
+        assertSame(0, $summary['imported']);
+        assertSame(1, $summary['skipped']);
+        assertSame('already_imported', $summary['skipped_records'][0]['reason']);
+        assertSame(1, $summary['failed']);
+        assertSame('import_failed', $summary['failed_records'][0]['reason']);
+    } finally {
+        removeTempImportDirectory($sourceDirectory);
+        removeTempImportDirectory($uploadDirectory);
+    }
+});
+
+$runner->run('material import proposal captures explicit type color and production method without guessing', static function (): void {
+    $acrylic = \Forge\Server\proposeStaffCatalogMaterialImportMetadataFromFileName('brushed-stainless-black-acrylic-12x24.png');
+    $leatherette = \Forge\Server\proposeStaffCatalogMaterialImportMetadataFromFileName('rawhide-black-durra-bull-premium-leatherette-sheets-12x24-917884.png');
+
+    assertSame('Acrylic', $acrylic['material_type']);
+    assertSame('Brushed / Stainless / Black', $acrylic['color']);
+    assertSame(null, $acrylic['production_method']);
+
+    assertSame('Leatherette', $leatherette['material_type']);
+    assertSame('Rawhide / Black', $leatherette['color']);
+    assertSame(null, $leatherette['production_method']);
+});
+
+$runner->run('material catalog endpoints require staff authentication enforce approved image upload constraints and stay isolated from order tables', static function (): void {
+    $listEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/materials.php');
+    $singleEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/material.php');
+    $swatchEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/material-swatch.php');
+    $sharedEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/_shared.php');
+    $repositorySource = file_get_contents(dirname(__DIR__) . '/lib/staff-material-catalog-repository.php');
+
+    assertTrue(is_string($listEndpointSource));
+    assertTrue(is_string($singleEndpointSource));
+    assertTrue(is_string($swatchEndpointSource));
+    assertTrue(is_string($sharedEndpointSource));
+    assertTrue(is_string($repositorySource));
+    assertTrue(strpos($listEndpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($singleEndpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($swatchEndpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($swatchEndpointSource, 'FILEINFO_MIME_TYPE') !== false);
+    assertTrue(strpos($swatchEndpointSource, '@getimagesize') !== false);
+    assertTrue(strpos($swatchEndpointSource, "'image/png'") !== false);
+    assertTrue(strpos($swatchEndpointSource, "'image/jpeg'") !== false);
+    assertTrue(strpos($swatchEndpointSource, "'image/webp'") !== false);
+    assertTrue(strpos($swatchEndpointSource, 'FORGE_MATERIAL_CATALOG_MAX_UPLOAD_BYTES = 5242880') !== false);
+    assertTrue(strpos($sharedEndpointSource, "function forge_material_catalog_resolve_absolute_swatch_path(?string \$swatchPath): ?string") !== false);
+    assertTrue(strpos($repositorySource, 'forge_catalog_materials') !== false);
+    assertTrue(strpos($repositorySource, 'forge_orders') === false);
+});
+
 $runner->run('invalid stored staff order payload fails safely', static function (): void {
     assertThrows(
         static function (): void {
@@ -1839,6 +2021,16 @@ function createTempImportPreviewFile(string $fileName, string $contents): string
     $filePath = $directory . '/' . $fileName;
     file_put_contents($filePath, $contents);
     return $filePath;
+}
+
+function createPngFixture(string $filePath, int $width, int $height): void
+{
+    $signature = "\x89PNG\x0D\x0A\x1A\x0A";
+    $ihdrData = pack('NNCCCCC', $width, $height, 8, 2, 0, 0, 0);
+    $ihdrChunk = pack('N', strlen($ihdrData)) . 'IHDR' . $ihdrData . pack('N', crc32('IHDR' . $ihdrData));
+    $iendChunk = pack('N', 0) . 'IEND' . pack('N', crc32('IEND'));
+
+    file_put_contents($filePath, $signature . $ihdrChunk . $iendChunk);
 }
 
 function removeTempImportDirectory(string $directory): void

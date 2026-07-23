@@ -7,4 +7,5 @@ vendor/
 server/config.php
 public/uploads/design-thumbnails/
 public/uploads/hat-photos/
+public/uploads/material-swatches/
 server/logs/

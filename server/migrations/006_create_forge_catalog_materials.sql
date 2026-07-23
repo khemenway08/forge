@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS forge_catalog_materials (
+    id CHAR(36) NOT NULL,
+    material_name VARCHAR(160) NOT NULL,
+    swatch_path VARCHAR(255) DEFAULT NULL,
+    material_type VARCHAR(160) DEFAULT NULL,
+    color VARCHAR(160) DEFAULT NULL,
+    supplier VARCHAR(160) DEFAULT NULL,
+    production_method VARCHAR(160) DEFAULT NULL,
+    purchase_cost DECIMAL(10,2) DEFAULT NULL,
+    purchase_quantity INT UNSIGNED DEFAULT NULL,
+    cost_basis VARCHAR(32) DEFAULT NULL,
+    status VARCHAR(16) NOT NULL,
+    notes TEXT DEFAULT NULL,
+    image_width INT UNSIGNED DEFAULT NULL,
+    image_height INT UNSIGNED DEFAULT NULL,
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (id),
+    KEY idx_forge_catalog_materials_name (material_name),
+    KEY idx_forge_catalog_materials_type (material_type),
+    KEY idx_forge_catalog_materials_status (status),
+    KEY idx_forge_catalog_materials_updated_at (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

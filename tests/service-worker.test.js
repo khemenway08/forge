@@ -4,8 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const BUILD_VERSION = '20260722-22';
-const CACHE_NAME = 'forge-starter-v22';
+const BUILD_VERSION = '20260723-23';
+const CACHE_NAME = 'forge-starter-v23';
 
 function normalizeRequestUrl(input) {
   if (typeof input === 'string') {
@@ -169,6 +169,9 @@ test('service worker install fetches current precache assets with cache reload a
     'forge-starter-v21': {
       '/js/app.js?v=20260722-21': 'stale prior catalog shell build'
     },
+    'forge-starter-v22': {
+      '/js/app.js?v=20260722-22': 'stale prior hat library build'
+    },
     'unrelated-cache': {
       '/misc.txt': 'keep me'
     }
@@ -201,11 +204,14 @@ test('service worker install fetches current precache assets with cache reload a
   assert.ok(!cacheKeys.includes('forge-starter-v19'));
   assert.ok(!cacheKeys.includes('forge-starter-v20'));
   assert.ok(!cacheKeys.includes('forge-starter-v21'));
+  assert.ok(!cacheKeys.includes('forge-starter-v22'));
   assert.ok(cacheKeys.includes('unrelated-cache'));
   assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-design-catalog-api.js?v=${BUILD_VERSION}`)));
   assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-design-catalog.js?v=${BUILD_VERSION}`)));
   assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-hat-catalog-api.js?v=${BUILD_VERSION}`)));
   assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-hat-catalog.js?v=${BUILD_VERSION}`)));
+  assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-material-catalog-api.js?v=${BUILD_VERSION}`)));
+  assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-material-catalog.js?v=${BUILD_VERSION}`)));
 });
 
 test('service worker fetches app.js from the network when online and updates the current cache', async () => {
@@ -284,7 +290,7 @@ test('index.html versions every Forge JavaScript bootstrap URL with the same bui
   const scriptMatches = [...html.matchAll(/<script\s+src="([^"]+)"><\/script>/g)];
   const scriptSources = scriptMatches.map((match) => match[1]);
 
-  assert.equal(scriptSources.length, 15);
+  assert.equal(scriptSources.length, 17);
   assert.ok(scriptSources.every((src) => src.includes(`?v=${BUILD_VERSION}`)));
   assert.deepEqual(scriptSources, [
     `js/forge-product-catalog.js?v=${BUILD_VERSION}`,
@@ -299,6 +305,8 @@ test('index.html versions every Forge JavaScript bootstrap URL with the same bui
     `js/forge-staff-design-catalog.js?v=${BUILD_VERSION}`,
     `js/forge-staff-hat-catalog-api.js?v=${BUILD_VERSION}`,
     `js/forge-staff-hat-catalog.js?v=${BUILD_VERSION}`,
+    `js/forge-staff-material-catalog-api.js?v=${BUILD_VERSION}`,
+    `js/forge-staff-material-catalog.js?v=${BUILD_VERSION}`,
     `js/forge-staff-orders-runtime.js?v=${BUILD_VERSION}`,
     `js/forge-local-orders-queue.js?v=${BUILD_VERSION}`,
     `js/app.js?v=${BUILD_VERSION}`

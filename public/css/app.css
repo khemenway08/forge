@@ -2525,6 +2525,26 @@ h1 {
   display: block;
 }
 
+.staff-material-card-thumb {
+  background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.03));
+}
+
+.staff-material-card-thumb-image {
+  width: 100%;
+  height: 220px;
+  display: block;
+  object-position: center;
+  background: rgba(255,255,255,.04);
+}
+
+.staff-material-card-thumb-image--contain {
+  object-fit: contain;
+}
+
+.staff-material-card-thumb-image--cover {
+  object-fit: cover;
+}
+
 .staff-design-card-thumb-placeholder {
   color: var(--staff-muted);
   font-size: 15px;

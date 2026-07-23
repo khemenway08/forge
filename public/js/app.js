@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260722-22';
+const FORGE_BUILD_VERSION = '20260723-23';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
 
@@ -93,6 +93,8 @@ const forgeStaffDesignCatalogApi = globalThis.ForgeStaffDesignCatalogApi;
 const forgeStaffDesignCatalog = globalThis.ForgeStaffDesignCatalog;
 const forgeStaffHatCatalogApi = globalThis.ForgeStaffHatCatalogApi;
 const forgeStaffHatCatalog = globalThis.ForgeStaffHatCatalog;
+const forgeStaffMaterialCatalogApi = globalThis.ForgeStaffMaterialCatalogApi;
+const forgeStaffMaterialCatalog = globalThis.ForgeStaffMaterialCatalog;
 const forgeStaffOrdersRuntime = globalThis.ForgeStaffOrdersRuntime;
 const forgeLocalOrdersQueue = globalThis.ForgeLocalOrdersQueue;
 const storageKey = 'forge-tree-ornament-draft';
@@ -671,6 +673,8 @@ const staffDesignCatalogApiClient = createOptionalStaffDesignCatalogApiClient();
 const staffDesignCatalogModule = createOptionalStaffDesignCatalogModule(staffDesignCatalogApiClient);
 const staffHatCatalogApiClient = createOptionalStaffHatCatalogApiClient();
 const staffHatCatalogModule = createOptionalStaffHatCatalogModule(staffHatCatalogApiClient);
+const staffMaterialCatalogApiClient = createOptionalStaffMaterialCatalogApiClient();
+const staffMaterialCatalogModule = createOptionalStaffMaterialCatalogModule(staffMaterialCatalogApiClient);
 const staffRuntime = createSafeStaffRuntime(orderStore, staffApiClient);
 const orderSyncService = forgeOrderServerSync.createOrderServerSyncService({
   orderStore,
@@ -789,6 +793,43 @@ function createOptionalStaffHatCatalogModule(apiClient) {
     });
   } catch (error) {
     console.error('Forge staff hat catalog module bootstrap failed', error);
+    return null;
+  }
+}
+
+function createOptionalStaffMaterialCatalogApiClient() {
+  if (!forgeStaffMaterialCatalogApi || typeof forgeStaffMaterialCatalogApi.createForgeStaffMaterialCatalogApiClient !== 'function') {
+    console.error('Forge staff material catalog API bootstrap skipped because ForgeStaffMaterialCatalogApi was unavailable.');
+    return null;
+  }
+
+  try {
+    return forgeStaffMaterialCatalogApi.createForgeStaffMaterialCatalogApiClient();
+  } catch (error) {
+    console.error('Forge staff material catalog API bootstrap failed', error);
+    return null;
+  }
+}
+
+function createOptionalStaffMaterialCatalogModule(apiClient) {
+  if (!forgeStaffMaterialCatalog || typeof forgeStaffMaterialCatalog.createStaffMaterialCatalogModule !== 'function') {
+    console.error('Forge staff material catalog module bootstrap skipped because ForgeStaffMaterialCatalog was unavailable.');
+    return null;
+  }
+
+  try {
+    return forgeStaffMaterialCatalog.createStaffMaterialCatalogModule({
+      apiClient,
+      document,
+      window,
+      canLoadProtectedRecords() {
+        return staffOrdersState.authenticated === true
+          && staffOrdersState.dataSource === 'server'
+          && appState.currentScreen === 'staff-catalog';
+      }
+    });
+  } catch (error) {
+    console.error('Forge staff material catalog module bootstrap failed', error);
     return null;
   }
 }
@@ -2181,7 +2222,7 @@ function getStaffCatalogSectionContent(sectionKey) {
     },
     materials: {
       title: 'Materials',
-      message: 'Patch and production materials will be added in a later catalog milestone.'
+      message: 'The shared material library is currently unavailable on this device.'
     },
     shortlist: {
       title: 'Shortlist',
@@ -2243,6 +2284,22 @@ function renderStaffCatalog() {
     return;
   }
 
+  if (activeSection === 'materials') {
+    if (staffMaterialCatalogModule && typeof staffMaterialCatalogModule.render === 'function') {
+      staffMaterialCatalogModule.render(staffCatalogContent);
+      return;
+    }
+
+    staffCatalogContent.innerHTML = `
+      <section class="staff-catalog-placeholder" role="tabpanel" aria-labelledby="staff-catalog-tab-materials">
+        <p class="eyebrow staff-orders-eyebrow">Unavailable</p>
+        <h3>Materials</h3>
+        <p>The shared material library is currently unavailable on this device.</p>
+      </section>
+    `;
+    return;
+  }
+
   staffCatalogContent.innerHTML = `
     <section class="staff-catalog-placeholder" role="tabpanel" aria-labelledby="staff-catalog-tab-${escapeHtml(activeSection)}">
       <p class="eyebrow staff-orders-eyebrow">Coming Next</p>
@@ -2262,6 +2319,9 @@ function setStaffCatalogSection(sectionKey) {
   if (sectionKey !== 'hats' && staffHatCatalogModule && typeof staffHatCatalogModule.closeDialog === 'function') {
     staffHatCatalogModule.closeDialog();
   }
+  if (sectionKey !== 'materials' && staffMaterialCatalogModule && typeof staffMaterialCatalogModule.closeDialog === 'function') {
+    staffMaterialCatalogModule.closeDialog();
+  }
   staffCatalogState.activeSection = sectionKey;
   renderStaffCatalog();
 }
@@ -2279,6 +2339,9 @@ function returnToWelcomeFromStaff() {
   }
   if (staffHatCatalogModule && typeof staffHatCatalogModule.closeDialog === 'function') {
     staffHatCatalogModule.closeDialog();
+  }
+  if (staffMaterialCatalogModule && typeof staffMaterialCatalogModule.closeDialog === 'function') {
+    staffMaterialCatalogModule.closeDialog();
   }
   closeStaffBatchDialog({ restoreFocus: false });
   closeStaffPackingDialog({ restoreFocus: false });
