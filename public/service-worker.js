@@ -1,5 +1,5 @@
-const BUILD_VERSION = '20260723-29';
-const CACHE_NAME = 'forge-starter-v29';
+const BUILD_VERSION = '20260723-30';
+const CACHE_NAME = 'forge-starter-v30';
 const FORGE_CACHE_PREFIX = 'forge-starter-v';
 const PRECACHE_ASSETS = [
   './',

@@ -238,7 +238,7 @@
             </div>
           </div>
           <div class="staff-catalog-designs-filters">
-            <label class="staff-catalog-designs-filter">
+            <label class="staff-catalog-designs-filter staff-catalog-designs-filter--search">
               <span>Search</span>
               <input type="search" value="${escapeAttribute(state.filters.search)}" placeholder="Search finished hats" data-action="catalog-finished-hat-search">
             </label>
@@ -441,10 +441,10 @@
               <p class="eyebrow staff-orders-eyebrow">Shared Library</p>
               <h3 id="staff-finished-hat-dialog-title">Finished Hat</h3>
             </div>
-            <div class="staff-finished-hat-dialog-header-actions" data-finished-hat-dialog-header-actions></div>
+            <div class="staff-catalog-dialog-header-actions staff-finished-hat-dialog-header-actions" data-finished-hat-dialog-header-actions></div>
           </div>
           <div data-finished-hat-dialog-status></div>
-          <form class="staff-design-dialog-form" data-finished-hat-dialog-form></form>
+          <form class="staff-design-dialog-form" id="staff-finished-hat-dialog-form" data-finished-hat-dialog-form></form>
         </div>
       `;
       documentRef.body.appendChild(dialogBackdrop);
@@ -515,7 +515,10 @@
               <button class="primary-button" type="button" data-action="catalog-edit-finished-hat-detail">Edit</button>
               <button class="secondary-button" type="button" data-action="catalog-close-finished-hat-dialog">Close</button>
             `
-            : `<button class="secondary-button" type="button" data-action="catalog-close-finished-hat-dialog">Close</button>`);
+            : `
+              <button class="primary-button" type="submit" form="staff-finished-hat-dialog-form" ${state.dialogSaving ? 'disabled' : ''}>${escapeHtml(state.dialogSaving ? 'Saving...' : (state.dialogMode === 'edit' ? 'Save Finished Hat' : 'Add Finished Hat'))}</button>
+              <button class="secondary-button" type="button" data-action="catalog-close-finished-hat-dialog">Cancel</button>
+            `);
       }
 
       statusNode.innerHTML = state.dialogError
@@ -600,10 +603,6 @@
             ${renderDialogField('notes', 'Notes', `<textarea name="notes">${escapeHtml(state.dialogValues.notes)}</textarea>`, true)}
           </div>
           ${state.optionError ? `<div class="staff-catalog-designs-state staff-catalog-designs-state--error"><p>${escapeHtml(state.optionError)}</p></div>` : ''}
-          <div class="staff-design-dialog-actions">
-            <button class="secondary-button" type="button" data-action="catalog-close-finished-hat-dialog">Cancel</button>
-            <button class="primary-button" type="submit" ${state.dialogSaving ? 'disabled' : ''}>${state.dialogSaving ? 'Saving...' : (state.dialogMode === 'edit' ? 'Save Finished Hat' : 'Add Finished Hat')}</button>
-          </div>
         </div>
       `;
     }

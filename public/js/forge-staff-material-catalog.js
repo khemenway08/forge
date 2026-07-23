@@ -160,7 +160,7 @@
             </div>
           </div>
           <div class="staff-catalog-designs-filters">
-            <label class="staff-catalog-designs-filter">
+            <label class="staff-catalog-designs-filter staff-catalog-designs-filter--search">
               <span>Search</span>
               <input type="search" value="${escapeAttribute(state.filters.search)}" placeholder="Search materials" data-action="catalog-material-search">
             </label>
@@ -216,10 +216,10 @@
             ${swatch.html}
           </div>
           <div class="staff-design-card-body">
-            <div class="staff-design-card-top">
-              <h4>${escapeHtml(record.material_name)}</h4>
+            <div class="staff-design-card-action-row">
               <span class="staff-design-status-badge staff-design-status-badge--${escapeAttribute(record.status || 'review')}">${escapeHtml(getMaterialStatusLabel(record.status))}</span>
             </div>
+            <h4 class="staff-design-card-title">${escapeHtml(record.material_name)}</h4>
             <dl class="staff-design-card-meta">
               ${renderMaterialMetaRow('Type', record.material_type)}
               ${renderMaterialMetaRow('Color', record.color)}
@@ -309,9 +309,12 @@
               <p class="eyebrow staff-orders-eyebrow">Shared Library</p>
               <h3 id="staff-material-dialog-title">Add Material</h3>
             </div>
-            <button class="secondary-button staff-design-dialog-close" type="button" data-action="catalog-close-material-dialog">Close</button>
+            <div class="staff-catalog-dialog-header-actions staff-design-dialog-header-actions">
+              <button class="primary-button" type="submit" form="staff-material-dialog-form" data-action="catalog-save-material">Save Material</button>
+              <button class="secondary-button staff-design-dialog-close" type="button" data-action="catalog-close-material-dialog">Cancel</button>
+            </div>
           </div>
-          <form class="staff-design-dialog-form" novalidate>
+          <form class="staff-design-dialog-form" id="staff-material-dialog-form" novalidate>
             <div class="staff-design-dialog-grid">
               <label class="staff-design-dialog-field">
                 <span>Material Name</span>
@@ -366,10 +369,6 @@
               </label>
             </div>
             <p class="staff-orders-status staff-design-dialog-status" data-catalog-material-dialog-status aria-live="polite"></p>
-            <div class="staff-design-dialog-actions">
-              <button class="primary-button" type="submit" data-action="catalog-save-material">Save Material</button>
-              <button class="secondary-button" type="button" data-action="catalog-close-material-dialog">Cancel</button>
-            </div>
           </form>
         </div>
       `;
@@ -451,7 +450,7 @@
       setFormValue('notes', values.notes);
 
       formNode.setAttribute('aria-busy', state.dialogSaving ? 'true' : 'false');
-      formNode.querySelectorAll('input, select, textarea, button').forEach((node) => {
+      dialogBackdrop.querySelectorAll('input, select, textarea, button').forEach((node) => {
         if (node.dataset.action === 'catalog-close-material-dialog') {
           node.disabled = false;
           return;
@@ -459,7 +458,7 @@
         node.disabled = state.dialogSaving;
       });
 
-      const saveButton = formNode.querySelector('[data-action="catalog-save-material"]');
+      const saveButton = dialogBackdrop.querySelector('[data-action="catalog-save-material"]');
       if (saveButton) {
         saveButton.textContent = state.dialogSaving ? 'Saving Material...' : 'Save Material';
       }

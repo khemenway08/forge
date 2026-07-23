@@ -82,6 +82,15 @@ test('material edit preview uses the shared contain-based preview frame and mate
   assert.match(catalogCssSource, /\.staff-material-card-thumb-image--cover\s*\{[\s\S]*object-fit:\s*cover;/);
 });
 
+test('material cards and dialog actions use the shared top-aligned catalog pattern', () => {
+  const moduleSource = fs.readFileSync(path.join(process.cwd(), 'public/js/forge-staff-material-catalog.js'), 'utf8');
+  assert.match(moduleSource, /staff-catalog-designs-filter staff-catalog-designs-filter--search/);
+  assert.match(moduleSource, /staff-design-card-action-row/);
+  assert.doesNotMatch(moduleSource, /aria-hidden="true">Edit<\/span>/);
+  assert.match(moduleSource, /staff-catalog-dialog-header-actions staff-design-dialog-header-actions/);
+  assert.doesNotMatch(moduleSource, /staff-design-dialog-actions/);
+});
+
 test('initial unauthenticated material render does not request protected records and authenticated render loads materials', async () => {
   const calls = [];
   let canLoad = false;

@@ -188,7 +188,7 @@
             </div>
           </div>
           <div class="staff-catalog-designs-filters">
-            <label class="staff-catalog-designs-filter">
+            <label class="staff-catalog-designs-filter staff-catalog-designs-filter--search">
               <span>Search</span>
               <input type="search" value="${escapeAttribute(state.filters.search)}" placeholder="Search design name" data-action="catalog-search">
             </label>
@@ -267,10 +267,10 @@
             ${thumbnail.html}
           </div>
           <div class="staff-design-card-body">
-            <div class="staff-design-card-top">
-              <h4>${escapeHtml(record.design_name)}</h4>
+            <div class="staff-design-card-action-row">
               <span class="staff-design-status-badge staff-design-status-badge--${escapeAttribute(record.status || 'review')}">${escapeHtml(getStatusLabel(record.status))}</span>
             </div>
+            <h4 class="staff-design-card-title">${escapeHtml(record.design_name)}</h4>
             <dl class="staff-design-card-meta">
               <div>
                 <dt>Category</dt>
@@ -377,9 +377,12 @@
               <p class="eyebrow staff-orders-eyebrow">Shared Library</p>
               <h3 id="staff-design-dialog-title">Add Design</h3>
             </div>
-            <button class="secondary-button staff-design-dialog-close" type="button" data-action="catalog-close-dialog">Close</button>
+            <div class="staff-catalog-dialog-header-actions staff-design-dialog-header-actions">
+              <button class="primary-button" type="submit" form="staff-design-dialog-form" data-action="catalog-save-design">Save Design</button>
+              <button class="secondary-button staff-design-dialog-close" type="button" data-action="catalog-close-dialog">Cancel</button>
+            </div>
           </div>
-          <form class="staff-design-dialog-form" novalidate>
+          <form class="staff-design-dialog-form" id="staff-design-dialog-form" novalidate>
             <div class="staff-design-dialog-grid">
               <label class="staff-design-dialog-field">
                 <span>Design Name</span>
@@ -426,10 +429,6 @@
               </label>
             </div>
             <p class="staff-orders-status staff-design-dialog-status" data-catalog-dialog-status aria-live="polite"></p>
-            <div class="staff-design-dialog-actions">
-              <button class="primary-button" type="submit" data-action="catalog-save-design">Save Design</button>
-              <button class="secondary-button" type="button" data-action="catalog-close-dialog">Cancel</button>
-            </div>
           </form>
         </div>
       `;
@@ -511,7 +510,7 @@
       setFormValue('notes', values.notes);
 
       formNode.setAttribute('aria-busy', state.dialogSaving ? 'true' : 'false');
-      formNode.querySelectorAll('input, select, textarea, button').forEach((node) => {
+      dialogBackdrop.querySelectorAll('input, select, textarea, button').forEach((node) => {
         if (node.dataset.action === 'catalog-close-dialog') {
           node.disabled = false;
           return;
@@ -519,7 +518,7 @@
         node.disabled = state.dialogSaving;
       });
 
-      const saveButton = formNode.querySelector('[data-action="catalog-save-design"]');
+      const saveButton = dialogBackdrop.querySelector('[data-action="catalog-save-design"]');
       if (saveButton) {
         saveButton.textContent = state.dialogSaving ? 'Saving Design...' : 'Save Design';
       }

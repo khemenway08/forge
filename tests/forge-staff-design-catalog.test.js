@@ -13,7 +13,7 @@ const catalogCssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/ap
 test('catalog scripts load before app.js and only in the protected staff shell', () => {
   assert.match(
     indexSource,
-    /<script src="js\/forge-staff-api-client\.js\?v=20260723-29"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260723-29"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260723-29"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260723-29"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260723-29"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260723-29"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260723-29"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260723-29"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260723-29"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260723-29"><\/script>\s*<script src="js\/forge-local-orders-queue\.js\?v=20260723-29"><\/script>\s*<script src="js\/app\.js\?v=20260723-29"><\/script>/
+    /<script src="js\/forge-staff-api-client\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-local-orders-queue\.js\?v=20260723-30"><\/script>\s*<script src="js\/app\.js\?v=20260723-30"><\/script>/
   );
   assert.match(indexSource, /data-screen="staff-catalog"/);
   assert.match(indexSource, /data-staff-catalog-content/);
@@ -102,6 +102,20 @@ test('design edit preview uses the shared contain-based preview frame instead of
   assert.match(catalogCssSource, /\.staff-design-thumbnail-preview\s*\{[\s\S]*min-height:\s*240px;[\s\S]*max-height:\s*320px;[\s\S]*aspect-ratio:\s*4\s*\/\s*3;/);
   assert.match(catalogCssSource, /\.staff-design-thumbnail-preview img\s*\{[\s\S]*object-fit:\s*contain;[\s\S]*object-position:\s*center;/);
   assert.doesNotMatch(catalogCssSource, /\.staff-design-thumbnail-preview img\s*\{[\s\S]*object-fit:\s*cover;/);
+});
+
+test('catalog headers filters and card actions use the shared top-aligned consistency structure', () => {
+  assert.match(catalogModuleSource, /staff-catalog-designs-filter staff-catalog-designs-filter--search/);
+  assert.match(catalogModuleSource, /staff-design-card-action-row/);
+  assert.doesNotMatch(catalogModuleSource, /aria-hidden="true">Edit<\/span>/);
+  assert.match(catalogModuleSource, /staff-catalog-dialog-header-actions staff-design-dialog-header-actions/);
+  assert.doesNotMatch(catalogModuleSource, /staff-design-dialog-actions/);
+  assert.match(catalogCssSource, /\.staff-catalog-designs-toolbar\s*\{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*auto;/);
+  assert.match(catalogCssSource, /\.staff-catalog-designs-filters\s*\{[\s\S]*repeat\(auto-fit,\s*minmax\(180px,\s*1fr\)\);/);
+  assert.match(catalogCssSource, /\.staff-design-card-action-row\s*\{/);
+  assert.match(catalogCssSource, /\.staff-catalog-dialog-header-actions,\s*\.staff-design-dialog-header-actions,\s*\.staff-finished-hat-dialog-header-actions\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-wrap:\s*nowrap;/);
+  assert.match(catalogCssSource, /\.staff-catalog-dialog-header-actions \.primary-button,\s*\.staff-catalog-dialog-header-actions \.secondary-button\s*\{[\s\S]*width:\s*auto;[\s\S]*white-space:\s*nowrap;/);
+  assert.match(catalogCssSource, /@media \(max-width: 767px\) \{[\s\S]*\.staff-catalog-dialog-header-actions\s*\{[\s\S]*flex-wrap:\s*wrap;/);
 });
 
 test('catalog client and module do not introduce local browser persistence for catalog records', () => {

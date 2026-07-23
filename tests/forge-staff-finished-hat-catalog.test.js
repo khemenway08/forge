@@ -215,7 +215,7 @@ test('finished hat cards open the read-only detail view by click and keyboard an
   harness.container.dispatch('click', createActionEvent('catalog-open-finished-hat-detail', '1'));
   assert.equal(harness.dialogBackdrop.hidden, false);
   assert.match(harness.formNode.innerHTML, /Texas Flag Acrylic Patch Hat Black Performance Rope/);
-  assert.match(harness.headerActionsNode.innerHTML, />Edit<\/button>/);
+  assert.match(harness.headerActionsNode.innerHTML, /Edit[\s\S]*Close/);
   assert.match(harness.formNode.innerHTML, /Texas Flag/);
   assert.match(harness.formNode.innerHTML, /Zapped — Blackhawk R\+ — Black \/ Red/);
 
@@ -235,7 +235,7 @@ test('finished hat cards open the read-only detail view by click and keyboard an
     }
   });
   await flushMicrotasks();
-  assert.match(harness.formNode.innerHTML, /Save Finished Hat/);
+  assert.match(harness.headerActionsNode.innerHTML, /Save Finished Hat[\s\S]*Cancel/);
   assert.match(harness.formNode.innerHTML, /name="finished_hat_name"/);
 });
 
@@ -248,8 +248,16 @@ test('add finished hat still opens the existing create form', async () => {
   await flushMicrotasks();
 
   assert.equal(harness.dialogBackdrop.hidden, false);
-  assert.match(harness.formNode.innerHTML, /Add Finished Hat/);
+  assert.match(harness.headerActionsNode.innerHTML, /Add Finished Hat[\s\S]*Cancel/);
   assert.match(harness.formNode.innerHTML, /Choose Photo/);
+});
+
+test('catalog dialog header actions stay horizontal until the narrow breakpoint and finished hats keep full-card behavior', () => {
+  assert.match(catalogCssSource, /\.staff-catalog-dialog-header-actions,\s*\.staff-design-dialog-header-actions,\s*\.staff-finished-hat-dialog-header-actions\s*\{[\s\S]*display:\s*flex;[\s\S]*gap:\s*10px;[\s\S]*flex-wrap:\s*nowrap;/);
+  assert.match(catalogCssSource, /\.staff-catalog-dialog-header-actions \.primary-button,\s*\.staff-catalog-dialog-header-actions \.secondary-button\s*\{[\s\S]*width:\s*auto;[\s\S]*white-space:\s*nowrap;/);
+  assert.match(catalogCssSource, /@media \(max-width: 767px\) \{[\s\S]*\.staff-catalog-dialog-header-actions\s*\{[\s\S]*flex-wrap:\s*wrap;/);
+  assert.match(appSource, /renderStaffCatalogPlaceholderSection/);
+  assert.match(appSource, /Shortlist coming later/);
 });
 
 test('detail view opens design picker with current link selected and cached library data', async () => {

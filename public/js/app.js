@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260723-29';
+const FORGE_BUILD_VERSION = '20260723-30';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
 
@@ -2258,19 +2258,19 @@ function getStaffCatalogSectionContent(sectionKey) {
   const sections = {
     designs: {
       title: 'Designs',
-      message: 'The visual design library will be built in the next step.'
+      message: 'Search and manage the shared Hilltop design library without affecting customer ordering.'
     },
     hats: {
       title: 'Hats',
-      message: 'The shared hat library is currently unavailable on this device.'
+      message: 'Search and manage blank hat records for future design combinations without affecting customer ordering.'
     },
     materials: {
       title: 'Materials',
-      message: 'The shared material library is currently unavailable on this device.'
+      message: 'Search and manage patch and production materials without changing customer ordering.'
     },
     'finished-hats': {
       title: 'Finished Hats',
-      message: 'The shared finished hat library is currently unavailable on this device.'
+      message: 'Track real completed design, hat, and material combinations without affecting customer ordering or boutique inventory counts.'
     },
     shortlist: {
       title: 'Shortlist',
@@ -2279,6 +2279,30 @@ function getStaffCatalogSectionContent(sectionKey) {
   };
 
   return sections[sectionKey] || sections.designs;
+}
+
+function renderStaffCatalogPlaceholderSection(sectionKey, stateMarkup, options = {}) {
+  const sectionContent = getStaffCatalogSectionContent(sectionKey);
+  const resultCount = typeof options.resultCount === 'number' ? options.resultCount : 0;
+  const actionMarkup = options.actionMarkup || '';
+  const headingEyebrow = options.eyebrow || 'Shared Library';
+
+  return `
+    <section class="staff-catalog-designs" role="tabpanel" aria-labelledby="staff-catalog-tab-${escapeHtml(sectionKey)}">
+      <div class="staff-catalog-designs-toolbar">
+        <div class="staff-catalog-designs-heading">
+          <p class="eyebrow staff-orders-eyebrow">${escapeHtml(headingEyebrow)}</p>
+          <h3>${escapeHtml(sectionContent.title)}</h3>
+          <p>${escapeHtml(sectionContent.message)}</p>
+        </div>
+        <div class="staff-catalog-designs-actions">
+          <p class="staff-catalog-designs-count">${resultCount} result${resultCount === 1 ? '' : 's'}</p>
+          ${actionMarkup}
+        </div>
+      </div>
+      ${stateMarkup}
+    </section>
+  `;
 }
 
 function renderStaffCatalog() {
@@ -2306,13 +2330,11 @@ function renderStaffCatalog() {
       return;
     }
 
-    staffCatalogContent.innerHTML = `
-      <section class="staff-catalog-placeholder" role="tabpanel" aria-labelledby="staff-catalog-tab-designs">
-        <p class="eyebrow staff-orders-eyebrow">Unavailable</p>
-        <h3>Designs</h3>
-        <p>The shared design library is currently unavailable on this device.</p>
-      </section>
-    `;
+    staffCatalogContent.innerHTML = renderStaffCatalogPlaceholderSection(
+      'designs',
+      '<div class="staff-catalog-designs-state"><h4>Designs unavailable</h4><p>The shared design library is currently unavailable on this device.</p></div>',
+      { eyebrow: 'Unavailable' }
+    );
     return;
   }
 
@@ -2322,13 +2344,11 @@ function renderStaffCatalog() {
       return;
     }
 
-    staffCatalogContent.innerHTML = `
-      <section class="staff-catalog-placeholder" role="tabpanel" aria-labelledby="staff-catalog-tab-hats">
-        <p class="eyebrow staff-orders-eyebrow">Unavailable</p>
-        <h3>Hats</h3>
-        <p>The shared hat library is currently unavailable on this device.</p>
-      </section>
-    `;
+    staffCatalogContent.innerHTML = renderStaffCatalogPlaceholderSection(
+      'hats',
+      '<div class="staff-catalog-designs-state"><h4>Hats unavailable</h4><p>The shared hat library is currently unavailable on this device.</p></div>',
+      { eyebrow: 'Unavailable' }
+    );
     return;
   }
 
@@ -2338,13 +2358,11 @@ function renderStaffCatalog() {
       return;
     }
 
-    staffCatalogContent.innerHTML = `
-      <section class="staff-catalog-placeholder" role="tabpanel" aria-labelledby="staff-catalog-tab-materials">
-        <p class="eyebrow staff-orders-eyebrow">Unavailable</p>
-        <h3>Materials</h3>
-        <p>The shared material library is currently unavailable on this device.</p>
-      </section>
-    `;
+    staffCatalogContent.innerHTML = renderStaffCatalogPlaceholderSection(
+      'materials',
+      '<div class="staff-catalog-designs-state"><h4>Materials unavailable</h4><p>The shared material library is currently unavailable on this device.</p></div>',
+      { eyebrow: 'Unavailable' }
+    );
     return;
   }
 
@@ -2354,23 +2372,19 @@ function renderStaffCatalog() {
       return;
     }
 
-    staffCatalogContent.innerHTML = `
-      <section class="staff-catalog-placeholder" role="tabpanel" aria-labelledby="staff-catalog-tab-finished-hats">
-        <p class="eyebrow staff-orders-eyebrow">Unavailable</p>
-        <h3>Finished Hats</h3>
-        <p>The shared finished hat library is currently unavailable on this device.</p>
-      </section>
-    `;
+    staffCatalogContent.innerHTML = renderStaffCatalogPlaceholderSection(
+      'finished-hats',
+      '<div class="staff-catalog-designs-state"><h4>Finished hats unavailable</h4><p>The shared finished hat library is currently unavailable on this device.</p></div>',
+      { eyebrow: 'Unavailable' }
+    );
     return;
   }
 
-  staffCatalogContent.innerHTML = `
-    <section class="staff-catalog-placeholder" role="tabpanel" aria-labelledby="staff-catalog-tab-${escapeHtml(activeSection)}">
-      <p class="eyebrow staff-orders-eyebrow">Coming Next</p>
-      <h3>${escapeHtml(sectionContent.title)}</h3>
-      <p>${escapeHtml(sectionContent.message)}</p>
-    </section>
-  `;
+  staffCatalogContent.innerHTML = renderStaffCatalogPlaceholderSection(
+    activeSection,
+    '<div class="staff-catalog-designs-state"><h4>Shortlist coming later</h4><p>Saved design and hat combinations will appear here later.</p></div>',
+    { eyebrow: 'Coming Next' }
+  );
 }
 
 function setStaffCatalogSection(sectionKey) {

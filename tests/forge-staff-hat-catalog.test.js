@@ -69,6 +69,15 @@ test('hat edit photo preview uses the shared contain-based preview frame instead
   assert.doesNotMatch(catalogCssSource, /\.staff-design-thumbnail-preview img\s*\{[\s\S]*object-fit:\s*cover;/);
 });
 
+test('hat cards and dialog actions use the shared top-aligned catalog pattern', () => {
+  const moduleSource = fs.readFileSync(path.join(process.cwd(), 'public/js/forge-staff-hat-catalog.js'), 'utf8');
+  assert.match(moduleSource, /staff-catalog-designs-filter staff-catalog-designs-filter--search/);
+  assert.match(moduleSource, /staff-design-card-action-row/);
+  assert.doesNotMatch(moduleSource, /aria-hidden="true">Edit<\/span>/);
+  assert.match(moduleSource, /staff-catalog-dialog-header-actions staff-design-dialog-header-actions/);
+  assert.doesNotMatch(moduleSource, /staff-design-dialog-actions/);
+});
+
 test('initial unauthenticated hat render does not request protected records and authenticated render loads hats', async () => {
   const calls = [];
   let canLoad = false;
