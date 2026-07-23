@@ -123,6 +123,40 @@ test('finished hat card photos stay cover-cropped while dialog preview stays sha
   assert.match(catalogCssSource, /\.staff-finished-hat-card-title\s*\{[\s\S]*-webkit-line-clamp:\s*2;/);
 });
 
+test('visual picker layout uses a constrained left column, flexible right column, wrapping filters, and responsive grid', () => {
+  assert.match(catalogCssSource, /\.staff-design-dialog\s*\{[\s\S]*width:\s*min\(95vw,\s*1380px\);[\s\S]*overflow-x:\s*hidden;/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-picker-shell\s*\{[\s\S]*grid-template-columns:\s*clamp\(320px,\s*28vw,\s*380px\)\s*minmax\(0,\s*1fr\);[\s\S]*min-width:\s*0;/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-picker-panel\s*\{[\s\S]*min-width:\s*0;/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-picker-filters\s*\{[\s\S]*grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(160px,\s*1fr\)\);/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-picker-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(135px,\s*1fr\)\);[\s\S]*overflow-x:\s*hidden;/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-picker-grid--design\s*\{[\s\S]*height:\s*auto;[\s\S]*min-height:\s*0;[\s\S]*grid-auto-rows:\s*max-content;[\s\S]*align-content:\s*start;/);
+  assert.match(catalogCssSource, /\.staff-link-picker-toolbar-actions\s*\{[\s\S]*flex-wrap:\s*wrap;[\s\S]*justify-content:\s*flex-end;/);
+});
+
+test('visual picker tile structure is image-only and independent from generic catalog cards', () => {
+  assert.match(catalogCssSource, /\.staff-finished-hat-picker-tile\s*\{[\s\S]*display:\s*block;[\s\S]*min-width:\s*0;[\s\S]*position:\s*relative;[\s\S]*overflow:\s*hidden;/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-picker-tile__marker\s*\{/);
+  assert.doesNotMatch(catalogCssSource, /\.staff-finished-hat-picker-body\s*\{/);
+  assert.doesNotMatch(catalogCssSource, /\.staff-finished-hat-picker-title\s*\{/);
+  assert.doesNotMatch(catalogCssSource, /\.staff-finished-hat-picker-meta\s*\{/);
+});
+
+test('visual picker design and hat frames use dedicated contain-based image treatment while material keeps square swatches', () => {
+  assert.match(catalogCssSource, /\.staff-finished-hat-picker-media\s*\{[\s\S]*aspect-ratio:\s*4 \/ 3;[\s\S]*min-height:\s*110px;/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-picker-media--design\s*\{[\s\S]*aspect-ratio:\s*4 \/ 3;[\s\S]*min-height:\s*110px;/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-picker-media--material\s*\{[\s\S]*aspect-ratio:\s*1 \/ 1;/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-picker-image--design,\s*\.staff-finished-hat-picker-image--hat\s*\{[\s\S]*object-fit:\s*contain;/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-picker-image--material\s*\{[\s\S]*height:\s*100%;/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-picker-image--material-contain\s*\{[\s\S]*object-fit:\s*contain;/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-picker-image--material-cover\s*\{[\s\S]*object-fit:\s*cover;/);
+  assert.doesNotMatch(catalogCssSource, /\.staff-finished-hat-picker-media[^}]*staff-design-card-thumb/);
+});
+
+test('material picker fit mode keeps wide stainless stripe swatches visible', () => {
+  assert.equal(finishedHatCatalogModule.getMaterialSwatchFitMode({ image_width: 1800, image_height: 1200 }), 'contain');
+  assert.equal(finishedHatCatalogModule.getMaterialSwatchFitMode({ image_width: 1200, image_height: 1800 }), 'cover');
+});
+
 test('initial unauthenticated finished-hat render does not request protected records and authenticated render loads finished hats', async () => {
   const calls = [];
   let canLoad = false;
@@ -216,6 +250,273 @@ test('add finished hat still opens the existing create form', async () => {
   assert.equal(harness.dialogBackdrop.hidden, false);
   assert.match(harness.formNode.innerHTML, /Add Finished Hat/);
   assert.match(harness.formNode.innerHTML, /Choose Photo/);
+});
+
+test('detail view opens design picker with current link selected and cached library data', async () => {
+  const harness = createFinishedHatCatalogHarness();
+
+  harness.module.render(harness.container);
+  await flushMicrotasks();
+  harness.container.dispatch('click', createActionEvent('catalog-open-finished-hat-detail', '1'));
+  harness.dialogBackdrop.dispatch('click', {
+    target: { dataset: { action: 'catalog-open-link-picker', linkType: 'design' } }
+  });
+  await flushMicrotasks();
+
+  assert.match(harness.formNode.innerHTML, /Choose Design/);
+  assert.match(harness.formNode.innerHTML, /class="staff-finished-hat-picker-tile staff-finished-hat-picker-tile--design staff-finished-hat-picker-tile--selected"/);
+  assert.match(harness.formNode.innerHTML, /staff-finished-hat-picker-grid--design/);
+  assert.match(harness.formNode.innerHTML, /role="option"/);
+  assert.match(harness.formNode.innerHTML, /tabindex="0"/);
+  assert.match(harness.formNode.innerHTML, /aria-selected="true"/);
+  assert.match(harness.formNode.innerHTML, /title="Texas Flag/);
+  assert.match(harness.formNode.innerHTML, /staff-finished-hat-picker-tile__media staff-finished-hat-picker-media staff-finished-hat-picker-media--design/);
+  assert.match(harness.formNode.innerHTML, /staff-finished-hat-picker-tile__marker">Selected<\/span>/);
+  assert.doesNotMatch(harness.formNode.innerHTML, /staff-design-card-thumb/);
+  assert.doesNotMatch(harness.formNode.innerHTML, /staff-finished-hat-picker-body|staff-finished-hat-picker-title|staff-finished-hat-picker-meta/);
+  assert.doesNotMatch(harness.formNode.innerHTML, /<button[^>]*staff-finished-hat-picker-tile/);
+  assert.match(harness.formNode.innerHTML, /Selected/);
+  assert.equal(harness.calls.listDesigns, 1);
+
+  harness.dialogBackdrop.dispatch('click', {
+    target: { dataset: { action: 'catalog-cancel-link-picker' } }
+  });
+  harness.dialogBackdrop.dispatch('click', {
+    target: { dataset: { action: 'catalog-open-link-picker', linkType: 'design' } }
+  });
+  await flushMicrotasks();
+
+  assert.equal(harness.calls.listDesigns, 1);
+});
+
+test('picker search filters and clear filters update the visible library results', async () => {
+  const harness = createFinishedHatCatalogHarness({
+    hats: [
+      { id: 'hat-1', manufacturer: 'Zapped', model: 'Blackhawk R+', color: 'Black / Red', hat_name: 'Blackhawk R+ Black Red', status: 'active' },
+      { id: 'hat-2', manufacturer: 'Richardson', model: '112', color: 'Navy / Charcoal', hat_name: 'Richardson 112 Navy Charcoal', status: 'review' }
+    ]
+  });
+
+  harness.module.render(harness.container);
+  await flushMicrotasks();
+  harness.container.dispatch('click', createActionEvent('catalog-open-finished-hat-detail', '1'));
+  harness.dialogBackdrop.dispatch('click', {
+    target: { dataset: { action: 'catalog-open-link-picker', linkType: 'hat' } }
+  });
+  await flushMicrotasks();
+
+  assert.match(harness.formNode.innerHTML, /staff-finished-hat-picker-tile__media staff-finished-hat-picker-media staff-finished-hat-picker-media--hat/);
+  harness.dialogBackdrop.dispatch('input', {
+    target: { dataset: { action: 'catalog-picker-search' }, value: 'richardson' }
+  });
+  assert.match(harness.formNode.innerHTML, /title="Richardson • 112 • Navy \/ Charcoal • Richardson 112 Navy Charcoal"/);
+  assert.doesNotMatch(harness.formNode.innerHTML, /data-picker-option-id="hat-1"/);
+
+  harness.dialogBackdrop.dispatch('change', {
+    target: { dataset: { pickerFilter: 'manufacturer' }, value: 'Richardson' }
+  });
+  assert.match(harness.formNode.innerHTML, /Richardson 112/);
+
+  harness.dialogBackdrop.dispatch('click', {
+    target: { dataset: { action: 'catalog-picker-clear-filters' } }
+  });
+  assert.match(harness.formNode.innerHTML, /Blackhawk R\+/);
+  assert.match(harness.formNode.innerHTML, /Richardson 112/);
+});
+
+test('picker cancel preserves the existing detail link and apply updates only the chosen foreign key', async () => {
+  const harness = createFinishedHatCatalogHarness({
+    designs: [
+      { id: 'design-1', design_name: 'Texas Flag', category: 'Patriotic', production_method: 'Acrylic', status: 'active' },
+      { id: 'design-2', design_name: 'America 250 Eagle', category: 'Patriotic', production_method: 'Leatherette Engraving', status: 'review' }
+    ]
+  });
+
+  harness.module.render(harness.container);
+  await flushMicrotasks();
+  harness.container.dispatch('click', createActionEvent('catalog-open-finished-hat-detail', '1'));
+  harness.dialogBackdrop.dispatch('click', {
+    target: { dataset: { action: 'catalog-open-link-picker', linkType: 'design' } }
+  });
+  await flushMicrotasks();
+
+  harness.dialogBackdrop.dispatch('click', {
+    target: { dataset: { action: 'catalog-picker-select-card', pickerOptionId: 'design-2' } }
+  });
+  harness.dialogBackdrop.dispatch('click', {
+    target: { dataset: { action: 'catalog-cancel-link-picker' } }
+  });
+  assert.equal(harness.calls.updateFinishedHat.length, 0);
+  assert.match(harness.formNode.innerHTML, /Texas Flag/);
+
+  harness.dialogBackdrop.dispatch('click', {
+    target: { dataset: { action: 'catalog-open-link-picker', linkType: 'design' } }
+  });
+  await flushMicrotasks();
+  harness.dialogBackdrop.dispatch('click', {
+    target: { dataset: { action: 'catalog-picker-select-card', pickerOptionId: 'design-2' } }
+  });
+  harness.dialogBackdrop.dispatch('click', {
+    target: { dataset: { action: 'catalog-apply-link-picker' } }
+  });
+  await flushMicrotasks();
+
+  assert.equal(harness.calls.updateFinishedHat.length, 1);
+  assert.equal(harness.calls.updateFinishedHat[0].payload.design_id, 'design-2');
+  assert.equal(harness.calls.updateFinishedHat[0].payload.hat_id, 'hat-1');
+  assert.equal(harness.calls.updateFinishedHat[0].payload.material_id, 'material-1');
+  assert.equal(harness.calls.updateFinishedHat[0].payload.finished_hat_name, 'Texas Flag Acrylic Patch Hat Black Performance Rope');
+  assert.match(harness.formNode.innerHTML, /America 250 Eagle/);
+});
+
+test('clear link and escape close behave safely in the visual picker', async () => {
+  const harness = createFinishedHatCatalogHarness();
+
+  harness.module.render(harness.container);
+  await flushMicrotasks();
+  harness.container.dispatch('click', createActionEvent('catalog-open-finished-hat-detail', '1'));
+  harness.dialogBackdrop.dispatch('click', {
+    target: { dataset: { action: 'catalog-open-link-picker', linkType: 'material' } }
+  });
+  await flushMicrotasks();
+
+  assert.match(harness.formNode.innerHTML, /staff-finished-hat-picker-tile__media staff-finished-hat-picker-media staff-finished-hat-picker-media--material/);
+  assert.doesNotMatch(harness.formNode.innerHTML, /staff-finished-hat-picker-body/);
+
+  harness.dialogBackdrop.dispatch('keydown', {
+    key: 'Escape',
+    preventDefault() {}
+  });
+  assert.match(harness.formNode.innerHTML, /Brushed Stainless Black Laserable Acrylic Panels/);
+  assert.equal(harness.calls.updateFinishedHat.length, 0);
+
+  harness.dialogBackdrop.dispatch('click', {
+    target: { dataset: { action: 'catalog-clear-link', linkType: 'material' } }
+  });
+  await flushMicrotasks();
+
+  assert.equal(harness.calls.updateFinishedHat.length, 1);
+  assert.equal(harness.calls.updateFinishedHat[0].payload.material_id, '');
+  assert.match(harness.formNode.innerHTML, /Needs Design \+ Material|Needs Material/);
+});
+
+test('picker uses the same image-only tile renderer for unfiltered filtered one-result zero-result and cached reopen states', async () => {
+  const harness = createFinishedHatCatalogHarness({
+    designs: [
+      { id: 'design-1', design_name: 'Texas Flag', category: 'Patriotic', production_method: 'Acrylic', status: 'active' },
+      { id: 'design-2', design_name: 'America 250 Eagle', category: 'Patriotic', production_method: 'Leatherette Engraving', status: 'review' }
+    ],
+    hats: [
+      { id: 'hat-1', manufacturer: 'Zapped', model: 'Blackhawk R+', color: 'Black / Red', hat_name: 'Blackhawk R+ Black Red', status: 'active' },
+      { id: 'hat-2', manufacturer: 'Richardson', model: '112', color: 'Navy / Charcoal', hat_name: 'Richardson 112 Navy Charcoal', status: 'review' }
+    ],
+    materials: [
+      { id: 'material-1', material_name: 'Brushed Stainless Black Laserable Acrylic Panels', material_type: 'Acrylic', color: 'Black / Stainless', status: 'active', image_width: 1800, image_height: 1200 },
+      { id: 'material-2', material_name: 'Brushed Stainless Orange Laserable Acrylic Panels', material_type: 'Acrylic', color: 'Orange / Stainless', status: 'active', image_width: 1800, image_height: 1200 }
+    ]
+  });
+
+  harness.module.render(harness.container);
+  await flushMicrotasks();
+  harness.container.dispatch('click', createActionEvent('catalog-open-finished-hat-detail', '1'));
+
+  for (const type of ['design', 'hat', 'material']) {
+    harness.dialogBackdrop.dispatch('click', {
+      target: { dataset: { action: 'catalog-open-link-picker', linkType: type } }
+    });
+    await flushMicrotasks();
+
+    assert.match(harness.formNode.innerHTML, /staff-finished-hat-picker-tile/);
+    if (type === 'design') {
+      assert.match(harness.formNode.innerHTML, /staff-finished-hat-picker-grid--design/);
+    }
+    assert.doesNotMatch(harness.formNode.innerHTML, /staff-design-card-body|staff-design-card-top|staff-design-status-badge|staff-design-card-thumb/);
+
+    if (type === 'design') {
+      harness.dialogBackdrop.dispatch('input', {
+        target: { dataset: { action: 'catalog-picker-search' }, value: 'America 250' }
+      });
+    } else if (type === 'hat') {
+      harness.dialogBackdrop.dispatch('input', {
+        target: { dataset: { action: 'catalog-picker-search' }, value: 'Richardson' }
+      });
+    } else {
+      harness.dialogBackdrop.dispatch('input', {
+        target: { dataset: { action: 'catalog-picker-search' }, value: 'Orange' }
+      });
+    }
+
+    assert.match(harness.formNode.innerHTML, /staff-finished-hat-picker-tile/);
+    assert.doesNotMatch(harness.formNode.innerHTML, /staff-finished-hat-picker-body|staff-finished-hat-picker-title|staff-finished-hat-picker-meta/);
+
+    harness.dialogBackdrop.dispatch('input', {
+      target: { dataset: { action: 'catalog-picker-search' }, value: 'zzzz-no-match' }
+    });
+    assert.match(harness.formNode.innerHTML, /No results match these filters/);
+
+    harness.dialogBackdrop.dispatch('click', {
+      target: { dataset: { action: 'catalog-cancel-link-picker' } }
+    });
+    harness.dialogBackdrop.dispatch('click', {
+      target: { dataset: { action: 'catalog-open-link-picker', linkType: type } }
+    });
+    await flushMicrotasks();
+
+    assert.match(harness.formNode.innerHTML, /staff-finished-hat-picker-tile/);
+    assert.doesNotMatch(harness.formNode.innerHTML, /staff-design-card-body|staff-finished-hat-picker-body/);
+
+    harness.dialogBackdrop.dispatch('click', {
+      target: { dataset: { action: 'catalog-cancel-link-picker' } }
+    });
+  }
+});
+
+test('design grid keeps natural row sizing for many results and one filtered result while hats and materials stay on the shared grid class', async () => {
+  const manyDesigns = Array.from({ length: 59 }, (_, index) => ({
+    id: `design-${index + 1}`,
+    design_name: `Design ${index + 1}`,
+    category: 'Patriotic',
+    production_method: 'Acrylic',
+    status: 'active'
+  }));
+  const harness = createFinishedHatCatalogHarness({ designs: manyDesigns });
+
+  harness.module.render(harness.container);
+  await flushMicrotasks();
+  harness.container.dispatch('click', createActionEvent('catalog-open-finished-hat-detail', '1'));
+  harness.dialogBackdrop.dispatch('click', {
+    target: { dataset: { action: 'catalog-open-link-picker', linkType: 'design' } }
+  });
+  await flushMicrotasks();
+
+  assert.match(harness.formNode.innerHTML, /staff-finished-hat-picker-grid--design/);
+  assert.match(harness.formNode.innerHTML, /data-picker-option-id="design-59"/);
+
+  harness.dialogBackdrop.dispatch('input', {
+    target: { dataset: { action: 'catalog-picker-search' }, value: 'Design 59' }
+  });
+
+  assert.match(harness.formNode.innerHTML, /staff-finished-hat-picker-grid--design/);
+  assert.match(harness.formNode.innerHTML, /data-picker-option-id="design-59"/);
+  assert.doesNotMatch(harness.formNode.innerHTML, /data-picker-option-id="design-1"/);
+
+  harness.dialogBackdrop.dispatch('click', {
+    target: { dataset: { action: 'catalog-cancel-link-picker' } }
+  });
+  harness.dialogBackdrop.dispatch('click', {
+    target: { dataset: { action: 'catalog-open-link-picker', linkType: 'hat' } }
+  });
+  await flushMicrotasks();
+  assert.doesNotMatch(harness.formNode.innerHTML, /staff-finished-hat-picker-grid--design/);
+
+  harness.dialogBackdrop.dispatch('click', {
+    target: { dataset: { action: 'catalog-cancel-link-picker' } }
+  });
+  harness.dialogBackdrop.dispatch('click', {
+    target: { dataset: { action: 'catalog-open-link-picker', linkType: 'material' } }
+  });
+  await flushMicrotasks();
+  assert.doesNotMatch(harness.formNode.innerHTML, /staff-finished-hat-picker-grid--design/);
 });
 
 test('app integration activates finished hats through the protected catalog shell', () => {
@@ -331,9 +632,18 @@ function createFakeDialogNode(selector) {
   };
 }
 
-function createFinishedHatCatalogHarness() {
+function createFinishedHatCatalogHarness(options = {}) {
   const document = createCatalogTestDocument();
   const container = createCatalogTestContainer();
+  const calls = {
+    listDesigns: 0,
+    listHats: 0,
+    listMaterials: 0,
+    updateFinishedHat: []
+  };
+  const designRecords = options.designs || [{ id: 'design-1', design_name: 'Texas Flag', category: 'Patriotic', production_method: 'Acrylic', status: 'active' }];
+  const hatRecords = options.hats || [{ id: 'hat-1', manufacturer: 'Zapped', model: 'Blackhawk R+', color: 'Black / Red', hat_name: 'Blackhawk R+ Black Red', status: 'active' }];
+  const materialRecords = options.materials || [{ id: 'material-1', material_name: 'Brushed Stainless Black Laserable Acrylic Panels', material_type: 'Acrylic', color: 'Black / Stainless', status: 'active', image_width: 1200, image_height: 1200 }];
   const module = finishedHatCatalogModule.createStaffFinishedHatCatalogModule({
     apiClient: {
       async listFinishedHats() {
@@ -360,18 +670,24 @@ function createFinishedHatCatalogHarness() {
         };
       },
       async updateFinishedHat(_id, payload) {
+        calls.updateFinishedHat.push({ payload });
+        const selectedDesign = designRecords.find((item) => item.id === payload.design_id) || null;
+        const selectedHat = hatRecords.find((item) => item.id === payload.hat_id) || null;
+        const selectedMaterial = materialRecords.find((item) => item.id === payload.material_id) || null;
         return {
           ok: true,
           authenticated: true,
           finished_hat: {
             id: '1',
             ...payload,
-            design_name: 'Texas Flag',
-            hat_manufacturer: 'Zapped',
-            hat_model: 'Blackhawk R+',
-            hat_color: 'Black / Red',
-            material_name: 'Brushed Stainless Black Laserable Acrylic Panels',
-            material_color: 'Black / Stainless'
+            design_name: selectedDesign?.design_name || null,
+            hat_manufacturer: selectedHat?.manufacturer || null,
+            hat_model: selectedHat?.model || null,
+            hat_color: selectedHat?.color || null,
+            material_name: selectedMaterial?.material_name || null,
+            material_type: selectedMaterial?.material_type || null,
+            material_color: selectedMaterial?.color || null,
+            needs_linking: !payload.design_id || !payload.hat_id || !payload.material_id
           }
         };
       },
@@ -395,17 +711,20 @@ function createFinishedHatCatalogHarness() {
     },
     designApiClient: {
       async listDesigns() {
-        return { ok: true, authenticated: true, designs: [{ id: 'design-1', design_name: 'Texas Flag' }] };
+        calls.listDesigns += 1;
+        return { ok: true, authenticated: true, designs: designRecords };
       }
     },
     hatApiClient: {
       async listHats() {
-        return { ok: true, authenticated: true, hats: [{ id: 'hat-1', manufacturer: 'Zapped', model: 'Blackhawk R+', color: 'Black / Red', hat_name: 'Blackhawk R+ Black Red' }] };
+        calls.listHats += 1;
+        return { ok: true, authenticated: true, hats: hatRecords };
       }
     },
     materialApiClient: {
       async listMaterials() {
-        return { ok: true, authenticated: true, materials: [{ id: 'material-1', material_name: 'Brushed Stainless Black Laserable Acrylic Panels', material_type: 'Acrylic', color: 'Black / Stainless' }] };
+        calls.listMaterials += 1;
+        return { ok: true, authenticated: true, materials: materialRecords };
       }
     },
     canLoadProtectedRecords() {
@@ -416,6 +735,7 @@ function createFinishedHatCatalogHarness() {
   });
 
   return {
+    calls,
     module,
     container,
     dialogBackdrop: document.__dialogBackdrop,

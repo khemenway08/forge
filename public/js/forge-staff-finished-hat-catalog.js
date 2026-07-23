@@ -33,6 +33,7 @@
     notes: ''
   };
   const MISSING_PHOTO_COPY = 'No photo yet';
+  const LINK_TYPES = ['design', 'hat', 'material'];
 
   function createStaffFinishedHatCatalogModule(options = {}) {
     const apiClient = options.apiClient || null;
@@ -79,9 +80,15 @@
       dialogPhotoPath: '',
       dialogPhotoFile: null,
       dialogPhotoFileName: '',
-      dialogDesignSearch: '',
-      dialogHatSearch: '',
-      dialogMaterialSearch: ''
+      pickerOpen: false,
+      pickerType: '',
+      pickerSearch: '',
+      pickerFilters: {},
+      pickerSelectedId: '',
+      pickerCurrentId: '',
+      pickerSaving: false,
+      pickerError: '',
+      pickerTriggerLabel: ''
     };
 
     let container = null;
@@ -90,6 +97,7 @@
     let formNode = null;
     let statusNode = null;
     let lastFocusTarget = null;
+    let lastPickerFocusTarget = null;
 
     function render(nextContainer) {
       if (nextContainer) {
@@ -164,6 +172,7 @@
         !materialApiClient || typeof materialApiClient.listMaterials !== 'function'
       ) {
         state.optionError = 'Catalog link options are currently unavailable.';
+        renderDialog();
         return;
       }
 
@@ -178,19 +187,21 @@
           materialApiClient.listMaterials()
         ]);
 
-        if (
-          designResult?.unauthenticated ||
-          hatResult?.unauthenticated ||
-          materialResult?.unauthenticated
-        ) {
+        if (designResult?.unauthenticated || hatResult?.unauthenticated || materialResult?.unauthenticated) {
           state.optionError = 'Staff authentication is required.';
           state.optionsLoaded = false;
           return;
         }
 
-        state.designOptions = Array.isArray(designResult?.designs) ? designResult.designs.map(normalizeDesignOption).sort(compareOptionsByLabel) : [];
-        state.hatOptions = Array.isArray(hatResult?.hats) ? hatResult.hats.map(normalizeHatOption).sort(compareOptionsByLabel) : [];
-        state.materialOptions = Array.isArray(materialResult?.materials) ? materialResult.materials.map(normalizeMaterialOption).sort(compareOptionsByLabel) : [];
+        state.designOptions = Array.isArray(designResult?.designs)
+          ? designResult.designs.map(normalizeDesignOption).sort(compareOptionsByLabel)
+          : [];
+        state.hatOptions = Array.isArray(hatResult?.hats)
+          ? hatResult.hats.map(normalizeHatOption).sort(compareOptionsByLabel)
+          : [];
+        state.materialOptions = Array.isArray(materialResult?.materials)
+          ? materialResult.materials.map(normalizeMaterialOption).sort(compareOptionsByLabel)
+          : [];
         state.optionsLoaded = true;
       } catch (error) {
         state.optionError = safeErrorMessage(error, 'Catalog link options could not be loaded right now.');
@@ -387,8 +398,7 @@
     }
 
     function onContainerInput(event) {
-      const action = event.target?.dataset?.action;
-      if (action === 'catalog-finished-hat-search') {
+      if (event.target?.dataset?.action === 'catalog-finished-hat-search') {
         state.filters.search = String(event.target.value || '');
         renderContent();
       }
@@ -420,11 +430,12 @@
       if (dialogBackdrop && dialogNode) {
         return;
       }
+
       dialogBackdrop = documentRef.createElement('div');
       dialogBackdrop.className = 'staff-design-dialog-backdrop';
       dialogBackdrop.hidden = true;
       dialogBackdrop.innerHTML = `
-        <div class="staff-design-dialog" role="dialog" aria-modal="true" aria-labelledby="staff-finished-hat-dialog-title">
+        <div class="staff-design-dialog staff-finished-hat-dialog" role="dialog" aria-modal="true" aria-labelledby="staff-finished-hat-dialog-title" tabindex="-1">
           <div class="staff-design-dialog-header">
             <div>
               <p class="eyebrow staff-orders-eyebrow">Shared Library</p>
@@ -440,23 +451,12 @@
       dialogNode = dialogBackdrop.querySelector('.staff-design-dialog');
       formNode = dialogBackdrop.querySelector('[data-finished-hat-dialog-form]');
       statusNode = dialogBackdrop.querySelector('[data-finished-hat-dialog-status]');
-      dialogBackdrop.addEventListener('click', (event) => {
-        if (event.target === dialogBackdrop) {
-          closeDialog();
-        }
-      });
-      dialogBackdrop.addEventListener('click', (event) => {
-        if (event.target?.dataset?.action === 'catalog-close-finished-hat-dialog') {
-          closeDialog();
-          return;
-        }
-        if (event.target?.dataset?.action === 'catalog-edit-finished-hat-detail') {
-          switchDialogToEdit();
-        }
-      });
+
+      dialogBackdrop.addEventListener('click', onDialogClick);
       dialogBackdrop.addEventListener('input', onDialogInput);
       dialogBackdrop.addEventListener('change', onDialogChange);
       dialogBackdrop.addEventListener('submit', onDialogSubmit);
+      dialogBackdrop.addEventListener('keydown', onDialogKeyDown);
     }
 
     async function openDialog(mode, record, trigger) {
@@ -470,30 +470,13 @@
       state.dialogPhotoPath = record?.photo_path || '';
       state.dialogPhotoFile = null;
       state.dialogPhotoFileName = '';
-      state.dialogDesignSearch = '';
-      state.dialogHatSearch = '';
-      state.dialogMaterialSearch = '';
-      state.dialogValues = {
-        finished_hat_name: record?.finished_hat_name || '',
-        design_id: record?.design_id || '',
-        hat_id: record?.hat_id || '',
-        material_id: record?.material_id || '',
-        patch_shape: record?.patch_shape || '',
-        patch_size: record?.patch_size || '',
-        placement_status: record?.placement_status || 'unassigned',
-        location_label: record?.location_label || '',
-        retail_price: record?.retail_price || '',
-        status: record?.status || 'review',
-        notes: record?.notes || ''
-      };
+      state.dialogValues = createDialogValues(record);
+      resetPickerState();
       renderDialog();
       if (mode !== 'detail') {
         await ensureLinkOptionsLoaded();
       }
-      windowLike.setTimeout(() => {
-        dialogBackdrop.hidden = false;
-        dialogNode?.querySelector('input, select, textarea, button')?.focus();
-      }, 0);
+      focusDialogSoon();
     }
 
     function closeDialog() {
@@ -507,6 +490,7 @@
       state.dialogRecord = null;
       state.dialogPhotoFile = null;
       state.dialogPhotoFileName = '';
+      resetPickerState();
       dialogBackdrop.hidden = true;
       if (lastFocusTarget && typeof lastFocusTarget.focus === 'function') {
         lastFocusTarget.focus();
@@ -522,61 +506,36 @@
         return;
       }
 
-      const preview = getFinishedHatPreviewDisplay(state.dialogPhotoFile, state.dialogPhotoPath, state.dialogValues.finished_hat_name);
-      const filteredDesignOptions = filterOptionsBySearch(state.designOptions, state.dialogDesignSearch);
-      const filteredHatOptions = filterOptionsBySearch(state.hatOptions, state.dialogHatSearch);
-      const filteredMaterialOptions = filterOptionsBySearch(state.materialOptions, state.dialogMaterialSearch);
       const headerActionsNode = dialogBackdrop.querySelector('[data-finished-hat-dialog-header-actions]');
       if (headerActionsNode) {
-        headerActionsNode.innerHTML = state.dialogMode === 'detail'
-          ? `
-            <button class="primary-button" type="button" data-action="catalog-edit-finished-hat-detail">Edit</button>
-            <button class="secondary-button" type="button" data-action="catalog-close-finished-hat-dialog">Close</button>
-          `
-          : `<button class="secondary-button" type="button" data-action="catalog-close-finished-hat-dialog">Close</button>`;
+        headerActionsNode.innerHTML = state.pickerOpen
+          ? `<button class="secondary-button" type="button" data-action="catalog-cancel-link-picker">Back</button>`
+          : (state.dialogMode === 'detail'
+            ? `
+              <button class="primary-button" type="button" data-action="catalog-edit-finished-hat-detail">Edit</button>
+              <button class="secondary-button" type="button" data-action="catalog-close-finished-hat-dialog">Close</button>
+            `
+            : `<button class="secondary-button" type="button" data-action="catalog-close-finished-hat-dialog">Close</button>`);
       }
 
       statusNode.innerHTML = state.dialogError
         ? `<div class="staff-catalog-designs-state staff-catalog-designs-state--error"><p>${escapeHtml(state.dialogError)}</p></div>`
         : '';
 
-      if (state.dialogMode === 'detail') {
-        const detailRecord = state.dialogRecord || normalizeFinishedHatRecord({});
-        formNode.innerHTML = renderFinishedHatDetail(detailRecord);
+      if (state.pickerOpen) {
+        formNode.innerHTML = renderVisualPicker();
+        focusPickerSoon();
         return;
       }
 
-      formNode.innerHTML = `
-        <div class="staff-design-dialog-grid">
-          <div class="staff-design-thumbnail-panel staff-design-dialog-field staff-design-dialog-field--wide">
-            <span>Primary Photo</span>
-            <div class="staff-design-thumbnail-preview">
-              ${preview.html}
-            </div>
-            <label class="secondary-button staff-design-thumbnail-input" type="button">
-              <span>${state.dialogPhotoPath || state.dialogPhotoFileName ? 'Replace Photo' : 'Choose Photo'}</span>
-              <input type="file" accept="image/png,image/jpeg,image/webp" data-action="catalog-finished-hat-photo-input">
-            </label>
-            <p class="staff-design-thumbnail-copy">${escapeHtml(state.dialogPhotoFileName || state.dialogPhotoPath || 'PNG, JPEG, and WebP supported. The full image preview stays uncropped here.')}</p>
-          </div>
-          ${renderDialogField('finished_hat_name', 'Finished Hat Name', `<input type="text" name="finished_hat_name" value="${escapeAttribute(state.dialogValues.finished_hat_name)}" required>`)}
-          ${renderDialogField('placement_status', 'Placement Status', `<select name="placement_status">${renderPlacementStatusOptions(state.dialogValues.placement_status, null)}</select>`)}
-          ${renderSearchSelectField('design_id', 'Design', state.dialogDesignSearch, filteredDesignOptions, state.dialogValues.design_id, 'Search designs', 'Leave Design blank')}
-          ${renderSearchSelectField('hat_id', 'Hat', state.dialogHatSearch, filteredHatOptions, state.dialogValues.hat_id, 'Search hats', 'Leave Hat blank')}
-          ${renderSearchSelectField('material_id', 'Material', state.dialogMaterialSearch, filteredMaterialOptions, state.dialogValues.material_id, 'Search materials', 'Leave Material blank')}
-          ${renderDialogField('patch_shape', 'Patch Shape', `<input type="text" name="patch_shape" value="${escapeAttribute(state.dialogValues.patch_shape)}">`)}
-          ${renderDialogField('patch_size', 'Patch Size', `<input type="text" name="patch_size" value="${escapeAttribute(state.dialogValues.patch_size)}">`)}
-          ${renderDialogField('location_label', 'Location Label', `<input type="text" name="location_label" value="${escapeAttribute(state.dialogValues.location_label)}">`)}
-          ${renderDialogField('retail_price', 'Retail Price', `<input type="text" name="retail_price" inputmode="decimal" value="${escapeAttribute(state.dialogValues.retail_price)}">`)}
-          ${renderDialogField('status', 'Record Status', `<select name="status">${renderStatusOptions(state.dialogValues.status, null)}</select>`)}
-          ${renderDialogField('notes', 'Notes', `<textarea name="notes">${escapeHtml(state.dialogValues.notes)}</textarea>`, true)}
-        </div>
-        ${state.optionError ? `<div class="staff-catalog-designs-state staff-catalog-designs-state--error"><p>${escapeHtml(state.optionError)}</p></div>` : ''}
-        <div class="staff-design-dialog-actions">
-          <button class="secondary-button" type="button" data-action="catalog-close-finished-hat-dialog">Cancel</button>
-          <button class="primary-button" type="submit" ${state.dialogSaving ? 'disabled' : ''}>${state.dialogSaving ? 'Saving...' : (state.dialogMode === 'edit' ? 'Save Finished Hat' : 'Add Finished Hat')}</button>
-        </div>
-      `;
+      if (state.dialogMode === 'detail') {
+        formNode.innerHTML = renderFinishedHatDetail(state.dialogRecord || normalizeFinishedHatRecord({}));
+        focusDialogSoon();
+        return;
+      }
+
+      formNode.innerHTML = renderFinishedHatEditor();
+      focusDialogSoon();
     }
 
     function renderFinishedHatDetail(record) {
@@ -597,15 +556,131 @@
                 <span class="staff-design-status-badge staff-design-status-badge--neutral">${escapeHtml(getPlacementStatusLabel(record.placement_status))}</span>
                 ${record.needs_linking ? `<span class="staff-design-status-badge staff-design-status-badge--review">${escapeHtml(getFinishedHatMissingLinksSummary(record) || 'Needs Linking')}</span>` : ''}
               </div>
+              ${renderFinishedHatCompactCard(record)}
             </div>
-            ${renderFinishedHatDetailField('Design', record.design_name || 'Needs linking')}
-            ${renderFinishedHatDetailField('Hat', formatFinishedHatHatSummary(record) || 'Needs linking')}
-            ${renderFinishedHatDetailField('Material', formatFinishedHatMaterialSummary(record) || 'Needs linking')}
+            ${renderLinkWorkspaceSection('design', record)}
+            ${renderLinkWorkspaceSection('hat', record)}
+            ${renderLinkWorkspaceSection('material', record)}
             ${renderFinishedHatDetailField('Patch Shape', record.patch_shape)}
             ${renderFinishedHatDetailField('Patch Size', record.patch_size)}
             ${renderFinishedHatDetailField('Location Label', record.location_label)}
             ${renderFinishedHatDetailField('Retail Price', formatRetailPrice(record.retail_price))}
             ${renderFinishedHatDetailField('Notes', record.notes, true)}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderFinishedHatEditor() {
+      const preview = getFinishedHatPreviewDisplay(state.dialogPhotoFile, state.dialogPhotoPath, state.dialogValues.finished_hat_name);
+      return `
+        <div class="staff-finished-hat-detail">
+          <div class="staff-design-dialog-grid">
+            <div class="staff-design-thumbnail-panel staff-design-dialog-field staff-design-dialog-field--wide">
+              <span>Primary Photo</span>
+              <div class="staff-design-thumbnail-preview">
+                ${preview.html}
+              </div>
+              <label class="secondary-button staff-design-thumbnail-input" type="button">
+                <span>${state.dialogPhotoPath || state.dialogPhotoFileName ? 'Replace Photo' : 'Choose Photo'}</span>
+                <input type="file" accept="image/png,image/jpeg,image/webp" data-action="catalog-finished-hat-photo-input">
+              </label>
+              <p class="staff-design-thumbnail-copy">${escapeHtml(state.dialogPhotoFileName || state.dialogPhotoPath || 'PNG, JPEG, and WebP supported. The full image preview stays uncropped here.')}</p>
+            </div>
+            ${renderDialogField('finished_hat_name', 'Finished Hat Name', `<input type="text" name="finished_hat_name" value="${escapeAttribute(state.dialogValues.finished_hat_name)}" required>`)}
+            ${renderDialogField('placement_status', 'Placement Status', `<select name="placement_status">${renderPlacementStatusOptions(state.dialogValues.placement_status, null)}</select>`)}
+            ${renderEditorLinkControl('design')}
+            ${renderEditorLinkControl('hat')}
+            ${renderEditorLinkControl('material')}
+            ${renderDialogField('patch_shape', 'Patch Shape', `<input type="text" name="patch_shape" value="${escapeAttribute(state.dialogValues.patch_shape)}">`)}
+            ${renderDialogField('patch_size', 'Patch Size', `<input type="text" name="patch_size" value="${escapeAttribute(state.dialogValues.patch_size)}">`)}
+            ${renderDialogField('location_label', 'Location Label', `<input type="text" name="location_label" value="${escapeAttribute(state.dialogValues.location_label)}">`)}
+            ${renderDialogField('retail_price', 'Retail Price', `<input type="text" name="retail_price" inputmode="decimal" value="${escapeAttribute(state.dialogValues.retail_price)}">`)}
+            ${renderDialogField('status', 'Record Status', `<select name="status">${renderStatusOptions(state.dialogValues.status, null)}</select>`)}
+            ${renderDialogField('notes', 'Notes', `<textarea name="notes">${escapeHtml(state.dialogValues.notes)}</textarea>`, true)}
+          </div>
+          ${state.optionError ? `<div class="staff-catalog-designs-state staff-catalog-designs-state--error"><p>${escapeHtml(state.optionError)}</p></div>` : ''}
+          <div class="staff-design-dialog-actions">
+            <button class="secondary-button" type="button" data-action="catalog-close-finished-hat-dialog">Cancel</button>
+            <button class="primary-button" type="submit" ${state.dialogSaving ? 'disabled' : ''}>${state.dialogSaving ? 'Saving...' : (state.dialogMode === 'edit' ? 'Save Finished Hat' : 'Add Finished Hat')}</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderFinishedHatCompactCard(record) {
+      const compactSummary = getFinishedHatCompactSummary(record);
+      const missingSummary = getFinishedHatMissingLinksSummary(record);
+      if (!compactSummary && !missingSummary) {
+        return '';
+      }
+      return `
+        <div class="staff-finished-hat-link-summary-card" data-finished-hat-summary-card>
+          ${compactSummary ? `<p>${escapeHtml(compactSummary)}</p>` : ''}
+          ${missingSummary ? `<p class="staff-finished-hat-link-summary-card-missing">${escapeHtml(missingSummary)}</p>` : ''}
+        </div>
+      `;
+    }
+
+    function renderLinkWorkspaceSection(type, record) {
+      const config = getLinkTypeConfig(type);
+      const linkedOption = getSelectedOptionForType(type, record?.[config.fieldName] || '') || buildFallbackLinkedOption(type, record);
+      const hasLink = Boolean(linkedOption);
+      return `
+        <section class="staff-finished-hat-link-panel staff-design-dialog-field ${hasLink ? 'staff-finished-hat-link-panel--linked' : 'staff-finished-hat-link-panel--empty'} ${type === 'material' ? 'staff-finished-hat-link-panel--material' : ''}">
+          <div class="staff-finished-hat-link-panel-header">
+            <span>${escapeHtml(config.label)}</span>
+            <div class="staff-finished-hat-link-panel-actions">
+              <button class="secondary-button" type="button" data-action="catalog-open-link-picker" data-link-type="${escapeAttribute(type)}">${escapeHtml(hasLink ? config.changeLabel : config.chooseLabel)}</button>
+              ${hasLink ? `<button class="ghost-button" type="button" data-action="catalog-clear-link" data-link-type="${escapeAttribute(type)}">Clear Link</button>` : ''}
+            </div>
+          </div>
+          ${renderLinkedItemSummary(type, linkedOption, record)}
+        </section>
+      `;
+    }
+
+    function renderEditorLinkControl(type) {
+      const config = getLinkTypeConfig(type);
+      const linkedOption = getSelectedOptionForType(type, state.dialogValues[config.fieldName] || '');
+      const fallbackRecord = state.dialogRecord || normalizeFinishedHatRecord(state.dialogValues);
+      const hasLink = Boolean(linkedOption) || Boolean(state.dialogValues[config.fieldName]);
+      return `
+        <div class="staff-design-dialog-field staff-design-dialog-field--wide">
+          <span>${escapeHtml(config.label)}</span>
+          <div class="staff-finished-hat-link-editor">
+            ${renderLinkedItemSummary(type, linkedOption, fallbackRecord)}
+            <div class="staff-finished-hat-link-panel-actions">
+              <button class="secondary-button" type="button" data-action="catalog-open-link-picker" data-link-type="${escapeAttribute(type)}">${escapeHtml(hasLink ? config.changeLabel : config.chooseLabel)}</button>
+              ${hasLink ? `<button class="ghost-button" type="button" data-action="catalog-clear-link" data-link-type="${escapeAttribute(type)}">Clear Link</button>` : ''}
+            </div>
+          </div>
+          ${state.dialogFieldErrors[config.fieldName] ? `<small class="staff-design-dialog-error">${escapeHtml(state.dialogFieldErrors[config.fieldName])}</small>` : ''}
+        </div>
+      `;
+    }
+
+    function renderLinkedItemSummary(type, option, record) {
+      if (!option) {
+        return `
+          <div class="staff-finished-hat-linked-summary staff-finished-hat-linked-summary--empty">
+            <div class="staff-finished-hat-linked-thumb staff-finished-hat-linked-thumb--placeholder"><span>Needs Linking</span></div>
+            <div class="staff-finished-hat-linked-copy">
+              <strong>Needs linking</strong>
+              <p>No ${escapeHtml(getLinkTypeConfig(type).label.toLowerCase())} has been assigned yet.</p>
+            </div>
+          </div>
+        `;
+      }
+      const summary = getLinkedSummaryParts(type, option, record);
+      return `
+        <div class="staff-finished-hat-linked-summary">
+          <div class="staff-finished-hat-linked-thumb ${type === 'material' ? 'staff-finished-hat-linked-thumb--material' : ''}">
+            ${option.thumbnailHtml}
+          </div>
+          <div class="staff-finished-hat-linked-copy">
+            <strong>${escapeHtml(option.primaryLabel)}</strong>
+            ${summary.map((line) => `<p>${escapeHtml(line)}</p>`).join('')}
           </div>
         </div>
       `;
@@ -623,23 +698,6 @@
       `;
     }
 
-    function renderSearchSelectField(fieldName, label, searchValue, options, selectedValue, searchPlaceholder, emptyLabel) {
-      const searchAction = `catalog-finished-hat-${fieldName}-search`;
-      return renderDialogField(
-        fieldName,
-        label,
-        `
-          <div class="staff-catalog-linked-field">
-            <input type="search" value="${escapeAttribute(searchValue)}" placeholder="${escapeAttribute(searchPlaceholder)}" data-action="${searchAction}">
-            <select name="${escapeAttribute(fieldName)}">
-              <option value="">${escapeHtml(emptyLabel)}</option>
-              ${options.map((option) => `<option value="${escapeAttribute(option.id)}" ${option.id === selectedValue ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('')}
-            </select>
-          </div>
-        `
-      );
-    }
-
     function renderDialogField(fieldName, label, inputHtml, wide = false) {
       const error = state.dialogFieldErrors[fieldName] || '';
       return `
@@ -651,6 +709,166 @@
       `;
     }
 
+    function renderVisualPicker() {
+      const config = getLinkTypeConfig(state.pickerType);
+      const options = getPickerOptionsForType(state.pickerType);
+      const filteredOptions = filterPickerOptions(options, state.pickerType, state.pickerSearch, state.pickerFilters);
+      const selectedChanged = state.pickerCurrentId !== state.pickerSelectedId;
+      const finishedHatPreview = getFinishedHatPreviewDisplay(state.dialogPhotoFile, state.dialogPhotoPath, state.dialogValues.finished_hat_name);
+      const hasExistingLink = Boolean(state.pickerCurrentId);
+
+      return `
+        <div class="staff-link-picker staff-finished-hat-picker" data-link-picker-root>
+          <div class="staff-link-picker-shell staff-finished-hat-picker-shell">
+            <aside class="staff-link-picker-compare staff-finished-hat-picker-compare">
+              <span>Finished Hat</span>
+              <div class="staff-design-thumbnail-preview staff-link-picker-compare-preview">
+                ${finishedHatPreview.html}
+              </div>
+              <strong>${escapeHtml(state.dialogValues.finished_hat_name || 'Finished Hat')}</strong>
+              <p>${escapeHtml(getFinishedHatMissingLinksSummary(normalizeFinishedHatRecord(state.dialogValues)) || 'Compare this hat with the library below.')}</p>
+            </aside>
+            <section class="staff-link-picker-panel staff-finished-hat-picker-panel">
+              <div class="staff-link-picker-toolbar staff-finished-hat-picker-toolbar">
+                <div>
+                  <p class="eyebrow staff-orders-eyebrow">Visual Linking</p>
+                  <h4>${escapeHtml(config.title)}</h4>
+                  <p>${escapeHtml(config.description)}</p>
+                </div>
+                <div class="staff-link-picker-toolbar-actions staff-finished-hat-picker-toolbar-actions">
+                  <button class="secondary-button" type="button" data-action="catalog-cancel-link-picker">Cancel</button>
+                  ${hasExistingLink ? `<button class="ghost-button" type="button" data-action="catalog-picker-clear-existing-link">${escapeHtml(state.dialogMode === 'detail' ? 'Clear Existing Link' : 'Clear Selection')}</button>` : ''}
+                  <button class="primary-button" type="button" data-action="catalog-apply-link-picker" ${state.pickerSaving || !selectedChanged ? 'disabled' : ''}>${escapeHtml(state.pickerSaving ? 'Applying...' : 'Apply Selection')}</button>
+                </div>
+              </div>
+              <div class="staff-link-picker-filters staff-finished-hat-picker-filters">
+                <label class="staff-catalog-designs-filter">
+                  <span>Search</span>
+                  <input type="search" value="${escapeAttribute(state.pickerSearch)}" placeholder="${escapeAttribute(config.searchPlaceholder)}" data-action="catalog-picker-search">
+                </label>
+                ${renderPickerFilterControls(state.pickerType, state.pickerFilters, options)}
+                <div class="staff-catalog-designs-filter-clear">
+                  <button class="secondary-button" type="button" data-action="catalog-picker-clear-filters">Clear Filters</button>
+                </div>
+              </div>
+              ${state.optionError ? `<div class="staff-catalog-designs-state staff-catalog-designs-state--error"><p>${escapeHtml(state.optionError)}</p></div>` : ''}
+              ${state.pickerError ? `<div class="staff-catalog-designs-state staff-catalog-designs-state--error"><p>${escapeHtml(state.pickerError)}</p></div>` : ''}
+              ${renderPickerBody(state.pickerType, filteredOptions)}
+            </section>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderPickerBody(type, options) {
+      if (state.optionsLoading) {
+        return '<div class="staff-catalog-designs-state"><p>Loading visual link options...</p></div>';
+      }
+      if (state.optionError && getPickerOptionsForType(type).length === 0) {
+        return '<div class="staff-catalog-designs-state staff-catalog-designs-state--error"><p>Catalog link options could not be loaded right now.</p></div>';
+      }
+      if (getPickerOptionsForType(type).length === 0) {
+        return `<div class="staff-catalog-designs-state"><h4>No ${escapeHtml(getLinkTypeConfig(type).label.toLowerCase())} records yet</h4><p>${escapeHtml(getPickerEmptyCopy(type, false))}</p></div>`;
+      }
+      if (options.length === 0) {
+        return `<div class="staff-catalog-designs-state"><h4>No results match these filters</h4><p>${escapeHtml(getPickerEmptyCopy(type, true))}</p></div>`;
+      }
+      return `<div class="staff-link-picker-grid staff-finished-hat-picker-grid ${type === 'design' ? 'staff-finished-hat-picker-grid--design' : ''}">${options.map((option) => renderPickerTile(type, option)).join('')}</div>`;
+    }
+
+    function renderPickerTile(type, option) {
+      const selected = option.id === state.pickerSelectedId;
+      return `
+        <div
+          class="staff-finished-hat-picker-tile staff-finished-hat-picker-tile--${escapeAttribute(type)} ${selected ? 'staff-finished-hat-picker-tile--selected' : ''}"
+          role="option"
+          tabindex="0"
+          data-action="catalog-picker-select-card"
+          data-link-type="${escapeAttribute(type)}"
+          data-picker-option-id="${escapeAttribute(option.id)}"
+          aria-selected="${selected ? 'true' : 'false'}"
+          aria-label="${escapeAttribute(option.ariaLabel)}"
+          title="${escapeAttribute(option.titleText || option.ariaLabel)}"
+        >
+          <div class="staff-finished-hat-picker-tile__media staff-finished-hat-picker-media staff-finished-hat-picker-media--${escapeAttribute(type)}">
+            ${option.thumbnailHtml}
+          </div>
+          <span class="staff-finished-hat-picker-tile__marker">${escapeHtml(selected ? 'Selected' : 'Select')}</span>
+        </div>
+      `;
+    }
+
+    function getEventActionTarget(event) {
+      const target = event && event.target ? event.target : null;
+      if (!target) {
+        return null;
+      }
+      if (typeof target.closest === 'function') {
+        return target.closest('[data-action]');
+      }
+      return target.dataset?.action ? target : null;
+    }
+
+    function onDialogClick(event) {
+      if (event.target === dialogBackdrop) {
+        if (state.pickerOpen) {
+          closePicker();
+        } else {
+          closeDialog();
+        }
+        return;
+      }
+
+      const actionTarget = getEventActionTarget(event);
+      const action = actionTarget?.dataset?.action;
+      if (!action) {
+        return;
+      }
+      if (action === 'catalog-close-finished-hat-dialog') {
+        closeDialog();
+        return;
+      }
+      if (action === 'catalog-edit-finished-hat-detail') {
+        switchDialogToEdit();
+        return;
+      }
+      if (action === 'catalog-open-link-picker') {
+        const type = String(actionTarget?.dataset?.linkType || '');
+        openLinkPicker(type, actionTarget);
+        return;
+      }
+      if (action === 'catalog-clear-link') {
+        const type = String(actionTarget?.dataset?.linkType || '');
+        clearLink(type);
+        return;
+      }
+      if (action === 'catalog-picker-select-card') {
+        state.pickerSelectedId = String(actionTarget?.dataset?.pickerOptionId || '');
+        state.pickerError = '';
+        renderDialog();
+        return;
+      }
+      if (action === 'catalog-cancel-link-picker') {
+        closePicker();
+        return;
+      }
+      if (action === 'catalog-picker-clear-filters') {
+        state.pickerSearch = '';
+        state.pickerFilters = createDefaultPickerFilters(state.pickerType);
+        renderDialog();
+        return;
+      }
+      if (action === 'catalog-picker-clear-existing-link') {
+        state.pickerSelectedId = '';
+        state.pickerError = '';
+        renderDialog();
+        return;
+      }
+      if (action === 'catalog-apply-link-picker') {
+        applyPickerSelection();
+      }
+    }
+
     function onDialogInput(event) {
       const target = event.target;
       if (!target) {
@@ -659,15 +877,8 @@
       if (target.name && Object.prototype.hasOwnProperty.call(state.dialogValues, target.name)) {
         state.dialogValues[target.name] = String(target.value || '');
       }
-      const action = target.dataset?.action;
-      if (action === 'catalog-finished-hat-design_id-search') {
-        state.dialogDesignSearch = String(target.value || '');
-        renderDialog();
-      } else if (action === 'catalog-finished-hat-hat_id-search') {
-        state.dialogHatSearch = String(target.value || '');
-        renderDialog();
-      } else if (action === 'catalog-finished-hat-material_id-search') {
-        state.dialogMaterialSearch = String(target.value || '');
+      if (target.dataset?.action === 'catalog-picker-search') {
+        state.pickerSearch = String(target.value || '');
         renderDialog();
       }
     }
@@ -687,11 +898,38 @@
       if (target.name && Object.prototype.hasOwnProperty.call(state.dialogValues, target.name)) {
         state.dialogValues[target.name] = String(target.value || '');
       }
+      const pickerFilterKey = target.dataset?.pickerFilter;
+      if (pickerFilterKey) {
+        state.pickerFilters[pickerFilterKey] = String(target.value || '');
+        renderDialog();
+      }
+    }
+
+    function onDialogKeyDown(event) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        if (state.pickerOpen) {
+          closePicker();
+        } else {
+          closeDialog();
+        }
+        return;
+      }
+      if (event.key !== 'Enter' && event.key !== ' ') {
+        return;
+      }
+      const actionTarget = getEventActionTarget(event);
+      if (actionTarget?.dataset?.action === 'catalog-picker-select-card') {
+        event.preventDefault();
+        state.pickerSelectedId = String(actionTarget.dataset?.pickerOptionId || '');
+        state.pickerError = '';
+        renderDialog();
+      }
     }
 
     async function onDialogSubmit(event) {
       event.preventDefault();
-      if (state.dialogMode === 'detail') {
+      if (state.dialogMode === 'detail' || state.pickerOpen) {
         return;
       }
       if (state.dialogSaving) {
@@ -717,13 +955,14 @@
         }
         upsertRecord(finishedHat);
         state.dialogSaving = false;
+        state.dialogRecord = finishedHat;
+        state.dialogFinishedHatId = finishedHat.id;
+        state.dialogPhotoPath = finishedHat.photo_path || state.dialogPhotoPath;
+        state.dialogValues = createDialogValues(finishedHat);
+        state.dialogPhotoFile = null;
+        state.dialogPhotoFileName = '';
         if (state.dialogMode === 'edit') {
           state.dialogMode = 'detail';
-          state.dialogRecord = finishedHat;
-          state.dialogFinishedHatId = finishedHat.id;
-          state.dialogPhotoPath = finishedHat.photo_path || '';
-          state.dialogPhotoFile = null;
-          state.dialogPhotoFileName = '';
           renderDialog();
         } else {
           closeDialog();
@@ -735,6 +974,94 @@
         state.dialogError = safeErrorMessage(error, 'Finished hat changes could not be saved right now.');
         renderDialog();
       }
+    }
+
+    async function openLinkPicker(type, trigger) {
+      const config = getLinkTypeConfig(type);
+      if (!config) {
+        return;
+      }
+      lastPickerFocusTarget = trigger || null;
+      state.pickerOpen = true;
+      state.pickerType = type;
+      state.pickerSearch = '';
+      state.pickerFilters = createDefaultPickerFilters(type);
+      state.pickerError = '';
+      state.pickerSaving = false;
+      state.pickerTriggerLabel = config.label;
+      const currentId = getCurrentLinkValue(type);
+      state.pickerCurrentId = currentId;
+      state.pickerSelectedId = currentId;
+      renderDialog();
+      await ensureLinkOptionsLoaded();
+      renderDialog();
+    }
+
+    function closePicker() {
+      resetPickerState();
+      renderDialog();
+      if (lastPickerFocusTarget && typeof lastPickerFocusTarget.focus === 'function') {
+        lastPickerFocusTarget.focus();
+      }
+    }
+
+    async function applyPickerSelection() {
+      if (!state.pickerOpen || state.pickerSaving || state.pickerCurrentId === state.pickerSelectedId) {
+        return;
+      }
+      const config = getLinkTypeConfig(state.pickerType);
+      if (!config) {
+        return;
+      }
+
+      if (state.dialogMode === 'detail') {
+        state.pickerSaving = true;
+        state.pickerError = '';
+        renderDialog();
+        try {
+          const nextValues = {
+            ...createDialogValues(state.dialogRecord),
+            [config.fieldName]: state.pickerSelectedId
+          };
+          const result = await apiClient.updateFinishedHat(state.dialogFinishedHatId, nextValues);
+          const finishedHat = normalizeFinishedHatRecord(result?.finished_hat || null);
+          upsertRecord(finishedHat);
+          state.dialogRecord = finishedHat;
+          state.dialogValues = createDialogValues(finishedHat);
+          state.dialogPhotoPath = finishedHat.photo_path || state.dialogPhotoPath;
+          resetPickerState();
+          renderContent();
+          renderDialog();
+        } catch (error) {
+          state.pickerSaving = false;
+          state.pickerError = safeErrorMessage(error, 'The link could not be saved right now.');
+          renderDialog();
+        }
+        return;
+      }
+
+      state.dialogValues[config.fieldName] = state.pickerSelectedId;
+      state.dialogFieldErrors[config.fieldName] = '';
+      resetPickerState();
+      renderDialog();
+    }
+
+    function clearLink(type) {
+      const config = getLinkTypeConfig(type);
+      if (!config) {
+        return;
+      }
+      if (state.dialogMode === 'detail') {
+        state.pickerOpen = true;
+        state.pickerType = type;
+        state.pickerCurrentId = getCurrentLinkValue(type);
+        state.pickerSelectedId = '';
+        applyPickerSelection();
+        return;
+      }
+      state.dialogValues[config.fieldName] = '';
+      state.dialogFieldErrors[config.fieldName] = '';
+      renderDialog();
     }
 
     function upsertRecord(record) {
@@ -757,22 +1084,64 @@
       state.dialogFieldErrors = {};
       state.dialogPhotoFile = null;
       state.dialogPhotoFileName = '';
-      state.dialogValues = {
-        finished_hat_name: state.dialogRecord.finished_hat_name || '',
-        design_id: state.dialogRecord.design_id || '',
-        hat_id: state.dialogRecord.hat_id || '',
-        material_id: state.dialogRecord.material_id || '',
-        patch_shape: state.dialogRecord.patch_shape || '',
-        patch_size: state.dialogRecord.patch_size || '',
-        placement_status: state.dialogRecord.placement_status || 'unassigned',
-        location_label: state.dialogRecord.location_label || '',
-        retail_price: state.dialogRecord.retail_price || '',
-        status: state.dialogRecord.status || 'review',
-        notes: state.dialogRecord.notes || ''
-      };
+      state.dialogValues = createDialogValues(state.dialogRecord);
       ensureLinkOptionsLoaded().finally(() => {
         renderDialog();
       });
+    }
+
+    function resetPickerState() {
+      state.pickerOpen = false;
+      state.pickerType = '';
+      state.pickerSearch = '';
+      state.pickerFilters = {};
+      state.pickerSelectedId = '';
+      state.pickerCurrentId = '';
+      state.pickerSaving = false;
+      state.pickerError = '';
+      state.pickerTriggerLabel = '';
+    }
+
+    function focusDialogSoon() {
+      windowLike.setTimeout(() => {
+        dialogBackdrop.hidden = false;
+        dialogNode?.querySelector('input, select, textarea, button, [tabindex]')?.focus();
+      }, 0);
+    }
+
+    function focusPickerSoon() {
+      windowLike.setTimeout(() => {
+        dialogBackdrop.hidden = false;
+        dialogNode?.querySelector('[data-action="catalog-picker-search"], [role="option"], button')?.focus();
+      }, 0);
+    }
+
+    function getCurrentLinkValue(type) {
+      const config = getLinkTypeConfig(type);
+      if (!config) {
+        return '';
+      }
+      if (state.dialogMode === 'detail') {
+        return state.dialogRecord?.[config.fieldName] || '';
+      }
+      return state.dialogValues[config.fieldName] || '';
+    }
+
+    function getPickerOptionsForType(type) {
+      if (type === 'design') {
+        return state.designOptions;
+      }
+      if (type === 'hat') {
+        return state.hatOptions;
+      }
+      if (type === 'material') {
+        return state.materialOptions;
+      }
+      return [];
+    }
+
+    function getSelectedOptionForType(type, id) {
+      return getPickerOptionsForType(type).find((option) => option.id === id) || null;
     }
 
     return {
@@ -869,20 +1238,93 @@
 
   function normalizeDesignOption(record) {
     const design = record && typeof record === 'object' ? record : {};
-    const label = asTrimmedString(design.design_name);
-    return { id: asTrimmedString(design.id), label };
+    const primaryLabel = asTrimmedString(design.design_name);
+    const category = asNullableTrimmedString(design.category);
+    const productionMethod = asNullableTrimmedString(design.production_method);
+    const status = asTrimmedString(design.status) || 'review';
+    return {
+      id: asTrimmedString(design.id),
+      primaryLabel,
+      status,
+      statusLabel: getFinishedHatStatusLabel(status),
+      thumbnailHtml: design.thumbnail_path
+        ? `<img class="staff-finished-hat-picker-image staff-finished-hat-picker-image--design" src="${escapeAttribute(design.thumbnail_path)}" alt="${escapeAttribute((primaryLabel || 'Design') + ' thumbnail')}">`
+        : `<span class="staff-finished-hat-picker-placeholder">No Thumbnail</span>`,
+      ariaLabel: `Select design ${primaryLabel || 'record'}`,
+      titleText: [primaryLabel, category, productionMethod].filter(Boolean).join(' • ') || `Select design ${primaryLabel || 'record'}`,
+      searchDocument: normalizeSearch([primaryLabel, category, productionMethod, design.notes].filter(Boolean).join(' ')),
+      filters: {
+        category: category || '',
+        production_method: productionMethod || '',
+        status
+      },
+      category,
+      production_method: productionMethod
+    };
   }
 
   function normalizeHatOption(record) {
     const hat = record && typeof record === 'object' ? record : {};
-    const label = [hat.manufacturer, hat.model, hat.color, hat.hat_name].map(asTrimmedString).filter(Boolean).join(' — ');
-    return { id: asTrimmedString(hat.id), label };
+    const manufacturer = asNullableTrimmedString(hat.manufacturer);
+    const model = asNullableTrimmedString(hat.model);
+    const color = asNullableTrimmedString(hat.color);
+    const hatName = asTrimmedString(hat.hat_name);
+    const primaryLabel = [manufacturer, model, color].filter(Boolean).join(' — ') || hatName;
+    const status = asTrimmedString(hat.status) || 'review';
+    return {
+      id: asTrimmedString(hat.id),
+      primaryLabel,
+      status,
+      statusLabel: getFinishedHatStatusLabel(status),
+      thumbnailHtml: hat.photo_path
+        ? `<img class="staff-finished-hat-picker-image staff-finished-hat-picker-image--hat" src="${escapeAttribute(hat.photo_path)}" alt="${escapeAttribute((hatName || 'Hat') + ' photo')}">`
+        : `<span class="staff-finished-hat-picker-placeholder">No Photo</span>`,
+      ariaLabel: `Select hat ${[manufacturer, model, color].filter(Boolean).join(' ') || hatName || 'record'}`,
+      titleText: [manufacturer, model, color, hatName].filter(Boolean).join(' • ') || `Select hat ${hatName || 'record'}`,
+      searchDocument: normalizeSearch([hatName, manufacturer, model, color, hat.notes].filter(Boolean).join(' ')),
+      filters: {
+        manufacturer: manufacturer || '',
+        model: model || '',
+        color: color || '',
+        status
+      },
+      manufacturer,
+      model,
+      color,
+      hat_name: hatName
+    };
   }
 
   function normalizeMaterialOption(record) {
     const material = record && typeof record === 'object' ? record : {};
-    const label = [material.material_name, material.material_type, material.color].map(asTrimmedString).filter(Boolean).join(' — ');
-    return { id: asTrimmedString(material.id), label };
+    const materialName = asTrimmedString(material.material_name);
+    const materialType = asNullableTrimmedString(material.material_type);
+    const color = asNullableTrimmedString(material.color);
+    const productionMethod = asNullableTrimmedString(material.production_method);
+    const supplier = asNullableTrimmedString(material.supplier);
+    const status = asTrimmedString(material.status) || 'review';
+    const fitMode = getMaterialSwatchFitMode(material);
+    return {
+      id: asTrimmedString(material.id),
+      primaryLabel: materialName,
+      status,
+      statusLabel: getFinishedHatStatusLabel(status),
+      thumbnailHtml: material.swatch_path
+        ? `<img class="staff-finished-hat-picker-image staff-finished-hat-picker-image--material staff-finished-hat-picker-image--material-${escapeAttribute(fitMode)}" src="${escapeAttribute(material.swatch_path)}" alt="${escapeAttribute((materialName || 'Material') + ' swatch')}">`
+        : `<span class="staff-finished-hat-picker-placeholder">No Swatch</span>`,
+      ariaLabel: `Select material ${materialName || 'record'}`,
+      titleText: [materialName, materialType, color, productionMethod].filter(Boolean).join(' • ') || `Select material ${materialName || 'record'}`,
+      searchDocument: normalizeSearch([materialName, materialType, color, productionMethod, supplier, material.notes].filter(Boolean).join(' ')),
+      filters: {
+        material_type: materialType || '',
+        production_method: productionMethod || '',
+        color: color || '',
+        status
+      },
+      material_type: materialType,
+      color,
+      production_method: productionMethod
+    };
   }
 
   function compareFinishedHatsByName(left, right) {
@@ -890,19 +1332,53 @@
   }
 
   function compareOptionsByLabel(left, right) {
-    return left.label.localeCompare(right.label, undefined, { sensitivity: 'base' });
+    return left.primaryLabel.localeCompare(right.primaryLabel, undefined, { sensitivity: 'base' });
   }
 
   function collectFinishedHatFilterOptions(records, key) {
     return [...new Set(records.map((record) => record[key]).filter(Boolean))].sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
   }
 
-  function filterOptionsBySearch(options, searchTerm) {
-    const search = normalizeSearch(searchTerm);
-    if (!search) {
-      return options;
+  function renderDynamicSelectOptions(options, selectedValue, emptyLabel) {
+    return [`<option value="">${escapeHtml(emptyLabel || 'Select')}</option>`]
+      .concat(options.map((option) => `<option value="${escapeAttribute(option)}" ${option === selectedValue ? 'selected' : ''}>${escapeHtml(option)}</option>`))
+      .join('');
+  }
+
+  function renderLabeledSelectOptions(options, selectedValue, emptyLabel) {
+    return [`<option value="">${escapeHtml(emptyLabel || 'Select')}</option>`]
+      .concat(options.map((option) => `<option value="${escapeAttribute(option.value)}" ${option.value === selectedValue ? 'selected' : ''}>${escapeHtml(option.label)}</option>`))
+      .join('');
+  }
+
+  function createLabeledOption(value, label) {
+    return {
+      value: String(value || ''),
+      label: String(label || value || '')
+    };
+  }
+
+  function renderStatusOptions(selectedValue, emptyLabel) {
+    const options = emptyLabel ? [`<option value="">${escapeHtml(emptyLabel)}</option>`] : [];
+    Object.entries(STATUS_LABELS).forEach(([value, label]) => {
+      options.push(`<option value="${escapeAttribute(value)}" ${value === selectedValue ? 'selected' : ''}>${escapeHtml(label)}</option>`);
+    });
+    return options.join('');
+  }
+
+  function renderPlacementStatusOptions(selectedValue, emptyLabel) {
+    const options = emptyLabel ? [`<option value="">${escapeHtml(emptyLabel)}</option>`] : [];
+    Object.entries(PLACEMENT_STATUS_LABELS).forEach(([value, label]) => {
+      options.push(`<option value="${escapeAttribute(value)}" ${value === selectedValue ? 'selected' : ''}>${escapeHtml(label)}</option>`);
+    });
+    return options.join('');
+  }
+
+  function renderFinishedHatMetaRow(label, value) {
+    if (!value) {
+      return '';
     }
-    return options.filter((option) => normalizeSearch(option.label).includes(search));
+    return `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`;
   }
 
   function getFinishedHatPhotoDisplay(record) {
@@ -975,33 +1451,184 @@
     };
   }
 
-  function renderDynamicSelectOptions(options, selectedValue, emptyLabel) {
-    return [`<option value="">${escapeHtml(emptyLabel || 'Select')}</option>`]
-      .concat(options.map((option) => `<option value="${escapeAttribute(option)}" ${option === selectedValue ? 'selected' : ''}>${escapeHtml(option)}</option>`))
-      .join('');
-  }
-
-  function renderStatusOptions(selectedValue, emptyLabel) {
-    const options = emptyLabel ? [`<option value="">${escapeHtml(emptyLabel)}</option>`] : [];
-    Object.entries(STATUS_LABELS).forEach(([value, label]) => {
-      options.push(`<option value="${escapeAttribute(value)}" ${value === selectedValue ? 'selected' : ''}>${escapeHtml(label)}</option>`);
-    });
-    return options.join('');
-  }
-
-  function renderPlacementStatusOptions(selectedValue, emptyLabel) {
-    const options = emptyLabel ? [`<option value="">${escapeHtml(emptyLabel)}</option>`] : [];
-    Object.entries(PLACEMENT_STATUS_LABELS).forEach(([value, label]) => {
-      options.push(`<option value="${escapeAttribute(value)}" ${value === selectedValue ? 'selected' : ''}>${escapeHtml(label)}</option>`);
-    });
-    return options.join('');
-  }
-
-  function renderFinishedHatMetaRow(label, value) {
-    if (!value) {
-      return '';
+  function buildFallbackLinkedOption(type, record) {
+    if (!record) {
+      return null;
     }
-    return `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`;
+    if (type === 'design' && record.design_name) {
+      return {
+        primaryLabel: record.design_name,
+        thumbnailHtml: '<span class="staff-finished-hat-picker-placeholder">Design</span>'
+      };
+    }
+    if (type === 'hat' && formatFinishedHatHatSummary(record)) {
+      return {
+        primaryLabel: formatFinishedHatHatSummary(record),
+        thumbnailHtml: '<span class="staff-finished-hat-picker-placeholder">Hat</span>'
+      };
+    }
+    if (type === 'material' && formatFinishedHatMaterialSummary(record)) {
+      return {
+        primaryLabel: formatFinishedHatMaterialSummary(record),
+        thumbnailHtml: '<span class="staff-finished-hat-picker-placeholder">Material</span>'
+      };
+    }
+    return null;
+  }
+
+  function getLinkedSummaryParts(type, option, record) {
+    if (type === 'design') {
+      return [
+        option.category || record?.category || null,
+        option.production_method || record?.production_method || null,
+        option.statusLabel || null
+      ].filter(Boolean);
+    }
+    if (type === 'hat') {
+      return [
+        option.hat_name || record?.hat_name || null,
+        option.primaryLabel || null,
+        option.statusLabel || null
+      ].filter((value, index, list) => value && list.indexOf(value) === index);
+    }
+    return [
+      option.material_type || record?.material_type || null,
+      option.color || record?.material_color || null,
+      option.production_method || record?.production_method || null,
+      option.statusLabel || null
+    ].filter(Boolean);
+  }
+
+  function getLinkTypeConfig(type) {
+    const map = {
+      design: {
+        label: 'Design',
+        title: 'Choose Design',
+        description: 'Compare the finished-hat photo against design thumbnails before applying a link.',
+        chooseLabel: 'Choose Design',
+        changeLabel: 'Change Design',
+        searchPlaceholder: 'Search designs',
+        fieldName: 'design_id'
+      },
+      hat: {
+        label: 'Hat',
+        title: 'Choose Hat',
+        description: 'Compare the finished-hat photo against blank hat photos before applying a link.',
+        chooseLabel: 'Choose Hat',
+        changeLabel: 'Change Hat',
+        searchPlaceholder: 'Search hats',
+        fieldName: 'hat_id'
+      },
+      material: {
+        label: 'Material',
+        title: 'Choose Material',
+        description: 'Compare the finished-hat photo against swatches before applying a link.',
+        chooseLabel: 'Choose Material',
+        changeLabel: 'Change Material',
+        searchPlaceholder: 'Search materials',
+        fieldName: 'material_id'
+      }
+    };
+    return map[type] || null;
+  }
+
+  function createDefaultPickerFilters(type) {
+    if (type === 'design') {
+      return { category: '', production_method: '', status: '' };
+    }
+    if (type === 'hat') {
+      return { manufacturer: '', model: '', color: '', status: '' };
+    }
+    return { material_type: '', production_method: '', color: '', status: '' };
+  }
+
+  function renderPickerFilterControls(type, filters, options) {
+    const filterDefs = getPickerFilterDefinitions(type, options);
+    return filterDefs.map((filter) => `
+      <label class="staff-catalog-designs-filter">
+        <span>${escapeHtml(filter.label)}</span>
+        <select data-picker-filter="${escapeAttribute(filter.key)}">
+          ${renderLabeledSelectOptions(filter.options, filters[filter.key] || '', filter.emptyLabel)}
+        </select>
+      </label>
+    `).join('');
+  }
+
+  function getPickerFilterDefinitions(type, options) {
+    if (type === 'design') {
+      return [
+        { key: 'category', label: 'Category', emptyLabel: 'All Categories', options: collectOptionFilterValues(options, 'category').map((value) => createLabeledOption(value)) },
+        { key: 'production_method', label: 'Production Method', emptyLabel: 'All Methods', options: collectOptionFilterValues(options, 'production_method').map((value) => createLabeledOption(value)) },
+        { key: 'status', label: 'Status', emptyLabel: 'All Statuses', options: collectOptionFilterValues(options, 'status').map((status) => createLabeledOption(status, STATUS_LABELS[status] || status)) }
+      ];
+    }
+    if (type === 'hat') {
+      return [
+        { key: 'manufacturer', label: 'Manufacturer', emptyLabel: 'All Manufacturers', options: collectOptionFilterValues(options, 'manufacturer').map((value) => createLabeledOption(value)) },
+        { key: 'model', label: 'Model', emptyLabel: 'All Models', options: collectOptionFilterValues(options, 'model').map((value) => createLabeledOption(value)) },
+        { key: 'color', label: 'Color', emptyLabel: 'All Colors', options: collectOptionFilterValues(options, 'color').map((value) => createLabeledOption(value)) },
+        { key: 'status', label: 'Status', emptyLabel: 'All Statuses', options: collectOptionFilterValues(options, 'status').map((status) => createLabeledOption(status, STATUS_LABELS[status] || status)) }
+      ];
+    }
+    return [
+      { key: 'material_type', label: 'Material Type', emptyLabel: 'All Types', options: collectOptionFilterValues(options, 'material_type').map((value) => createLabeledOption(value)) },
+      { key: 'production_method', label: 'Production Method', emptyLabel: 'All Methods', options: collectOptionFilterValues(options, 'production_method').map((value) => createLabeledOption(value)) },
+      { key: 'color', label: 'Color', emptyLabel: 'All Colors', options: collectOptionFilterValues(options, 'color').map((value) => createLabeledOption(value)) },
+      { key: 'status', label: 'Status', emptyLabel: 'All Statuses', options: collectOptionFilterValues(options, 'status').map((status) => createLabeledOption(status, STATUS_LABELS[status] || status)) }
+    ];
+  }
+
+  function filterPickerOptions(options, type, search, filters) {
+    const normalizedSearch = normalizeSearch(search);
+    return options.filter((option) => {
+      if (normalizedSearch && !option.searchDocument.includes(normalizedSearch)) {
+        return false;
+      }
+      const rawFilters = getRawPickerFilters(type, filters);
+      return Object.entries(rawFilters).every(([key, value]) => {
+        if (!value) {
+          return true;
+        }
+        return (option.filters[key] || '') === value;
+      });
+    });
+  }
+
+  function getRawPickerFilters(type, filters) {
+    if (type === 'design' || type === 'hat' || type === 'material') {
+      return filters || {};
+    }
+    return {};
+  }
+
+  function collectOptionFilterValues(options, key) {
+    return [...new Set(options.map((option) => option[key]).filter(Boolean))].sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
+  }
+
+  function getPickerEmptyCopy(type, filtered) {
+    if (type === 'hat' && filtered) {
+      return 'No matching hat is currently in the Hat Library.';
+    }
+    if (filtered) {
+      return 'Adjust the search or clear filters to see more results.';
+    }
+    return `Add the first ${getLinkTypeConfig(type).label.toLowerCase()} record to start linking finished hats visually.`;
+  }
+
+  function createDialogValues(record) {
+    return {
+      finished_hat_name: record?.finished_hat_name || '',
+      design_id: record?.design_id || '',
+      hat_id: record?.hat_id || '',
+      material_id: record?.material_id || '',
+      patch_shape: record?.patch_shape || '',
+      patch_size: record?.patch_size || '',
+      placement_status: record?.placement_status || 'unassigned',
+      location_label: record?.location_label || '',
+      retail_price: record?.retail_price || '',
+      status: record?.status || 'review',
+      notes: record?.notes || ''
+    };
   }
 
   function formatFinishedHatHatSummary(record) {
@@ -1018,6 +1645,16 @@
 
   function getPlacementStatusLabel(status) {
     return PLACEMENT_STATUS_LABELS[status] || 'Unassigned';
+  }
+
+  function getMaterialSwatchFitMode(record) {
+    const width = asNullablePositiveInteger(record?.image_width);
+    const height = asNullablePositiveInteger(record?.image_height);
+    if (!width || !height) {
+      return 'contain';
+    }
+    const ratio = width / height;
+    return ratio < 0.85 ? 'cover' : 'contain';
   }
 
   function formatRetailPrice(value) {
@@ -1079,6 +1716,7 @@
     getFinishedHatMissingLinksSummary,
     formatFinishedHatHatSummary,
     formatFinishedHatMaterialSummary,
-    getPlacementStatusLabel
+    getPlacementStatusLabel,
+    getMaterialSwatchFitMode
   };
 }));
