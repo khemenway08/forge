@@ -1479,10 +1479,11 @@ test('staff orders remains the default protected destination and the catalog she
   assert.match(indexSource, />Designs<\/button>/);
   assert.match(indexSource, />Hats<\/button>/);
   assert.match(indexSource, />Materials<\/button>/);
+  assert.match(indexSource, />Finished Hats<\/button>/);
   assert.match(indexSource, />Shortlist<\/button>/);
   assert.match(
     indexSource,
-    /<script src="js\/forge-staff-api-client\.js\?v=20260723-23"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260723-23"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260723-23"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260723-23"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260723-23"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260723-23"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260723-23"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260723-23"><\/script>/
+    /<script src="js\/forge-staff-api-client\.js\?v=20260723-24"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260723-24"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260723-24"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260723-24"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260723-24"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260723-24"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260723-24"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260723-24"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260723-24"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260723-24"><\/script>/
   );
   assert.doesNotMatch(indexSource, /data-category="staff-catalog"/);
 });

@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260723-23';
+const FORGE_BUILD_VERSION = '20260723-24';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
 
@@ -95,6 +95,8 @@ const forgeStaffHatCatalogApi = globalThis.ForgeStaffHatCatalogApi;
 const forgeStaffHatCatalog = globalThis.ForgeStaffHatCatalog;
 const forgeStaffMaterialCatalogApi = globalThis.ForgeStaffMaterialCatalogApi;
 const forgeStaffMaterialCatalog = globalThis.ForgeStaffMaterialCatalog;
+const forgeStaffFinishedHatCatalogApi = globalThis.ForgeStaffFinishedHatCatalogApi;
+const forgeStaffFinishedHatCatalog = globalThis.ForgeStaffFinishedHatCatalog;
 const forgeStaffOrdersRuntime = globalThis.ForgeStaffOrdersRuntime;
 const forgeLocalOrdersQueue = globalThis.ForgeLocalOrdersQueue;
 const storageKey = 'forge-tree-ornament-draft';
@@ -675,6 +677,8 @@ const staffHatCatalogApiClient = createOptionalStaffHatCatalogApiClient();
 const staffHatCatalogModule = createOptionalStaffHatCatalogModule(staffHatCatalogApiClient);
 const staffMaterialCatalogApiClient = createOptionalStaffMaterialCatalogApiClient();
 const staffMaterialCatalogModule = createOptionalStaffMaterialCatalogModule(staffMaterialCatalogApiClient);
+const staffFinishedHatCatalogApiClient = createOptionalStaffFinishedHatCatalogApiClient();
+const staffFinishedHatCatalogModule = createOptionalStaffFinishedHatCatalogModule(staffFinishedHatCatalogApiClient);
 const staffRuntime = createSafeStaffRuntime(orderStore, staffApiClient);
 const orderSyncService = forgeOrderServerSync.createOrderServerSyncService({
   orderStore,
@@ -830,6 +834,46 @@ function createOptionalStaffMaterialCatalogModule(apiClient) {
     });
   } catch (error) {
     console.error('Forge staff material catalog module bootstrap failed', error);
+    return null;
+  }
+}
+
+function createOptionalStaffFinishedHatCatalogApiClient() {
+  if (!forgeStaffFinishedHatCatalogApi || typeof forgeStaffFinishedHatCatalogApi.createForgeStaffFinishedHatCatalogApiClient !== 'function') {
+    console.error('Forge staff finished hat catalog API bootstrap skipped because ForgeStaffFinishedHatCatalogApi was unavailable.');
+    return null;
+  }
+
+  try {
+    return forgeStaffFinishedHatCatalogApi.createForgeStaffFinishedHatCatalogApiClient();
+  } catch (error) {
+    console.error('Forge staff finished hat catalog API bootstrap failed', error);
+    return null;
+  }
+}
+
+function createOptionalStaffFinishedHatCatalogModule(apiClient) {
+  if (!forgeStaffFinishedHatCatalog || typeof forgeStaffFinishedHatCatalog.createStaffFinishedHatCatalogModule !== 'function') {
+    console.error('Forge staff finished hat catalog module bootstrap skipped because ForgeStaffFinishedHatCatalog was unavailable.');
+    return null;
+  }
+
+  try {
+    return forgeStaffFinishedHatCatalog.createStaffFinishedHatCatalogModule({
+      apiClient,
+      designApiClient: staffDesignCatalogApiClient,
+      hatApiClient: staffHatCatalogApiClient,
+      materialApiClient: staffMaterialCatalogApiClient,
+      document,
+      window,
+      canLoadProtectedRecords() {
+        return staffOrdersState.authenticated === true
+          && staffOrdersState.dataSource === 'server'
+          && appState.currentScreen === 'staff-catalog';
+      }
+    });
+  } catch (error) {
+    console.error('Forge staff finished hat catalog module bootstrap failed', error);
     return null;
   }
 }
@@ -2224,6 +2268,10 @@ function getStaffCatalogSectionContent(sectionKey) {
       title: 'Materials',
       message: 'The shared material library is currently unavailable on this device.'
     },
+    'finished-hats': {
+      title: 'Finished Hats',
+      message: 'The shared finished hat library is currently unavailable on this device.'
+    },
     shortlist: {
       title: 'Shortlist',
       message: 'Saved design and hat combinations will appear here later.'
@@ -2235,7 +2283,7 @@ function getStaffCatalogSectionContent(sectionKey) {
 
 function renderStaffCatalog() {
   renderStaffSourceUi();
-  const activeSection = ['designs', 'hats', 'materials', 'shortlist'].includes(staffCatalogState.activeSection)
+  const activeSection = ['designs', 'hats', 'materials', 'finished-hats', 'shortlist'].includes(staffCatalogState.activeSection)
     ? staffCatalogState.activeSection
     : 'designs';
   const sectionContent = getStaffCatalogSectionContent(activeSection);
@@ -2300,6 +2348,22 @@ function renderStaffCatalog() {
     return;
   }
 
+  if (activeSection === 'finished-hats') {
+    if (staffFinishedHatCatalogModule && typeof staffFinishedHatCatalogModule.render === 'function') {
+      staffFinishedHatCatalogModule.render(staffCatalogContent);
+      return;
+    }
+
+    staffCatalogContent.innerHTML = `
+      <section class="staff-catalog-placeholder" role="tabpanel" aria-labelledby="staff-catalog-tab-finished-hats">
+        <p class="eyebrow staff-orders-eyebrow">Unavailable</p>
+        <h3>Finished Hats</h3>
+        <p>The shared finished hat library is currently unavailable on this device.</p>
+      </section>
+    `;
+    return;
+  }
+
   staffCatalogContent.innerHTML = `
     <section class="staff-catalog-placeholder" role="tabpanel" aria-labelledby="staff-catalog-tab-${escapeHtml(activeSection)}">
       <p class="eyebrow staff-orders-eyebrow">Coming Next</p>
@@ -2310,7 +2374,7 @@ function renderStaffCatalog() {
 }
 
 function setStaffCatalogSection(sectionKey) {
-  if (!['designs', 'hats', 'materials', 'shortlist'].includes(sectionKey)) {
+  if (!['designs', 'hats', 'materials', 'finished-hats', 'shortlist'].includes(sectionKey)) {
     return;
   }
   if (sectionKey !== 'designs' && staffDesignCatalogModule && typeof staffDesignCatalogModule.closeDialog === 'function') {
@@ -2321,6 +2385,9 @@ function setStaffCatalogSection(sectionKey) {
   }
   if (sectionKey !== 'materials' && staffMaterialCatalogModule && typeof staffMaterialCatalogModule.closeDialog === 'function') {
     staffMaterialCatalogModule.closeDialog();
+  }
+  if (sectionKey !== 'finished-hats' && staffFinishedHatCatalogModule && typeof staffFinishedHatCatalogModule.closeDialog === 'function') {
+    staffFinishedHatCatalogModule.closeDialog();
   }
   staffCatalogState.activeSection = sectionKey;
   renderStaffCatalog();
@@ -2342,6 +2409,9 @@ function returnToWelcomeFromStaff() {
   }
   if (staffMaterialCatalogModule && typeof staffMaterialCatalogModule.closeDialog === 'function') {
     staffMaterialCatalogModule.closeDialog();
+  }
+  if (staffFinishedHatCatalogModule && typeof staffFinishedHatCatalogModule.closeDialog === 'function') {
+    staffFinishedHatCatalogModule.closeDialog();
   }
   closeStaffBatchDialog({ restoreFocus: false });
   closeStaffPackingDialog({ restoreFocus: false });

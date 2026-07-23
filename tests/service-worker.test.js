@@ -4,8 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const BUILD_VERSION = '20260723-23';
-const CACHE_NAME = 'forge-starter-v23';
+const BUILD_VERSION = '20260723-24';
+const CACHE_NAME = 'forge-starter-v24';
 
 function normalizeRequestUrl(input) {
   if (typeof input === 'string') {
@@ -212,6 +212,8 @@ test('service worker install fetches current precache assets with cache reload a
   assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-hat-catalog.js?v=${BUILD_VERSION}`)));
   assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-material-catalog-api.js?v=${BUILD_VERSION}`)));
   assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-material-catalog.js?v=${BUILD_VERSION}`)));
+  assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-finished-hat-catalog-api.js?v=${BUILD_VERSION}`)));
+  assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-finished-hat-catalog.js?v=${BUILD_VERSION}`)));
 });
 
 test('service worker fetches app.js from the network when online and updates the current cache', async () => {
@@ -290,7 +292,7 @@ test('index.html versions every Forge JavaScript bootstrap URL with the same bui
   const scriptMatches = [...html.matchAll(/<script\s+src="([^"]+)"><\/script>/g)];
   const scriptSources = scriptMatches.map((match) => match[1]);
 
-  assert.equal(scriptSources.length, 17);
+  assert.equal(scriptSources.length, 19);
   assert.ok(scriptSources.every((src) => src.includes(`?v=${BUILD_VERSION}`)));
   assert.deepEqual(scriptSources, [
     `js/forge-product-catalog.js?v=${BUILD_VERSION}`,
@@ -307,6 +309,8 @@ test('index.html versions every Forge JavaScript bootstrap URL with the same bui
     `js/forge-staff-hat-catalog.js?v=${BUILD_VERSION}`,
     `js/forge-staff-material-catalog-api.js?v=${BUILD_VERSION}`,
     `js/forge-staff-material-catalog.js?v=${BUILD_VERSION}`,
+    `js/forge-staff-finished-hat-catalog-api.js?v=${BUILD_VERSION}`,
+    `js/forge-staff-finished-hat-catalog.js?v=${BUILD_VERSION}`,
     `js/forge-staff-orders-runtime.js?v=${BUILD_VERSION}`,
     `js/forge-local-orders-queue.js?v=${BUILD_VERSION}`,
     `js/app.js?v=${BUILD_VERSION}`

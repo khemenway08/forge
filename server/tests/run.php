@@ -1984,6 +1984,405 @@ $runner->run('material catalog endpoints require staff authentication enforce ap
     assertTrue(strpos($repositorySource, 'forge_orders') === false);
 });
 
+$runner->run('finished hat catalog migration creates the isolated forge_catalog_finished_hats table', static function (): void {
+    $migrationSource = file_get_contents(dirname(__DIR__, 2) . '/server/migrations/007_create_forge_catalog_finished_hats.sql');
+
+    assertTrue(is_string($migrationSource));
+    assertTrue(strpos($migrationSource, 'CREATE TABLE IF NOT EXISTS forge_catalog_finished_hats') !== false);
+    assertTrue(strpos($migrationSource, 'design_id CHAR(36) DEFAULT NULL') !== false);
+    assertTrue(strpos($migrationSource, 'hat_id CHAR(36) DEFAULT NULL') !== false);
+    assertTrue(strpos($migrationSource, 'material_id CHAR(36) DEFAULT NULL') !== false);
+    assertTrue(strpos($migrationSource, 'retail_price DECIMAL(10,2) DEFAULT NULL') !== false);
+    assertTrue(strpos($migrationSource, "placement_status VARCHAR(40) NOT NULL DEFAULT 'unassigned'") !== false);
+});
+
+$runner->run('finished hat repository create list read and update support incomplete links and blank price remains null', static function (): void {
+    $pdo = createFinishedHatCatalogTestPdo();
+    seedFinishedHatCatalogLinkTables($pdo);
+    $repository = new \Forge\Server\PdoStaffFinishedHatCatalogRepository($pdo);
+
+    $created = $repository->createFinishedHat([
+        'finished_hat_name' => 'Texas Flag Acrylic Patch Hat Black Performance Rope',
+        'design_id' => '123e4567-e89b-42d3-a456-426614174101',
+        'hat_id' => '',
+        'material_id' => '',
+        'placement_status' => 'unassigned',
+        'retail_price' => '',
+        'status' => 'review',
+        'notes' => ' Sample record '
+    ]);
+
+    assertSame('Texas Flag Acrylic Patch Hat Black Performance Rope', $created['finished_hat_name']);
+    assertSame(null, $created['retail_price']);
+    assertSame(true, $created['needs_linking']);
+    assertSame('Texas Flag', $created['design_name']);
+
+    $listed = $repository->listFinishedHats();
+    assertSame(1, count($listed));
+
+    $updated = $repository->updateFinishedHat((string) $created['id'], [
+        'hat_id' => '123e4567-e89b-42d3-a456-426614174201',
+        'material_id' => '123e4567-e89b-42d3-a456-426614174301',
+        'placement_status' => 'sample',
+        'retail_price' => '32.50',
+        'status' => 'active',
+    ]);
+
+    assertSame(false, $updated['needs_linking']);
+    assertSame('32.50', $updated['retail_price']);
+    assertSame('sample', $updated['placement_status']);
+    assertSame('active', $updated['status']);
+    assertSame('Richardson', $updated['hat_manufacturer']);
+    assertSame('Rawhide Black Durra Bull Premium Leatherette Sheets', $updated['material_name']);
+});
+
+$runner->run('finished hat validation rejects invalid status placement status price and broken links safely', static function (): void {
+    $pdo = createFinishedHatCatalogTestPdo();
+    seedFinishedHatCatalogLinkTables($pdo);
+    $repository = new \Forge\Server\PdoStaffFinishedHatCatalogRepository($pdo);
+
+    assertThrows(
+        static function () use ($repository): void {
+            $repository->createFinishedHat([
+                'finished_hat_name' => ' ',
+                'design_id' => '123e4567-e89b-42d3-a456-426614174999',
+                'hat_id' => '123e4567-e89b-42d3-a456-426614174998',
+                'material_id' => '123e4567-e89b-42d3-a456-426614174997',
+                'placement_status' => 'displayed',
+                'retail_price' => '-2.00',
+                'status' => 'archived',
+            ]);
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof \Forge\Server\StaffFinishedHatCatalogValidationException);
+            assertSame('Finished hat name is required.', $exception->getFieldErrors()['finished_hat_name'] ?? null);
+            assertSame('Select a valid design.', $exception->getFieldErrors()['design_id'] ?? null);
+            assertSame('Select a valid hat.', $exception->getFieldErrors()['hat_id'] ?? null);
+            assertSame('Select a valid material.', $exception->getFieldErrors()['material_id'] ?? null);
+            assertSame('Select a valid placement status.', $exception->getFieldErrors()['placement_status'] ?? null);
+            assertSame('Retail price must be a nonnegative amount with up to two decimals.', $exception->getFieldErrors()['retail_price'] ?? null);
+            assertSame('Select a valid status.', $exception->getFieldErrors()['status'] ?? null);
+        }
+    );
+});
+
+$runner->run('finished hat importer normalization grouping primary-photo selection and exact unique link matching are conservative', static function (): void {
+    assertSame(true, \Forge\Server\isSupportedStaffCatalogFinishedHatImportFile('texas-flag-acrylic-patch-hat-black-performance-rope-main.jpg'));
+    assertSame(false, \Forge\Server\isSupportedStaffCatalogFinishedHatImportFile('.DS_Store'));
+    assertSame(true, \Forge\Server\isOpaqueFinishedHatImportFileName('IMG_4514.JPG'));
+    assertSame('Texas Hill Country Brown Leatherette Patch Hat Brown Khaki Trucker', \Forge\Server\deriveStaffCatalogFinishedHatNameFromFileName('texas-hill-country-brown-leatherette-patch-hat-brown-khaki-trucker-main.png'));
+    assertSame('texas hill country leatherette patch hat black richardson 168 7 panel', \Forge\Server\normalizeStaffCatalogFinishedHatGroupingKey('texas-hill-country-leatherette-patch-hat-black-richardson-168-7-panel-front-2.png'));
+    assertSame('texas-hill-country-front.png', \Forge\Server\selectPrimaryFinishedHatImportFile([
+        'texas-hill-country-side.png',
+        'texas-hill-country-front.png',
+        'texas-hill-country-back.png',
+    ]));
+
+    $proposal = \Forge\Server\proposeStaffCatalogFinishedHatImportMetadataFromFileName(
+        'america-250-coastal-flag-eagle-leatherette-patch-hat-navy-charcoal-richardson-112-main.png',
+        [
+            ['id' => 'design-1', 'design_name' => 'America 250 Coastal Leather Patch', 'match_key' => 'america 250 coastal leather patch'],
+        ],
+        [
+            ['id' => 'hat-1', 'manufacturer' => 'richardson', 'model' => '112', 'color' => 'navy charcoal', 'summary' => 'Richardson / 112 / Navy / Charcoal'],
+        ],
+        [
+            ['id' => 'mat-1', 'material_name' => 'Rawhide Black Durra Bull Premium Leatherette Sheets', 'match_key' => 'rawhide black durra bull premium leatherette sheets'],
+        ]
+    );
+
+    assertSame(null, $proposal['design_id']);
+    assertSame('hat-1', $proposal['hat_id']);
+    assertSame(null, $proposal['material_id']);
+    assertSame('unassigned', $proposal['placement_status']);
+});
+
+$runner->run('finished hat importer dry-run makes no repository or filesystem changes and rerun stays idempotent', static function (): void {
+    $sourceDirectory = createTempImportDirectory();
+    $uploadDirectory = createTempImportDirectory();
+
+    try {
+        createPngFixture($sourceDirectory . '/texas-flag-acrylic-patch-hat-black-performance-rope-main.png', 1254, 1254);
+        createPngFixture($sourceDirectory . '/IMG_4514.png', 1536, 2048);
+        $repository = new class implements \Forge\Server\StaffFinishedHatCatalogImportRepositoryInterface {
+            public int $createdCount = 0;
+            public function listFinishedHats(): array
+            {
+                return [];
+            }
+            public function listFinishedHatImportLinkOptions(): array
+            {
+                return ['designs' => [], 'hats' => [], 'materials' => []];
+            }
+            public function createImportedFinishedHat(array $input, string $photoPath): array
+            {
+                $this->createdCount++;
+                return [];
+            }
+        };
+
+        $importer = new \Forge\Server\StaffFinishedHatCatalogImporter($repository, $uploadDirectory);
+        $summary = $importer->importDirectory($sourceDirectory, true);
+
+        assertSame(1, $summary['imported']);
+        assertSame(1, $summary['manual_review']);
+        assertSame(0, $repository->createdCount);
+        assertSame([], array_values(array_diff(scandir($uploadDirectory) ?: [], ['.', '..'])));
+    } finally {
+        removeTempImportDirectory($sourceDirectory);
+        removeTempImportDirectory($uploadDirectory);
+    }
+});
+
+$runner->run('finished hat assisted linker uses the longest unique design phrase and rejects competing design phrases', static function (): void {
+    $designOptions = \Forge\Server\buildStaffCatalogFinishedHatAssistedDesignIndex([
+        ['id' => '123e4567-e89b-42d3-a456-426614174401', 'design_name' => 'Texas Flag Map'],
+        ['id' => '123e4567-e89b-42d3-a456-426614174402', 'design_name' => 'Texas Flag'],
+        ['id' => '123e4567-e89b-42d3-a456-426614174403', 'design_name' => 'America 250 Coastal Leather Patch'],
+        ['id' => '123e4567-e89b-42d3-a456-426614174404', 'design_name' => 'America 250 Coastal Acrylic Patch'],
+    ]);
+
+    $unique = \Forge\Server\proposeStaffCatalogFinishedHatAssistedDesignLink(
+        'Texas Flag Map Acrylic Patch Hat Navy Performance Rope',
+        $designOptions
+    );
+    $competing = \Forge\Server\proposeStaffCatalogFinishedHatAssistedDesignLink(
+        'America 250 Coastal Flag Eagle Leatherette Patch Hat Navy Charcoal Richardson 112',
+        $designOptions
+    );
+
+    assertSame('proposed', $unique['status']);
+    assertSame('Texas Flag Map', $unique['label']);
+    assertSame('ambiguous', $competing['status']);
+});
+
+$runner->run('finished hat assisted linker matches hats by manufacturer model and unique color including compound color normalization', static function (): void {
+    $hatOptions = \Forge\Server\buildStaffCatalogFinishedHatAssistedHatIndex([
+        [
+            'id' => '123e4567-e89b-42d3-a456-426614174501',
+            'manufacturer' => 'Richardson',
+            'model' => '112',
+            'color' => 'Navy / Charcoal',
+        ],
+        [
+            'id' => '123e4567-e89b-42d3-a456-426614174502',
+            'manufacturer' => 'Richardson',
+            'model' => '112',
+            'color' => 'Black / White / Heather Grey',
+        ],
+    ]);
+
+    $navy = \Forge\Server\proposeStaffCatalogFinishedHatAssistedHatLink(
+        'America 250 Coastal Flag Eagle Leatherette Patch Hat Navy Charcoal Richardson 112',
+        $hatOptions
+    );
+    $gray = \Forge\Server\proposeStaffCatalogFinishedHatAssistedHatLink(
+        'Texas Hill Country Acrylic Patch Hat Black Gray White Richardson 112',
+        $hatOptions
+    );
+
+    assertSame('proposed', $navy['status']);
+    assertSame('Richardson / 112 / Navy / Charcoal', $navy['label']);
+    assertSame('proposed', $gray['status']);
+    assertSame('Richardson / 112 / Black / White / Heather Grey', $gray['label']);
+});
+
+$runner->run('finished hat assisted linker rejects ambiguous same-model hats and reports missing hat models', static function (): void {
+    $hatOptions = \Forge\Server\buildStaffCatalogFinishedHatAssistedHatIndex([
+        [
+            'id' => '123e4567-e89b-42d3-a456-426614174511',
+            'manufacturer' => 'Richardson',
+            'model' => '112',
+            'color' => 'Navy / Charcoal',
+        ],
+        [
+            'id' => '123e4567-e89b-42d3-a456-426614174512',
+            'manufacturer' => 'Richardson',
+            'model' => '112',
+            'color' => 'Navy / White',
+        ],
+    ]);
+
+    $ambiguous = \Forge\Server\proposeStaffCatalogFinishedHatAssistedHatLink(
+        'Texas Flag Acrylic Patch Hat Richardson 112',
+        $hatOptions
+    );
+    $missing = \Forge\Server\proposeStaffCatalogFinishedHatAssistedHatLink(
+        'Texas Hill Country Camo Leatherette Patch Hat Black Richardson 168 7 Panel',
+        $hatOptions
+    );
+
+    assertSame('ambiguous', $ambiguous['status']);
+    assertSame('missing_catalog_record', $missing['status']);
+    assertTrue(strpos((string) $missing['reason'], 'Richardson 168 7 Panel') !== false);
+});
+
+$runner->run('finished hat assisted linker matches unique materials and rejects ambiguous material matches', static function (): void {
+    $materialOptions = \Forge\Server\buildStaffCatalogFinishedHatAssistedMaterialIndex([
+        [
+            'id' => '123e4567-e89b-42d3-a456-426614174601',
+            'material_name' => 'Brushed Stainless Red Blue Acrylic 12x24',
+            'material_type' => 'Acrylic',
+            'color' => 'Brushed / Stainless / Red / Blue',
+        ],
+        [
+            'id' => '123e4567-e89b-42d3-a456-426614174602',
+            'material_name' => 'Dark Brown Black Durra Bull Premium Leatherette Sheets 12x24',
+            'material_type' => 'Leatherette',
+            'color' => 'Dark / Brown / Black',
+        ],
+        [
+            'id' => '123e4567-e89b-42d3-a456-426614174603',
+            'material_name' => 'Light Brown Black Durra Bull Premium Leatherette Sheets 12x24',
+            'material_type' => 'Leatherette',
+            'color' => 'Light / Brown / Black',
+        ],
+    ]);
+
+    $unique = \Forge\Server\proposeStaffCatalogFinishedHatAssistedMaterialLink(
+        'Texas Flag Brushed Stainless Red Blue Acrylic Patch Hat Navy Performance Rope',
+        $materialOptions
+    );
+    $ambiguous = \Forge\Server\proposeStaffCatalogFinishedHatAssistedMaterialLink(
+        'Texas Hill Country Brown Leatherette Patch Hat Brown Khaki Trucker',
+        $materialOptions
+    );
+
+    assertSame('proposed', $unique['status']);
+    assertSame('Brushed Stainless Red Blue Acrylic 12x24 / Brushed / Stainless / Red / Blue', $unique['label']);
+    assertSame('ambiguous', $ambiguous['status']);
+});
+
+$runner->run('finished hat assisted linker preserves existing links applies partial updates and is safe to rerun', static function (): void {
+    $repository = new class {
+        /** @var array<int, array<string, mixed>> */
+        public array $records = [
+            [
+                'id' => '123e4567-e89b-42d3-a456-426614174701',
+                'finished_hat_name' => 'America 250 Coastal Flag Eagle Leatherette Patch Hat Navy Charcoal Richardson 112',
+                'design_id' => '123e4567-e89b-42d3-a456-426614174711',
+                'design_name' => 'Manual Coastal Design',
+                'hat_id' => null,
+                'hat_manufacturer' => null,
+                'hat_model' => null,
+                'hat_color' => null,
+                'material_id' => null,
+                'material_name' => null,
+                'material_color' => null,
+            ],
+            [
+                'id' => '123e4567-e89b-42d3-a456-426614174702',
+                'finished_hat_name' => 'Texas Flag Brushed Stainless Red Blue Acrylic Patch Hat Navy Performance Rope',
+                'design_id' => null,
+                'design_name' => null,
+                'hat_id' => null,
+                'hat_manufacturer' => null,
+                'hat_model' => null,
+                'hat_color' => null,
+                'material_id' => null,
+                'material_name' => null,
+                'material_color' => null,
+            ],
+        ];
+
+        public int $updateCalls = 0;
+
+        public function listFinishedHats(): array
+        {
+            return $this->records;
+        }
+
+        public function listFinishedHatSelectionOptions(): array
+        {
+            return [
+                'designs' => [
+                    ['id' => '123e4567-e89b-42d3-a456-426614174711', 'design_name' => 'Manual Coastal Design'],
+                    ['id' => '123e4567-e89b-42d3-a456-426614174712', 'design_name' => 'Texas Flag'],
+                ],
+                'hats' => [
+                    ['id' => '123e4567-e89b-42d3-a456-426614174721', 'manufacturer' => 'Richardson', 'model' => '112', 'color' => 'Navy / Charcoal'],
+                ],
+                'materials' => [
+                    ['id' => '123e4567-e89b-42d3-a456-426614174731', 'material_name' => 'Brushed Stainless Red Blue Acrylic 12x24', 'material_type' => 'Acrylic', 'color' => 'Brushed / Stainless / Red / Blue'],
+                ],
+            ];
+        }
+
+        public function updateFinishedHat(string $id, array $input): array
+        {
+            $this->updateCalls++;
+            foreach ($this->records as &$record) {
+                if ((string) $record['id'] !== $id) {
+                    continue;
+                }
+                foreach ($input as $key => $value) {
+                    $record[$key] = $value;
+                }
+                if (($input['hat_id'] ?? null) !== null) {
+                    $record['hat_manufacturer'] = 'Richardson';
+                    $record['hat_model'] = '112';
+                    $record['hat_color'] = 'Navy / Charcoal';
+                }
+                if (($input['material_id'] ?? null) !== null) {
+                    $record['material_name'] = 'Brushed Stainless Red Blue Acrylic 12x24';
+                    $record['material_color'] = 'Brushed / Stainless / Red / Blue';
+                }
+                return $record;
+            }
+            return [];
+        }
+    };
+
+    $linker = new \Forge\Server\StaffFinishedHatCatalogAssistedLinker($repository);
+    $dryRun = $linker->link(true);
+    $apply = $linker->link(false);
+    $rerun = $linker->link(true);
+
+    assertSame(0, $dryRun['updated_records']);
+    assertSame(2, $apply['updated_records']);
+    assertSame(2, $repository->updateCalls);
+    assertSame('123e4567-e89b-42d3-a456-426614174711', $repository->records[0]['design_id']);
+    assertSame('123e4567-e89b-42d3-a456-426614174721', $repository->records[0]['hat_id']);
+    assertSame('123e4567-e89b-42d3-a456-426614174731', $repository->records[1]['material_id']);
+    assertSame(0, $rerun['design_links_proposed']);
+    assertSame(0, $rerun['hat_links_proposed']);
+    assertSame(0, $rerun['material_links_proposed']);
+});
+
+$runner->run('finished hat assisted linker hard-stops against non-local databases', static function (): void {
+    $toolSource = file_get_contents(dirname(__DIR__, 2) . '/server/tools/assist-link-finished-hats.php');
+
+    assertTrue(is_string($toolSource));
+    assertTrue(strpos($toolSource, 'forge_local_dev') !== false);
+    assertTrue(strpos($toolSource, 'This utility may run only against the local forge_local_dev database.') !== false);
+});
+
+$runner->run('finished hat catalog endpoints require staff authentication enforce approved image upload constraints and stay isolated from order tables', static function (): void {
+    $listEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/finished-hats.php');
+    $singleEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/finished-hat.php');
+    $photoEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/finished-hat-photo.php');
+    $sharedEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/_shared.php');
+    $repositorySource = file_get_contents(dirname(__DIR__) . '/lib/staff-finished-hat-catalog-repository.php');
+
+    assertTrue(is_string($listEndpointSource));
+    assertTrue(is_string($singleEndpointSource));
+    assertTrue(is_string($photoEndpointSource));
+    assertTrue(is_string($sharedEndpointSource));
+    assertTrue(is_string($repositorySource));
+    assertTrue(strpos($listEndpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($singleEndpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($photoEndpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($photoEndpointSource, 'FILEINFO_MIME_TYPE') !== false);
+    assertTrue(strpos($photoEndpointSource, '@getimagesize') !== false);
+    assertTrue(strpos($photoEndpointSource, "'image/png'") !== false);
+    assertTrue(strpos($photoEndpointSource, "'image/jpeg'") !== false);
+    assertTrue(strpos($photoEndpointSource, "'image/webp'") !== false);
+    assertTrue(strpos($photoEndpointSource, 'FORGE_FINISHED_HAT_CATALOG_MAX_UPLOAD_BYTES = 5242880') !== false);
+    assertTrue(strpos($sharedEndpointSource, "function forge_finished_hat_catalog_resolve_absolute_photo_path(?string \$photoPath): ?string") !== false);
+    assertTrue(strpos($repositorySource, 'forge_catalog_finished_hats') !== false);
+    assertTrue(strpos($repositorySource, 'forge_orders') === false);
+});
+
 $runner->run('invalid stored staff order payload fails safely', static function (): void {
     assertThrows(
         static function (): void {
@@ -2013,6 +2412,65 @@ function createTempImportDirectory(): string
     }
 
     return $baseDirectory;
+}
+
+function createFinishedHatCatalogTestPdo(): PDO
+{
+    $pdo = new PDO('sqlite::memory:');
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->exec(
+        'CREATE TABLE forge_catalog_designs (
+            id TEXT PRIMARY KEY,
+            design_name TEXT NOT NULL
+        )'
+    );
+    $pdo->exec(
+        'CREATE TABLE forge_catalog_hats (
+            id TEXT PRIMARY KEY,
+            hat_name TEXT NOT NULL,
+            manufacturer TEXT DEFAULT NULL,
+            model TEXT DEFAULT NULL,
+            color TEXT DEFAULT NULL
+        )'
+    );
+    $pdo->exec(
+        'CREATE TABLE forge_catalog_materials (
+            id TEXT PRIMARY KEY,
+            material_name TEXT NOT NULL,
+            material_type TEXT DEFAULT NULL,
+            color TEXT DEFAULT NULL
+        )'
+    );
+    $pdo->exec(
+        'CREATE TABLE forge_catalog_finished_hats (
+            id TEXT PRIMARY KEY,
+            finished_hat_name TEXT NOT NULL,
+            photo_path TEXT DEFAULT NULL,
+            image_width INTEGER DEFAULT NULL,
+            image_height INTEGER DEFAULT NULL,
+            design_id TEXT DEFAULT NULL,
+            hat_id TEXT DEFAULT NULL,
+            material_id TEXT DEFAULT NULL,
+            patch_shape TEXT DEFAULT NULL,
+            patch_size TEXT DEFAULT NULL,
+            placement_status TEXT NOT NULL DEFAULT "unassigned",
+            location_label TEXT DEFAULT NULL,
+            retail_price TEXT DEFAULT NULL,
+            status TEXT NOT NULL DEFAULT "review",
+            notes TEXT DEFAULT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )'
+    );
+
+    return $pdo;
+}
+
+function seedFinishedHatCatalogLinkTables(PDO $pdo): void
+{
+    $pdo->exec("INSERT INTO forge_catalog_designs (id, design_name) VALUES ('123e4567-e89b-42d3-a456-426614174101', 'Texas Flag')");
+    $pdo->exec("INSERT INTO forge_catalog_hats (id, hat_name, manufacturer, model, color) VALUES ('123e4567-e89b-42d3-a456-426614174201', 'Richardson 112 Navy Charcoal', 'Richardson', '112', 'Navy / Charcoal')");
+    $pdo->exec("INSERT INTO forge_catalog_materials (id, material_name, material_type, color) VALUES ('123e4567-e89b-42d3-a456-426614174301', 'Rawhide Black Durra Bull Premium Leatherette Sheets', 'Leatherette', 'Rawhide / Black')");
 }
 
 function createTempImportPreviewFile(string $fileName, string $contents): string
