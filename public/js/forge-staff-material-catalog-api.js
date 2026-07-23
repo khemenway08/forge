@@ -17,6 +17,7 @@
     authentication_required: 'Staff authentication is required.',
     unsupported_media_type: 'The material library rejected the request format.',
     material_not_found: 'That material could not be found.',
+    catalog_order_conflict: 'The material order changed elsewhere. Reload and try again.',
     storage_unavailable: 'Material catalog storage is currently unavailable.',
     server_error: 'Material catalog is currently unavailable.',
     unavailable: 'Material catalog is currently unavailable.',
@@ -107,6 +108,10 @@
       return saveMaterial('update', materialId, input);
     }
 
+    async function reorderMaterials(orderedIds) {
+      return reorderCatalogRecords('materials', orderedIds);
+    }
+
     async function saveMaterial(mode, materialId, input) {
       const payload = normalizeMaterialInputPayload(input);
       const url = mode === 'update'
@@ -171,11 +176,48 @@
       }
     }
 
+    async function reorderCatalogRecords(resourceType, orderedIds) {
+      const normalizedIds = Array.isArray(orderedIds)
+        ? orderedIds.map((value) => asTrimmedString(value)).filter(Boolean)
+        : [];
+
+      try {
+        const response = await performJsonRequest(fetchImpl, `${baseUrl}/reorder.php`, timeoutMs, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json'
+          },
+          credentials: 'same-origin',
+          cache: 'no-store',
+          body: JSON.stringify({
+            resource_type: resourceType,
+            ordered_ids: normalizedIds
+          })
+        });
+        const payload = await parseJsonResponse(response);
+        if (response.status === 401) {
+          return { ok: false, authenticated: false, unauthenticated: true, records: [] };
+        }
+        if (!response.ok) {
+          throw buildServerError(response.status, payload);
+        }
+        return {
+          ok: true,
+          authenticated: true,
+          records: Array.isArray(payload?.data?.records) ? payload.data.records : []
+        };
+      } catch (error) {
+        throw normalizeClientError(error);
+      }
+    }
+
     return {
       listMaterials,
       getMaterial,
       createMaterial,
       updateMaterial,
+      reorderMaterials,
       uploadSwatch
     };
   }
@@ -197,6 +239,7 @@
       notes: asNullableTrimmedString(normalized.notes),
       image_width: asNullablePositiveInteger(normalized.image_width),
       image_height: asNullablePositiveInteger(normalized.image_height),
+      sort_order: asPositiveInteger(normalized.sort_order),
       created_at: asTrimmedString(normalized.created_at),
       updated_at: asTrimmedString(normalized.updated_at)
     };
@@ -304,6 +347,17 @@
       return Number.parseInt(value.trim(), 10);
     }
     return null;
+  }
+
+  function asPositiveInteger(value) {
+    if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+      return value;
+    }
+    if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+      const normalized = Number.parseInt(value.trim(), 10);
+      return normalized > 0 ? normalized : 0;
+    }
+    return 0;
   }
 
   function normalizeOptionalText(value) {

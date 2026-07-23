@@ -80,10 +80,16 @@ final class PdoStaffHatCatalogRepository implements StaffHatCatalogImportReposit
                     base_cost,
                     status,
                     notes,
+                    sort_order,
                     created_at,
                     updated_at
                  FROM forge_catalog_hats
-                 ORDER BY updated_at DESC, hat_name ASC, id ASC'
+                 ORDER BY
+                    CASE WHEN sort_order > 0 THEN 0 ELSE 1 END ASC,
+                    sort_order ASC,
+                    hat_name ASC,
+                    created_at ASC,
+                    id ASC'
             );
             $records = $statement ? $statement->fetchAll() : [];
         } catch (PDOException $exception) {
@@ -125,6 +131,7 @@ final class PdoStaffHatCatalogRepository implements StaffHatCatalogImportReposit
                     base_cost,
                     status,
                     notes,
+                    sort_order,
                     created_at,
                     updated_at
                  FROM forge_catalog_hats
@@ -151,6 +158,7 @@ final class PdoStaffHatCatalogRepository implements StaffHatCatalogImportReposit
         $normalized = validateAndNormalizeStaffCatalogHatInput($input);
         $id = createStaffCatalogHatUuid();
         $timestamp = gmdate('Y-m-d H:i:s.u');
+        $sortOrder = getNextStaffCatalogSortOrder($this->pdo, 'forge_catalog_hats');
 
         try {
             $statement = $this->pdo->prepare(
@@ -165,6 +173,7 @@ final class PdoStaffHatCatalogRepository implements StaffHatCatalogImportReposit
                     base_cost,
                     status,
                     notes,
+                    sort_order,
                     created_at,
                     updated_at
                  ) VALUES (
@@ -178,6 +187,7 @@ final class PdoStaffHatCatalogRepository implements StaffHatCatalogImportReposit
                     :base_cost,
                     :status,
                     :notes,
+                    :sort_order,
                     :created_at,
                     :updated_at
                  )'
@@ -193,6 +203,7 @@ final class PdoStaffHatCatalogRepository implements StaffHatCatalogImportReposit
                 ':base_cost' => $normalized['base_cost'],
                 ':status' => $normalized['status'],
                 ':notes' => $normalized['notes'],
+                ':sort_order' => $sortOrder,
                 ':created_at' => $timestamp,
                 ':updated_at' => $timestamp,
             ]);
@@ -218,6 +229,7 @@ final class PdoStaffHatCatalogRepository implements StaffHatCatalogImportReposit
         $normalizedPhotoPath = normalizeStaffCatalogHatPhotoPath($photoPath);
         $id = createStaffCatalogHatUuid();
         $timestamp = gmdate('Y-m-d H:i:s.u');
+        $sortOrder = getNextStaffCatalogSortOrder($this->pdo, 'forge_catalog_hats');
 
         try {
             $statement = $this->pdo->prepare(
@@ -232,6 +244,7 @@ final class PdoStaffHatCatalogRepository implements StaffHatCatalogImportReposit
                     base_cost,
                     status,
                     notes,
+                    sort_order,
                     created_at,
                     updated_at
                  ) VALUES (
@@ -245,6 +258,7 @@ final class PdoStaffHatCatalogRepository implements StaffHatCatalogImportReposit
                     :base_cost,
                     :status,
                     :notes,
+                    :sort_order,
                     :created_at,
                     :updated_at
                  )'
@@ -260,6 +274,7 @@ final class PdoStaffHatCatalogRepository implements StaffHatCatalogImportReposit
                 ':base_cost' => $normalized['base_cost'],
                 ':status' => $normalized['status'],
                 ':notes' => $normalized['notes'],
+                ':sort_order' => $sortOrder,
                 ':created_at' => $timestamp,
                 ':updated_at' => $timestamp,
             ]);
@@ -330,6 +345,16 @@ final class PdoStaffHatCatalogRepository implements StaffHatCatalogImportReposit
         }
 
         return $updated;
+    }
+
+    /**
+     * @param array<int, string> $orderedIds
+     * @return array<int, array<string, mixed>>
+     */
+    public function reorderHats(array $orderedIds): array
+    {
+        saveStaffCatalogSortOrder($this->pdo, 'forge_catalog_hats', $orderedIds);
+        return $this->listHats();
     }
 
     /**
@@ -494,6 +519,7 @@ function normalizeStaffCatalogHatRecord($record): array
         'base_cost' => normalizeStaffCatalogHatBaseCostString($normalized['base_cost'] ?? null),
         'status' => normalizeStaffCatalogHatNullableString($normalized['status'] ?? '') ?? '',
         'notes' => normalizeStaffCatalogHatNullableString($normalized['notes'] ?? null),
+        'sort_order' => max(0, (int) ($normalized['sort_order'] ?? 0)),
         'created_at' => normalizeStaffCatalogHatDateTime($normalized['created_at'] ?? ''),
         'updated_at' => normalizeStaffCatalogHatDateTime($normalized['updated_at'] ?? ''),
     ];

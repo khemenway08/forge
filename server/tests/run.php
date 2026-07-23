@@ -1996,6 +1996,39 @@ $runner->run('finished hat catalog migration creates the isolated forge_catalog_
     assertTrue(strpos($migrationSource, "placement_status VARCHAR(40) NOT NULL DEFAULT 'unassigned'") !== false);
 });
 
+$runner->run('catalog sort-order migration updates only the four catalog tables and seeds deterministic custom ordering', static function (): void {
+    $migrationSource = file_get_contents(dirname(__DIR__, 2) . '/server/migrations/008_add_catalog_sort_order.sql');
+
+    assertTrue(is_string($migrationSource));
+    assertTrue(strpos($migrationSource, 'ALTER TABLE forge_catalog_designs') !== false);
+    assertTrue(strpos($migrationSource, 'ALTER TABLE forge_catalog_hats') !== false);
+    assertTrue(strpos($migrationSource, 'ALTER TABLE forge_catalog_materials') !== false);
+    assertTrue(strpos($migrationSource, 'ALTER TABLE forge_catalog_finished_hats') !== false);
+    assertTrue(strpos($migrationSource, 'sort_order BIGINT UNSIGNED NOT NULL DEFAULT 0') !== false);
+    assertTrue(strpos($migrationSource, 'ORDER BY updated_at DESC, design_name ASC, id ASC') !== false);
+    assertTrue(strpos($migrationSource, 'ORDER BY updated_at DESC, hat_name ASC, id ASC') !== false);
+    assertTrue(strpos($migrationSource, 'ORDER BY updated_at DESC, material_name ASC, id ASC') !== false);
+    assertTrue(strpos($migrationSource, 'ORDER BY updated_at DESC, finished_hat_name ASC, id ASC') !== false);
+    assertTrue(strpos($migrationSource, 'forge_orders') === false);
+});
+
+$runner->run('catalog reorder endpoint source requires authenticated staff access and keeps a strict resource allowlist', static function (): void {
+    $endpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/reorder.php');
+
+    assertTrue(is_string($endpointSource));
+    assertTrue(strpos($endpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($endpointSource, "case 'designs'") !== false);
+    assertTrue(strpos($endpointSource, "case 'hats'") !== false);
+    assertTrue(strpos($endpointSource, "case 'materials'") !== false);
+    assertTrue(strpos($endpointSource, "case 'finished_hats'") !== false);
+    assertTrue(strpos($endpointSource, 'reorderDesigns') !== false);
+    assertTrue(strpos($endpointSource, 'reorderHats') !== false);
+    assertTrue(strpos($endpointSource, 'reorderMaterials') !== false);
+    assertTrue(strpos($endpointSource, 'reorderFinishedHats') !== false);
+    assertTrue(strpos($endpointSource, 'catalog_order_conflict') !== false);
+    assertTrue(strpos($endpointSource, 'table') === false);
+});
+
 $runner->run('finished hat repository create list read and update support incomplete links and blank price remains null', static function (): void {
     $pdo = createFinishedHatCatalogTestPdo();
     seedFinishedHatCatalogLinkTables($pdo);
@@ -2064,6 +2097,152 @@ $runner->run('finished hat validation rejects invalid status placement status pr
             assertSame('Select a valid status.', $exception->getFieldErrors()['status'] ?? null);
         }
     );
+});
+
+$runner->run('shared catalog sort-order helper rejects duplicate stale and incomplete id sets safely', static function (): void {
+    $pdo = new PDO('sqlite::memory:');
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->exec('CREATE TABLE forge_catalog_designs (id TEXT PRIMARY KEY, sort_order INTEGER NOT NULL DEFAULT 0)');
+    $pdo->exec("INSERT INTO forge_catalog_designs (id, sort_order) VALUES ('a', 1000), ('b', 2000), ('c', 3000)");
+
+    assertThrows(
+        static function () use ($pdo): void {
+            \Forge\Server\saveStaffCatalogSortOrder($pdo, 'forge_catalog_designs', ['a', 'a', 'c']);
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof \Forge\Server\StaffCatalogSortOrderValidationException);
+        }
+    );
+
+    assertThrows(
+        static function () use ($pdo): void {
+            \Forge\Server\saveStaffCatalogSortOrder($pdo, 'forge_catalog_designs', ['a', 'b']);
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof \Forge\Server\StaffCatalogSortOrderConflictException);
+        }
+    );
+
+    assertThrows(
+        static function () use ($pdo): void {
+            \Forge\Server\saveStaffCatalogSortOrder($pdo, 'forge_catalog_designs', ['a', 'b', 'missing']);
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof \Forge\Server\StaffCatalogSortOrderConflictException);
+        }
+    );
+});
+
+$runner->run('design hat material and finished-hat repositories append sort order and persist saved custom ordering', static function (): void {
+    $designRepository = new \Forge\Server\PdoStaffDesignCatalogRepository(createDesignCatalogTestPdo());
+    $firstDesign = $designRepository->createDesign([
+        'design_name' => 'Alpha Ranch',
+        'category' => 'other',
+        'store_fit' => 'undecided',
+        'status' => 'review',
+        'production_method' => 'tbd',
+        'production_file_location' => '',
+        'made_on_hat' => 'unknown',
+        'notes' => ''
+    ]);
+    $secondDesign = $designRepository->createDesign([
+        'design_name' => 'Bravo Trail',
+        'category' => 'other',
+        'store_fit' => 'undecided',
+        'status' => 'review',
+        'production_method' => 'tbd',
+        'production_file_location' => '',
+        'made_on_hat' => 'unknown',
+        'notes' => ''
+    ]);
+    assertSame(1000, $firstDesign['sort_order']);
+    assertSame(2000, $secondDesign['sort_order']);
+    $designRepository->reorderDesigns([(string) $secondDesign['id'], (string) $firstDesign['id']]);
+    assertSame((string) $secondDesign['id'], $designRepository->listDesigns()[0]['id']);
+
+    $hatRepository = new \Forge\Server\PdoStaffHatCatalogRepository(createHatCatalogTestPdo());
+    $firstHat = $hatRepository->createHat([
+        'hat_name' => 'Alpha Hat',
+        'manufacturer' => 'Richardson',
+        'model' => '112',
+        'color' => 'Black',
+        'vendor' => '',
+        'base_cost' => '',
+        'status' => 'review',
+        'notes' => ''
+    ]);
+    $secondHat = $hatRepository->createHat([
+        'hat_name' => 'Bravo Hat',
+        'manufacturer' => 'Richardson',
+        'model' => '115',
+        'color' => 'Navy',
+        'vendor' => '',
+        'base_cost' => '',
+        'status' => 'review',
+        'notes' => ''
+    ]);
+    assertSame(1000, $firstHat['sort_order']);
+    assertSame(2000, $secondHat['sort_order']);
+    $hatRepository->reorderHats([(string) $secondHat['id'], (string) $firstHat['id']]);
+    assertSame((string) $secondHat['id'], $hatRepository->listHats()[0]['id']);
+
+    $materialRepository = new \Forge\Server\PdoStaffMaterialCatalogRepository(createMaterialCatalogTestPdo());
+    $firstMaterial = $materialRepository->createMaterial([
+        'material_name' => 'Alpha Acrylic',
+        'material_type' => 'Acrylic',
+        'color' => 'Black',
+        'supplier' => '',
+        'production_method' => '',
+        'purchase_cost' => '',
+        'purchase_quantity' => '',
+        'cost_basis' => '',
+        'status' => 'review',
+        'notes' => ''
+    ]);
+    $secondMaterial = $materialRepository->createMaterial([
+        'material_name' => 'Bravo Leatherette',
+        'material_type' => 'Leatherette',
+        'color' => 'Brown',
+        'supplier' => '',
+        'production_method' => '',
+        'purchase_cost' => '',
+        'purchase_quantity' => '',
+        'cost_basis' => '',
+        'status' => 'review',
+        'notes' => ''
+    ]);
+    assertSame(1000, $firstMaterial['sort_order']);
+    assertSame(2000, $secondMaterial['sort_order']);
+    $materialRepository->reorderMaterials([(string) $secondMaterial['id'], (string) $firstMaterial['id']]);
+    assertSame((string) $secondMaterial['id'], $materialRepository->listMaterials()[0]['id']);
+
+    $finishedHatPdo = createFinishedHatCatalogTestPdo();
+    seedFinishedHatCatalogLinkTables($finishedHatPdo);
+    $finishedHatRepository = new \Forge\Server\PdoStaffFinishedHatCatalogRepository($finishedHatPdo);
+    $firstFinishedHat = $finishedHatRepository->createFinishedHat([
+        'finished_hat_name' => 'Alpha Finished Hat',
+        'design_id' => '123e4567-e89b-42d3-a456-426614174101',
+        'hat_id' => '123e4567-e89b-42d3-a456-426614174201',
+        'material_id' => '123e4567-e89b-42d3-a456-426614174301',
+        'placement_status' => 'unassigned',
+        'retail_price' => '',
+        'status' => 'review',
+        'notes' => ''
+    ]);
+    $secondFinishedHat = $finishedHatRepository->createFinishedHat([
+        'finished_hat_name' => 'Bravo Finished Hat',
+        'design_id' => '123e4567-e89b-42d3-a456-426614174101',
+        'hat_id' => '123e4567-e89b-42d3-a456-426614174201',
+        'material_id' => '123e4567-e89b-42d3-a456-426614174301',
+        'placement_status' => 'sample',
+        'retail_price' => '',
+        'status' => 'review',
+        'notes' => ''
+    ]);
+    assertSame(1000, $firstFinishedHat['sort_order']);
+    assertSame(2000, $secondFinishedHat['sort_order']);
+    $finishedHatRepository->reorderFinishedHats([(string) $secondFinishedHat['id'], (string) $firstFinishedHat['id']]);
+    assertSame((string) $secondFinishedHat['id'], $finishedHatRepository->listFinishedHats()[0]['id']);
 });
 
 $runner->run('finished hat importer normalization grouping primary-photo selection and exact unique link matching are conservative', static function (): void {
@@ -2421,7 +2600,8 @@ function createFinishedHatCatalogTestPdo(): PDO
     $pdo->exec(
         'CREATE TABLE forge_catalog_designs (
             id TEXT PRIMARY KEY,
-            design_name TEXT NOT NULL
+            design_name TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0
         )'
     );
     $pdo->exec(
@@ -2430,7 +2610,8 @@ function createFinishedHatCatalogTestPdo(): PDO
             hat_name TEXT NOT NULL,
             manufacturer TEXT DEFAULT NULL,
             model TEXT DEFAULT NULL,
-            color TEXT DEFAULT NULL
+            color TEXT DEFAULT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0
         )'
     );
     $pdo->exec(
@@ -2438,7 +2619,8 @@ function createFinishedHatCatalogTestPdo(): PDO
             id TEXT PRIMARY KEY,
             material_name TEXT NOT NULL,
             material_type TEXT DEFAULT NULL,
-            color TEXT DEFAULT NULL
+            color TEXT DEFAULT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0
         )'
     );
     $pdo->exec(
@@ -2458,6 +2640,86 @@ function createFinishedHatCatalogTestPdo(): PDO
             retail_price TEXT DEFAULT NULL,
             status TEXT NOT NULL DEFAULT "review",
             notes TEXT DEFAULT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )'
+    );
+
+    return $pdo;
+}
+
+function createDesignCatalogTestPdo(): PDO
+{
+    $pdo = new PDO('sqlite::memory:');
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->exec(
+        'CREATE TABLE forge_catalog_designs (
+            id TEXT PRIMARY KEY,
+            design_name TEXT NOT NULL,
+            thumbnail_path TEXT DEFAULT NULL,
+            category TEXT NOT NULL,
+            store_fit TEXT NOT NULL,
+            status TEXT NOT NULL,
+            production_method TEXT NOT NULL,
+            production_file_location TEXT DEFAULT NULL,
+            made_on_hat TEXT NOT NULL,
+            notes TEXT DEFAULT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )'
+    );
+
+    return $pdo;
+}
+
+function createHatCatalogTestPdo(): PDO
+{
+    $pdo = new PDO('sqlite::memory:');
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->exec(
+        'CREATE TABLE forge_catalog_hats (
+            id TEXT PRIMARY KEY,
+            hat_name TEXT NOT NULL,
+            photo_path TEXT DEFAULT NULL,
+            manufacturer TEXT DEFAULT NULL,
+            model TEXT DEFAULT NULL,
+            color TEXT DEFAULT NULL,
+            vendor TEXT DEFAULT NULL,
+            base_cost TEXT DEFAULT NULL,
+            status TEXT NOT NULL,
+            notes TEXT DEFAULT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )'
+    );
+
+    return $pdo;
+}
+
+function createMaterialCatalogTestPdo(): PDO
+{
+    $pdo = new PDO('sqlite::memory:');
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->exec(
+        'CREATE TABLE forge_catalog_materials (
+            id TEXT PRIMARY KEY,
+            material_name TEXT NOT NULL,
+            swatch_path TEXT DEFAULT NULL,
+            material_type TEXT DEFAULT NULL,
+            color TEXT DEFAULT NULL,
+            supplier TEXT DEFAULT NULL,
+            production_method TEXT DEFAULT NULL,
+            purchase_cost TEXT DEFAULT NULL,
+            purchase_quantity INTEGER DEFAULT NULL,
+            cost_basis TEXT DEFAULT NULL,
+            status TEXT NOT NULL,
+            notes TEXT DEFAULT NULL,
+            image_width INTEGER DEFAULT NULL,
+            image_height INTEGER DEFAULT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )'

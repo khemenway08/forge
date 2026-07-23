@@ -260,6 +260,15 @@ test('catalog dialog header actions stay horizontal until the narrow breakpoint 
   assert.match(appSource, /Shortlist coming later/);
 });
 
+test('finished hat catalog wires shared sort and reorder controls while preserving read-only detail open behavior', () => {
+  const moduleSource = fs.readFileSync(path.join(process.cwd(), 'public/js/forge-staff-finished-hat-catalog.js'), 'utf8');
+  assert.match(moduleSource, /sortKey:\s*'custom'/);
+  assert.match(moduleSource, /catalog-sort-finished-hats/);
+  assert.match(moduleSource, /catalog-finished-hat-reorder-handle/);
+  assert.match(moduleSource, /catalog-open-finished-hat-detail/);
+  assert.match(moduleSource, /reorderFinishedHats\(orderedIds\)/);
+});
+
 test('detail view opens design picker with current link selected and cached library data', async () => {
   const harness = createFinishedHatCatalogHarness();
 

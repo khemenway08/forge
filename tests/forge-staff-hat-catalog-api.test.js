@@ -94,6 +94,37 @@ test('createHat sends POST JSON and updateHat targets the approved endpoint', as
   });
 });
 
+test('reorderHats sends the approved shared reorder payload', async () => {
+  const requests = [];
+  const client = hatCatalogApiModule.createForgeStaffHatCatalogApiClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return createJsonResponse(200, {
+        application: 'Forge',
+        api_version: '1',
+        status: 'ok',
+        data: {
+          resource_type: 'hats',
+          records: [
+            { id: 'hat-2', sort_order: 1000 },
+            { id: 'hat-1', sort_order: 2000 }
+          ]
+        }
+      });
+    }
+  });
+
+  const result = await client.reorderHats(['hat-2', 'hat-1']);
+
+  assert.equal(result.ok, true);
+  assert.equal(requests[0].url, '/api/v1/staff/catalog/reorder.php');
+  assert.equal(requests[0].options.method, 'POST');
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    resource_type: 'hats',
+    ordered_ids: ['hat-2', 'hat-1']
+  });
+});
+
 test('uploadPhoto sends POST form data and malformed responses stay safe', async () => {
   const requests = [];
   const fakeFormData = {

@@ -78,6 +78,14 @@ test('hat cards and dialog actions use the shared top-aligned catalog pattern', 
   assert.doesNotMatch(moduleSource, /staff-design-dialog-actions/);
 });
 
+test('hat catalog wires shared sort and reorder controls while keeping card editing behavior', () => {
+  const moduleSource = fs.readFileSync(path.join(process.cwd(), 'public/js/forge-staff-hat-catalog.js'), 'utf8');
+  assert.match(moduleSource, /sortKey:\s*'custom'/);
+  assert.match(moduleSource, /catalog-sort-hats/);
+  assert.match(moduleSource, /catalog-hat-reorder-handle/);
+  assert.match(moduleSource, /reorderHats\(orderedIds\)/);
+});
+
 test('initial unauthenticated hat render does not request protected records and authenticated render loads hats', async () => {
   const calls = [];
   let canLoad = false;

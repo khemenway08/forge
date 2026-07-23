@@ -91,6 +91,14 @@ test('material cards and dialog actions use the shared top-aligned catalog patte
   assert.doesNotMatch(moduleSource, /staff-design-dialog-actions/);
 });
 
+test('material catalog wires shared sort and reorder controls while keeping card editing behavior', () => {
+  const moduleSource = fs.readFileSync(path.join(process.cwd(), 'public/js/forge-staff-material-catalog.js'), 'utf8');
+  assert.match(moduleSource, /sortKey:\s*'custom'/);
+  assert.match(moduleSource, /catalog-sort-materials/);
+  assert.match(moduleSource, /catalog-material-reorder-handle/);
+  assert.match(moduleSource, /reorderMaterials\(orderedIds\)/);
+});
+
 test('initial unauthenticated material render does not request protected records and authenticated render loads materials', async () => {
   const calls = [];
   let canLoad = false;

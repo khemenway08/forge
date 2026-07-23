@@ -163,6 +163,46 @@ function forge_finished_hat_catalog_send_validation_error(array $fieldErrors, st
     );
 }
 
+function forge_catalog_sort_order_send_validation_error(string $message = 'Reload the catalog and try again.'): void
+{
+    http_response_code(422);
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    header('X-Content-Type-Options: nosniff');
+    echo json_encode(
+        [
+            'application' => 'Forge',
+            'api_version' => '1',
+            'status' => 'error',
+            'error' => [
+                'code' => 'invalid_request',
+                'message' => $message,
+            ],
+        ],
+        JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+    );
+}
+
+function forge_catalog_sort_order_send_conflict_error(string $message = 'The catalog changed on another device. Reload and try again.'): void
+{
+    http_response_code(409);
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    header('X-Content-Type-Options: nosniff');
+    echo json_encode(
+        [
+            'application' => 'Forge',
+            'api_version' => '1',
+            'status' => 'error',
+            'error' => [
+                'code' => 'catalog_order_conflict',
+                'message' => $message,
+            ],
+        ],
+        JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+    );
+}
+
 function forge_design_catalog_resolve_upload_directory(): string
 {
     return dirname(__DIR__, 4) . '/uploads/design-thumbnails';

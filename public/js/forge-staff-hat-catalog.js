@@ -23,11 +23,21 @@
     notes: ''
   };
   const MISSING_PHOTO_COPY = 'No photo yet';
+  const SORT_OPTIONS = [
+    { value: 'custom', label: 'Custom Order' },
+    { value: 'az', label: 'A–Z' },
+    { value: 'recent', label: 'Recently Added' },
+    { value: 'status', label: 'Status' },
+    { value: 'manufacturer', label: 'Manufacturer' },
+    { value: 'model', label: 'Model' },
+    { value: 'color', label: 'Hat Color' }
+  ];
 
   function createStaffHatCatalogModule(options = {}) {
     const apiClient = options.apiClient || null;
     const documentRef = options.document || document;
     const windowLike = options.window || window;
+    const orderingApi = resolveCatalogOrderingApi(options.orderingApi);
     const canLoadProtectedRecords = typeof options.canLoadProtectedRecords === 'function'
       ? options.canLoadProtectedRecords
       : () => true;
@@ -52,7 +62,11 @@
       dialogHatId: '',
       dialogPhotoPath: '',
       dialogPhotoFile: null,
-      dialogPhotoFileName: ''
+      dialogPhotoFileName: '',
+      sortKey: 'custom',
+      notice: '',
+      noticeTone: 'muted',
+      announcement: ''
     };
 
     let container = null;
@@ -61,6 +75,25 @@
     let formNode = null;
     let statusNode = null;
     let lastFocusTarget = null;
+    const reorderController = orderingApi?.createCatalogReorderController({
+      document: documentRef,
+      window: windowLike,
+      cardSelector: '[data-catalog-order-id]',
+      onStateChange() {
+        renderContent();
+      },
+      onAnnounce(message) {
+        state.announcement = String(message || '');
+        renderContent();
+      },
+      async onCommit(orderedIds) {
+        return saveHatOrder(orderedIds);
+      },
+      getLabel(itemId) {
+        const record = state.records.find((entry) => entry.id === itemId);
+        return record?.hat_name || 'catalog record';
+      }
+    }) || null;
 
     function render(nextContainer) {
       if (nextContainer) {
@@ -109,8 +142,9 @@
         }
 
         state.records = Array.isArray(result.hats)
-          ? result.hats.map(normalizeHatRecord).sort(compareHatsByName)
+          ? sortRecordsForCustomOrder(result.hats.map(normalizeHatRecord))
           : [];
+        reorderController?.sync(state.records.map((record) => record.id));
         state.loaded = true;
         state.loading = false;
         state.error = '';
@@ -125,18 +159,21 @@
       }
     }
 
-    function renderContent() {
+    function renderContent(options = {}) {
       if (!container) {
         return;
       }
 
+      const focusState = options.preserveFocus ? captureCatalogFocus() : null;
       const filteredRecords = filterHatRecords(state.records, state.filters);
+      const reorderAvailability = getReorderAvailability();
+      const sortedRecords = sortHatRecords(filteredRecords, state.sortKey);
       const hasActiveFilters = Boolean(
         state.filters.search || state.filters.manufacturer || state.filters.model || state.filters.status
       );
       const manufacturerOptions = collectHatFilterOptions(state.records, 'manufacturer');
       const modelOptions = collectHatFilterOptions(state.records, 'model');
-      const sectionBody = renderHatsBody(filteredRecords, hasActiveFilters);
+      const sectionBody = renderHatsBody(sortedRecords, hasActiveFilters, reorderAvailability);
 
       container.innerHTML = `
         <section class="staff-catalog-designs" role="tabpanel" aria-labelledby="staff-catalog-tab-hats">
@@ -168,16 +205,80 @@
               <span>Status</span>
               <select data-action="catalog-filter-hat-status">${renderStatusOptions(state.filters.status, 'All Statuses')}</select>
             </label>
+            <label class="staff-catalog-designs-filter">
+              <span>Sort</span>
+              <select data-action="catalog-sort-hats">${renderStaticOptions(SORT_OPTIONS, state.sortKey)}</select>
+            </label>
             <div class="staff-catalog-designs-filter-clear">
               <button class="secondary-button" type="button" data-action="catalog-clear-hat-filters">Clear Filters</button>
             </div>
           </div>
+          <div class="staff-catalog-sort-row">
+            <p class="staff-catalog-sort-help">${escapeHtml(reorderAvailability.reason || 'Drag handles appear while Custom Order is active.')}</p>
+            ${state.notice ? `<div class="staff-inline-notice staff-inline-notice--${escapeAttribute(state.noticeTone)}" role="status" aria-live="polite">${escapeHtml(state.notice)}</div>` : ''}
+          </div>
+          <p class="staff-catalog-reorder-announcer" aria-live="polite">${escapeHtml(state.announcement)}</p>
           ${sectionBody}
         </section>
       `;
+      restoreCatalogFocus(focusState);
     }
 
-    function renderHatsBody(filteredRecords, hasActiveFilters) {
+    function captureCatalogFocus() {
+      const activeElement = documentRef?.activeElement;
+      if (!activeElement || !container || !isElementInsideContainer(activeElement)) {
+        return null;
+      }
+
+      const action = activeElement.dataset?.action || '';
+      if (![
+        'catalog-hat-search',
+        'catalog-filter-hat-manufacturer',
+        'catalog-filter-hat-model',
+        'catalog-filter-hat-status',
+        'catalog-sort-hats'
+      ].includes(action)) {
+        return null;
+      }
+
+      return {
+        action,
+        selectionStart: Number.isInteger(activeElement.selectionStart) ? activeElement.selectionStart : null,
+        selectionEnd: Number.isInteger(activeElement.selectionEnd) ? activeElement.selectionEnd : null
+      };
+    }
+
+    function restoreCatalogFocus(focusState) {
+      if (!focusState || !container || typeof container.querySelector !== 'function') {
+        return;
+      }
+
+      const nextElement = container.querySelector(`[data-action="${focusState.action}"]`);
+      if (!nextElement || typeof nextElement.focus !== 'function') {
+        return;
+      }
+
+      nextElement.focus({ preventScroll: true });
+      if (
+        Number.isInteger(focusState.selectionStart)
+        && Number.isInteger(focusState.selectionEnd)
+        && typeof nextElement.setSelectionRange === 'function'
+      ) {
+        nextElement.setSelectionRange(focusState.selectionStart, focusState.selectionEnd);
+      }
+    }
+
+    function isElementInsideContainer(element) {
+      if (typeof container.contains === 'function') {
+        return container.contains(element);
+      }
+      if (typeof element.closest === 'function') {
+        return element.closest('[role="tabpanel"]') !== null;
+      }
+      return true;
+    }
+
+    function renderHatsBody(filteredRecords, hasActiveFilters, reorderAvailability) {
       if (state.loading) {
         return '<div class="staff-catalog-designs-state"><p>Loading shared hat records...</p></div>';
       }
@@ -212,38 +313,51 @@
 
       return `
         <div class="staff-design-card-grid">
-          ${filteredRecords.map((record) => renderHatCard(record)).join('')}
+          ${filteredRecords.map((record) => renderHatCard(record, reorderAvailability.enabled)).join('')}
         </div>
       `;
     }
 
-    function renderHatCard(record) {
+    function renderHatCard(record, reorderEnabled) {
       const photo = getHatPhotoDisplay(record);
       return `
-        <button
-          class="staff-design-card"
-          type="button"
-          data-action="catalog-edit-hat"
-          data-hat-id="${escapeAttribute(record.id)}"
-          aria-label="Edit ${escapeAttribute(record.hat_name)}"
-        >
-          <div class="staff-design-card-thumb">
-            ${photo.html}
-          </div>
-          <div class="staff-design-card-body">
-            <div class="staff-design-card-action-row">
-              <span class="staff-design-status-badge staff-design-status-badge--${escapeAttribute(record.status || 'review')}">${escapeHtml(getHatStatusLabel(record.status))}</span>
+        <div class="staff-catalog-card-shell${reorderController?.isDraggingId(record.id) ? ' staff-catalog-card-shell--dragging' : ''}${reorderController?.isSaving() ? ' staff-catalog-card-shell--saving' : ''}" data-catalog-order-id="${escapeAttribute(record.id)}">
+          ${reorderEnabled ? `
+            <button
+              class="staff-catalog-reorder-handle"
+              type="button"
+              data-action="catalog-hat-reorder-handle"
+              data-hat-id="${escapeAttribute(record.id)}"
+              aria-label="Reorder ${escapeAttribute(record.hat_name)}"
+            >
+              <span aria-hidden="true">::</span>
+            </button>
+          ` : ''}
+          <button
+            class="staff-design-card"
+            type="button"
+            data-action="catalog-edit-hat"
+            data-hat-id="${escapeAttribute(record.id)}"
+            aria-label="Edit ${escapeAttribute(record.hat_name)}"
+          >
+            <div class="staff-design-card-thumb">
+              ${photo.html}
             </div>
-            <h4 class="staff-design-card-title">${escapeHtml(record.hat_name)}</h4>
-            <dl class="staff-design-card-meta">
-              ${renderHatMetaRow('Manufacturer', record.manufacturer)}
-              ${renderHatMetaRow('Model', record.model)}
-              ${renderHatMetaRow('Color', record.color)}
-              ${renderHatMetaRow('Vendor', record.vendor)}
-              ${renderHatMetaRow('Base Cost', formatHatBaseCost(record.base_cost))}
-            </dl>
-          </div>
-        </button>
+            <div class="staff-design-card-body">
+              <div class="staff-design-card-action-row">
+                <span class="staff-design-status-badge staff-design-status-badge--${escapeAttribute(record.status || 'review')}">${escapeHtml(getHatStatusLabel(record.status))}</span>
+              </div>
+              <h4 class="staff-design-card-title">${escapeHtml(record.hat_name)}</h4>
+              <dl class="staff-design-card-meta">
+                ${renderHatMetaRow('Manufacturer', record.manufacturer)}
+                ${renderHatMetaRow('Model', record.model)}
+                ${renderHatMetaRow('Color', record.color)}
+                ${renderHatMetaRow('Vendor', record.vendor)}
+                ${renderHatMetaRow('Base Cost', formatHatBaseCost(record.base_cost))}
+              </dl>
+            </div>
+          </button>
+        </div>
       `;
     }
 
@@ -256,11 +370,24 @@
       container.addEventListener('click', onContainerClick);
       container.addEventListener('input', onContainerInput);
       container.addEventListener('change', onContainerChange);
+      container.addEventListener('pointerdown', onContainerPointerDown);
+      container.addEventListener('keydown', onContainerKeydown);
     }
 
     function onContainerClick(event) {
       const action = event.target.closest('[data-action]')?.dataset.action;
       if (!action) {
+        return;
+      }
+
+      if (action === 'catalog-hat-reorder-handle') {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      if (reorderController?.shouldSuppressActivation()) {
+        event.preventDefault();
         return;
       }
 
@@ -276,6 +403,7 @@
           model: '',
           status: ''
         };
+        state.notice = '';
         renderContent();
         return;
       }
@@ -299,12 +427,18 @@
       const action = event.target?.dataset?.action;
       if (action === 'catalog-hat-search') {
         state.filters.search = String(event.target.value || '');
-        renderContent();
+        renderContent({ preserveFocus: true });
       }
     }
 
     function onContainerChange(event) {
       const action = event.target?.dataset?.action;
+      if (action === 'catalog-sort-hats') {
+        state.sortKey = String(event.target.value || 'custom').trim() || 'custom';
+        state.notice = '';
+        renderContent();
+        return;
+      }
       if (action === 'catalog-filter-hat-manufacturer') {
         state.filters.manufacturer = String(event.target.value || '').trim();
         renderContent();
@@ -319,6 +453,33 @@
         state.filters.status = String(event.target.value || '').trim();
         renderContent();
       }
+    }
+
+    function onContainerPointerDown(event) {
+      const handle = event.target.closest('[data-action="catalog-hat-reorder-handle"]');
+      if (!handle || !reorderController || !getReorderAvailability().enabled) {
+        return;
+      }
+
+      const orderedIds = sortHatRecords(filterHatRecords(state.records, state.filters), state.sortKey).map((record) => record.id);
+      const hatId = String(handle.dataset.hatId || '').trim();
+      if (!hatId) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      reorderController.beginPointer(event, hatId, orderedIds);
+    }
+
+    function onContainerKeydown(event) {
+      const handle = event.target.closest('[data-action="catalog-hat-reorder-handle"]');
+      if (!handle || !reorderController || !getReorderAvailability().enabled) {
+        return;
+      }
+
+      const orderedIds = sortHatRecords(filterHatRecords(state.records, state.filters), state.sortKey).map((record) => record.id);
+      reorderController.handleHandleKeydown(event, String(handle.dataset.hatId || ''), orderedIds);
     }
 
     function ensureDialogUi() {
@@ -623,9 +784,55 @@
       } else {
         nextRecords.push(normalized);
       }
-      state.records = nextRecords.sort(compareHatsByName);
+      state.records = sortRecordsForCustomOrder(nextRecords);
+      reorderController?.sync(state.records.map((record) => record.id));
       state.loaded = true;
       state.error = '';
+    }
+
+    function getReorderAvailability() {
+      return orderingApi?.getReorderAvailability(state.sortKey, state.filters) || { enabled: false, reason: '' };
+    }
+
+    async function saveHatOrder(orderedIds) {
+      if (!apiClient || typeof apiClient.reorderHats !== 'function') {
+        state.notice = 'Hat ordering is currently unavailable.';
+        state.noticeTone = 'error';
+        renderContent();
+        return false;
+      }
+
+      try {
+        const result = await apiClient.reorderHats(orderedIds);
+        const sortOrderMap = new Map(
+          Array.isArray(result.records)
+            ? result.records.map((record) => [String(record.id || '').trim(), Number(record.sort_order || 0)])
+            : []
+        );
+        const recordMap = new Map(state.records.map((record) => [record.id, record]));
+        state.records = orderedIds
+          .map((id) => recordMap.get(id))
+          .filter(Boolean)
+          .map((record, index) => ({
+            ...record,
+            sort_order: sortOrderMap.get(record.id) || ((index + 1) * 1000)
+          }));
+        state.notice = 'Custom order saved.';
+        state.noticeTone = 'success';
+        renderContent();
+        return true;
+      } catch (error) {
+        if (error?.code === 'catalog_order_conflict') {
+          state.notice = 'The hat order changed elsewhere. Reloaded the latest order.';
+          state.noticeTone = 'error';
+          await loadHats();
+          return false;
+        }
+        state.notice = safeErrorMessage(error, 'Hat order could not be saved right now.');
+        state.noticeTone = 'error';
+        renderContent();
+        return false;
+      }
     }
 
     function setFormValue(fieldName, value) {
@@ -702,6 +909,7 @@
       base_cost: normalizeNullableString(normalized.base_cost),
       status: typeof normalized.status === 'string' ? normalized.status.trim() : '',
       notes: normalizeNullableString(normalized.notes),
+      sort_order: normalizePositiveInteger(normalized.sort_order),
       created_at: typeof normalized.created_at === 'string' ? normalized.created_at.trim() : '',
       updated_at: typeof normalized.updated_at === 'string' ? normalized.updated_at.trim() : ''
     };
@@ -789,9 +997,39 @@
   }
 
   function compareHatsByName(left, right) {
-    return String(left.hat_name || '').localeCompare(String(right.hat_name || ''), undefined, {
-      sensitivity: 'base'
+    const orderingApi = resolveCatalogOrderingApi();
+    return orderingApi.compareNullableText(left?.hat_name, right?.hat_name);
+  }
+
+  function sortHatRecords(records, sortKey) {
+    const orderingApi = resolveCatalogOrderingApi();
+    return orderingApi.sortCatalogRecords(records, {
+      sortKey,
+      compareLabel: compareHatsByName,
+      comparators: {
+        custom: orderingApi.compareCustomOrder,
+        az: compareHatsByName,
+        recent(left, right) {
+          return orderingApi.compareDatesDescending(left?.created_at, right?.created_at);
+        },
+        status(left, right) {
+          return orderingApi.compareNullableText(getHatStatusLabel(left?.status), getHatStatusLabel(right?.status));
+        },
+        manufacturer(left, right) {
+          return orderingApi.compareNullableText(left?.manufacturer, right?.manufacturer);
+        },
+        model(left, right) {
+          return orderingApi.compareNullableText(left?.model, right?.model);
+        },
+        color(left, right) {
+          return orderingApi.compareNullableText(left?.color, right?.color);
+        }
+      }
     });
+  }
+
+  function sortRecordsForCustomOrder(records) {
+    return sortHatRecords(records, 'custom');
   }
 
   function safeErrorMessage(error, fallbackMessage) {
@@ -827,15 +1065,86 @@
     return escapeHtml(value).replace(/`/g, '&#96;');
   }
 
+  function renderStaticOptions(options, selectedValue) {
+    return options.map((option) => (
+      `<option value="${escapeAttribute(option.value)}"${option.value === selectedValue ? ' selected' : ''}>${escapeHtml(option.label)}</option>`
+    )).join('');
+  }
+
+  function normalizePositiveInteger(value) {
+    if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+      return value;
+    }
+    if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+      const normalized = Number.parseInt(value.trim(), 10);
+      return normalized > 0 ? normalized : 0;
+    }
+    return 0;
+  }
+
+  function resolveCatalogOrderingApi(providedApi) {
+    if (providedApi && typeof providedApi.sortCatalogRecords === 'function') {
+      return providedApi;
+    }
+    if (typeof ForgeStaffCatalogOrdering !== 'undefined' && ForgeStaffCatalogOrdering) {
+      return ForgeStaffCatalogOrdering;
+    }
+    if (typeof globalThis !== 'undefined' && globalThis.ForgeStaffCatalogOrdering) {
+      return globalThis.ForgeStaffCatalogOrdering;
+    }
+    if (typeof require === 'function') {
+      try {
+        return require('./forge-staff-catalog-ordering.js');
+      } catch (error) {
+        return {
+          compareCustomOrder(left, right) {
+            return normalizePositiveInteger(left?.sort_order) - normalizePositiveInteger(right?.sort_order);
+          },
+          compareNullableText(left, right) {
+            return String(left || '').localeCompare(String(right || ''), undefined, { sensitivity: 'base' });
+          },
+          compareDatesDescending(left, right) {
+            return (Date.parse(String(right || '')) || 0) - (Date.parse(String(left || '')) || 0);
+          },
+          sortCatalogRecords(records) {
+            return Array.isArray(records) ? records.slice() : [];
+          },
+          getReorderAvailability() {
+            return { enabled: false, reason: '' };
+          }
+        };
+      }
+    }
+    return {
+      compareCustomOrder(left, right) {
+        return normalizePositiveInteger(left?.sort_order) - normalizePositiveInteger(right?.sort_order);
+      },
+      compareNullableText(left, right) {
+        return String(left || '').localeCompare(String(right || ''), undefined, { sensitivity: 'base' });
+      },
+      compareDatesDescending(left, right) {
+        return (Date.parse(String(right || '')) || 0) - (Date.parse(String(left || '')) || 0);
+      },
+      sortCatalogRecords(records) {
+        return Array.isArray(records) ? records.slice() : [];
+      },
+      getReorderAvailability() {
+        return { enabled: false, reason: '' };
+      }
+    };
+  }
+
   return {
     STATUS_LABELS,
     DEFAULT_FORM_VALUES,
     MISSING_PHOTO_COPY,
+    SORT_OPTIONS,
     createStaffHatCatalogModule,
     filterHatRecords,
     normalizeHatRecord,
     getHatPhotoDisplay,
     getHatStatusLabel,
-    formatHatBaseCost
+    formatHatBaseCost,
+    sortHatRecords
   };
 }));

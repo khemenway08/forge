@@ -32,11 +32,21 @@
     notes: ''
   };
   const MISSING_SWATCH_COPY = 'No swatch yet';
+  const SORT_OPTIONS = [
+    { value: 'custom', label: 'Custom Order' },
+    { value: 'az', label: 'A–Z' },
+    { value: 'recent', label: 'Recently Added' },
+    { value: 'status', label: 'Status' },
+    { value: 'material_type', label: 'Material Type' },
+    { value: 'color', label: 'Color' },
+    { value: 'production_method', label: 'Production Method' }
+  ];
 
   function createStaffMaterialCatalogModule(options = {}) {
     const apiClient = options.apiClient || null;
     const documentRef = options.document || document;
     const windowLike = options.window || window;
+    const orderingApi = resolveCatalogOrderingApi(options.orderingApi);
     const canLoadProtectedRecords = typeof options.canLoadProtectedRecords === 'function'
       ? options.canLoadProtectedRecords
       : () => true;
@@ -62,7 +72,11 @@
       dialogMaterialId: '',
       dialogSwatchPath: '',
       dialogSwatchFile: null,
-      dialogSwatchFileName: ''
+      dialogSwatchFileName: '',
+      sortKey: 'custom',
+      notice: '',
+      noticeTone: 'muted',
+      announcement: ''
     };
 
     let container = null;
@@ -71,6 +85,25 @@
     let formNode = null;
     let statusNode = null;
     let lastFocusTarget = null;
+    const reorderController = orderingApi?.createCatalogReorderController({
+      document: documentRef,
+      window: windowLike,
+      cardSelector: '[data-catalog-order-id]',
+      onStateChange() {
+        renderContent();
+      },
+      onAnnounce(message) {
+        state.announcement = String(message || '');
+        renderContent();
+      },
+      async onCommit(orderedIds) {
+        return saveMaterialOrder(orderedIds);
+      },
+      getLabel(itemId) {
+        const record = state.records.find((entry) => entry.id === itemId);
+        return record?.material_name || 'catalog record';
+      }
+    }) || null;
 
     function render(nextContainer) {
       if (nextContainer) {
@@ -118,8 +151,9 @@
         }
 
         state.records = Array.isArray(result.materials)
-          ? result.materials.map(normalizeMaterialRecord).sort(compareMaterialsByName)
+          ? sortRecordsForCustomOrder(result.materials.map(normalizeMaterialRecord))
           : [];
+        reorderController?.sync(state.records.map((record) => record.id));
         state.loaded = true;
         state.loading = false;
         state.error = '';
@@ -134,12 +168,15 @@
       }
     }
 
-    function renderContent() {
+    function renderContent(options = {}) {
       if (!container) {
         return;
       }
 
+      const focusState = options.preserveFocus ? captureCatalogFocus() : null;
       const filteredRecords = filterMaterialRecords(state.records, state.filters);
+      const reorderAvailability = getReorderAvailability();
+      const sortedRecords = sortMaterialRecords(filteredRecords, state.sortKey);
       const hasActiveFilters = Boolean(
         state.filters.search || state.filters.material_type || state.filters.production_method || state.filters.status
       );
@@ -176,16 +213,80 @@
               <span>Status</span>
               <select data-action="catalog-filter-material-status">${renderStatusOptions(state.filters.status, 'All Statuses')}</select>
             </label>
+            <label class="staff-catalog-designs-filter">
+              <span>Sort</span>
+              <select data-action="catalog-sort-materials">${renderStaticOptions(SORT_OPTIONS, state.sortKey)}</select>
+            </label>
             <div class="staff-catalog-designs-filter-clear">
               <button class="secondary-button" type="button" data-action="catalog-clear-material-filters">Clear Filters</button>
             </div>
           </div>
-          ${renderMaterialsBody(filteredRecords, hasActiveFilters)}
+          <div class="staff-catalog-sort-row">
+            <p class="staff-catalog-sort-help">${escapeHtml(reorderAvailability.reason || 'Drag handles appear while Custom Order is active.')}</p>
+            ${state.notice ? `<div class="staff-inline-notice staff-inline-notice--${escapeAttribute(state.noticeTone)}" role="status" aria-live="polite">${escapeHtml(state.notice)}</div>` : ''}
+          </div>
+          <p class="staff-catalog-reorder-announcer" aria-live="polite">${escapeHtml(state.announcement)}</p>
+          ${renderMaterialsBody(sortedRecords, hasActiveFilters, reorderAvailability)}
         </section>
       `;
+      restoreCatalogFocus(focusState);
     }
 
-    function renderMaterialsBody(filteredRecords, hasActiveFilters) {
+    function captureCatalogFocus() {
+      const activeElement = documentRef?.activeElement;
+      if (!activeElement || !container || !isElementInsideContainer(activeElement)) {
+        return null;
+      }
+
+      const action = activeElement.dataset?.action || '';
+      if (![
+        'catalog-material-search',
+        'catalog-filter-material-type',
+        'catalog-filter-material-production-method',
+        'catalog-filter-material-status',
+        'catalog-sort-materials'
+      ].includes(action)) {
+        return null;
+      }
+
+      return {
+        action,
+        selectionStart: Number.isInteger(activeElement.selectionStart) ? activeElement.selectionStart : null,
+        selectionEnd: Number.isInteger(activeElement.selectionEnd) ? activeElement.selectionEnd : null
+      };
+    }
+
+    function restoreCatalogFocus(focusState) {
+      if (!focusState || !container || typeof container.querySelector !== 'function') {
+        return;
+      }
+
+      const nextElement = container.querySelector(`[data-action="${focusState.action}"]`);
+      if (!nextElement || typeof nextElement.focus !== 'function') {
+        return;
+      }
+
+      nextElement.focus({ preventScroll: true });
+      if (
+        Number.isInteger(focusState.selectionStart)
+        && Number.isInteger(focusState.selectionEnd)
+        && typeof nextElement.setSelectionRange === 'function'
+      ) {
+        nextElement.setSelectionRange(focusState.selectionStart, focusState.selectionEnd);
+      }
+    }
+
+    function isElementInsideContainer(element) {
+      if (typeof container.contains === 'function') {
+        return container.contains(element);
+      }
+      if (typeof element.closest === 'function') {
+        return element.closest('[role="tabpanel"]') !== null;
+      }
+      return true;
+    }
+
+    function renderMaterialsBody(filteredRecords, hasActiveFilters, reorderAvailability) {
       if (state.loading) {
         return '<div class="staff-catalog-designs-state"><p>Loading shared material records...</p></div>';
       }
@@ -199,36 +300,49 @@
         return `<div class="staff-catalog-designs-state"><h4>No materials match these filters</h4><p>${hasActiveFilters ? 'Adjust the search or clear filters to see more shared materials.' : 'No shared materials are available yet.'}</p></div>`;
       }
 
-      return `<div class="staff-design-card-grid">${filteredRecords.map((record) => renderMaterialCard(record)).join('')}</div>`;
+      return `<div class="staff-design-card-grid">${filteredRecords.map((record) => renderMaterialCard(record, reorderAvailability.enabled)).join('')}</div>`;
     }
 
-    function renderMaterialCard(record) {
+    function renderMaterialCard(record, reorderEnabled) {
       const swatch = getMaterialSwatchDisplay(record);
       return `
-        <button
-          class="staff-design-card"
-          type="button"
-          data-action="catalog-edit-material"
-          data-material-id="${escapeAttribute(record.id)}"
-          aria-label="Edit ${escapeAttribute(record.material_name)}"
-        >
-          <div class="staff-design-card-thumb staff-material-card-thumb">
-            ${swatch.html}
-          </div>
-          <div class="staff-design-card-body">
-            <div class="staff-design-card-action-row">
-              <span class="staff-design-status-badge staff-design-status-badge--${escapeAttribute(record.status || 'review')}">${escapeHtml(getMaterialStatusLabel(record.status))}</span>
+        <div class="staff-catalog-card-shell${reorderController?.isDraggingId(record.id) ? ' staff-catalog-card-shell--dragging' : ''}${reorderController?.isSaving() ? ' staff-catalog-card-shell--saving' : ''}" data-catalog-order-id="${escapeAttribute(record.id)}">
+          ${reorderEnabled ? `
+            <button
+              class="staff-catalog-reorder-handle"
+              type="button"
+              data-action="catalog-material-reorder-handle"
+              data-material-id="${escapeAttribute(record.id)}"
+              aria-label="Reorder ${escapeAttribute(record.material_name)}"
+            >
+              <span aria-hidden="true">::</span>
+            </button>
+          ` : ''}
+          <button
+            class="staff-design-card"
+            type="button"
+            data-action="catalog-edit-material"
+            data-material-id="${escapeAttribute(record.id)}"
+            aria-label="Edit ${escapeAttribute(record.material_name)}"
+          >
+            <div class="staff-design-card-thumb staff-material-card-thumb">
+              ${swatch.html}
             </div>
-            <h4 class="staff-design-card-title">${escapeHtml(record.material_name)}</h4>
-            <dl class="staff-design-card-meta">
-              ${renderMaterialMetaRow('Type', record.material_type)}
-              ${renderMaterialMetaRow('Color', record.color)}
-              ${renderMaterialMetaRow('Production', record.production_method)}
-              ${renderMaterialMetaRow('Supplier', record.supplier)}
-              ${renderMaterialMetaRow('Cost Ref.', formatMaterialUnitReference(record))}
-            </dl>
-          </div>
-        </button>
+            <div class="staff-design-card-body">
+              <div class="staff-design-card-action-row">
+                <span class="staff-design-status-badge staff-design-status-badge--${escapeAttribute(record.status || 'review')}">${escapeHtml(getMaterialStatusLabel(record.status))}</span>
+              </div>
+              <h4 class="staff-design-card-title">${escapeHtml(record.material_name)}</h4>
+              <dl class="staff-design-card-meta">
+                ${renderMaterialMetaRow('Type', record.material_type)}
+                ${renderMaterialMetaRow('Color', record.color)}
+                ${renderMaterialMetaRow('Production', record.production_method)}
+                ${renderMaterialMetaRow('Supplier', record.supplier)}
+                ${renderMaterialMetaRow('Cost Ref.', formatMaterialUnitReference(record))}
+              </dl>
+            </div>
+          </button>
+        </div>
       `;
     }
 
@@ -240,11 +354,22 @@
       container.addEventListener('click', onContainerClick);
       container.addEventListener('input', onContainerInput);
       container.addEventListener('change', onContainerChange);
+      container.addEventListener('pointerdown', onContainerPointerDown);
+      container.addEventListener('keydown', onContainerKeydown);
     }
 
     function onContainerClick(event) {
       const action = event.target.closest('[data-action]')?.dataset.action;
       if (!action) {
+        return;
+      }
+      if (action === 'catalog-material-reorder-handle') {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (reorderController?.shouldSuppressActivation()) {
+        event.preventDefault();
         return;
       }
       if (action === 'catalog-retry-material-load') {
@@ -253,6 +378,7 @@
       }
       if (action === 'catalog-clear-material-filters') {
         state.filters = { search: '', material_type: '', production_method: '', status: '' };
+        state.notice = '';
         renderContent();
         return;
       }
@@ -272,12 +398,18 @@
     function onContainerInput(event) {
       if (event.target?.dataset?.action === 'catalog-material-search') {
         state.filters.search = String(event.target.value || '');
-        renderContent();
+        renderContent({ preserveFocus: true });
       }
     }
 
     function onContainerChange(event) {
       const action = event.target?.dataset?.action;
+      if (action === 'catalog-sort-materials') {
+        state.sortKey = String(event.target.value || 'custom').trim() || 'custom';
+        state.notice = '';
+        renderContent();
+        return;
+      }
       if (action === 'catalog-filter-material-type') {
         state.filters.material_type = String(event.target.value || '').trim();
         renderContent();
@@ -292,6 +424,33 @@
         state.filters.status = String(event.target.value || '').trim();
         renderContent();
       }
+    }
+
+    function onContainerPointerDown(event) {
+      const handle = event.target.closest('[data-action="catalog-material-reorder-handle"]');
+      if (!handle || !reorderController || !getReorderAvailability().enabled) {
+        return;
+      }
+
+      const orderedIds = sortMaterialRecords(filterMaterialRecords(state.records, state.filters), state.sortKey).map((record) => record.id);
+      const materialId = String(handle.dataset.materialId || '').trim();
+      if (!materialId) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      reorderController.beginPointer(event, materialId, orderedIds);
+    }
+
+    function onContainerKeydown(event) {
+      const handle = event.target.closest('[data-action="catalog-material-reorder-handle"]');
+      if (!handle || !reorderController || !getReorderAvailability().enabled) {
+        return;
+      }
+
+      const orderedIds = sortMaterialRecords(filterMaterialRecords(state.records, state.filters), state.sortKey).map((record) => record.id);
+      reorderController.handleHandleKeydown(event, String(handle.dataset.materialId || ''), orderedIds);
     }
 
     function ensureDialogUi() {
@@ -592,9 +751,55 @@
       } else {
         nextRecords.push(normalized);
       }
-      state.records = nextRecords.sort(compareMaterialsByName);
+      state.records = sortRecordsForCustomOrder(nextRecords);
+      reorderController?.sync(state.records.map((record) => record.id));
       state.loaded = true;
       state.error = '';
+    }
+
+    function getReorderAvailability() {
+      return orderingApi?.getReorderAvailability(state.sortKey, state.filters) || { enabled: false, reason: '' };
+    }
+
+    async function saveMaterialOrder(orderedIds) {
+      if (!apiClient || typeof apiClient.reorderMaterials !== 'function') {
+        state.notice = 'Material ordering is currently unavailable.';
+        state.noticeTone = 'error';
+        renderContent();
+        return false;
+      }
+
+      try {
+        const result = await apiClient.reorderMaterials(orderedIds);
+        const sortOrderMap = new Map(
+          Array.isArray(result.records)
+            ? result.records.map((record) => [String(record.id || '').trim(), Number(record.sort_order || 0)])
+            : []
+        );
+        const recordMap = new Map(state.records.map((record) => [record.id, record]));
+        state.records = orderedIds
+          .map((id) => recordMap.get(id))
+          .filter(Boolean)
+          .map((record, index) => ({
+            ...record,
+            sort_order: sortOrderMap.get(record.id) || ((index + 1) * 1000)
+          }));
+        state.notice = 'Custom order saved.';
+        state.noticeTone = 'success';
+        renderContent();
+        return true;
+      } catch (error) {
+        if (error?.code === 'catalog_order_conflict') {
+          state.notice = 'The material order changed elsewhere. Reloaded the latest order.';
+          state.noticeTone = 'error';
+          await loadMaterials();
+          return false;
+        }
+        state.notice = safeErrorMessage(error, 'Material order could not be saved right now.');
+        state.noticeTone = 'error';
+        renderContent();
+        return false;
+      }
     }
 
     function setFormValue(fieldName, value) {
@@ -678,6 +883,7 @@
       notes: normalizeNullableString(normalized.notes),
       image_width: normalizeNullablePositiveInteger(normalized.image_width),
       image_height: normalizeNullablePositiveInteger(normalized.image_height),
+      sort_order: normalizePositiveInteger(normalized.sort_order),
       created_at: typeof normalized.created_at === 'string' ? normalized.created_at.trim() : '',
       updated_at: typeof normalized.updated_at === 'string' ? normalized.updated_at.trim() : ''
     };
@@ -777,7 +983,39 @@
   }
 
   function compareMaterialsByName(left, right) {
-    return String(left.material_name || '').localeCompare(String(right.material_name || ''), undefined, { sensitivity: 'base' });
+    const orderingApi = resolveCatalogOrderingApi();
+    return orderingApi.compareNullableText(left?.material_name, right?.material_name);
+  }
+
+  function sortMaterialRecords(records, sortKey) {
+    const orderingApi = resolveCatalogOrderingApi();
+    return orderingApi.sortCatalogRecords(records, {
+      sortKey,
+      compareLabel: compareMaterialsByName,
+      comparators: {
+        custom: orderingApi.compareCustomOrder,
+        az: compareMaterialsByName,
+        recent(left, right) {
+          return orderingApi.compareDatesDescending(left?.created_at, right?.created_at);
+        },
+        status(left, right) {
+          return orderingApi.compareNullableText(getMaterialStatusLabel(left?.status), getMaterialStatusLabel(right?.status));
+        },
+        material_type(left, right) {
+          return orderingApi.compareNullableText(left?.material_type, right?.material_type);
+        },
+        color(left, right) {
+          return orderingApi.compareNullableText(left?.color, right?.color);
+        },
+        production_method(left, right) {
+          return orderingApi.compareNullableText(left?.production_method, right?.production_method);
+        }
+      }
+    });
+  }
+
+  function sortRecordsForCustomOrder(records) {
+    return sortMaterialRecords(records, 'custom');
   }
 
   function getMaterialStatusLabel(value) {
@@ -822,17 +1060,88 @@
     return escapeHtml(value).replace(/`/g, '&#96;');
   }
 
+  function renderStaticOptions(options, selectedValue) {
+    return options.map((option) => (
+      `<option value="${escapeAttribute(option.value)}"${option.value === selectedValue ? ' selected' : ''}>${escapeHtml(option.label)}</option>`
+    )).join('');
+  }
+
+  function normalizePositiveInteger(value) {
+    if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+      return value;
+    }
+    if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+      const normalized = Number.parseInt(value.trim(), 10);
+      return normalized > 0 ? normalized : 0;
+    }
+    return 0;
+  }
+
+  function resolveCatalogOrderingApi(providedApi) {
+    if (providedApi && typeof providedApi.sortCatalogRecords === 'function') {
+      return providedApi;
+    }
+    if (typeof ForgeStaffCatalogOrdering !== 'undefined' && ForgeStaffCatalogOrdering) {
+      return ForgeStaffCatalogOrdering;
+    }
+    if (typeof globalThis !== 'undefined' && globalThis.ForgeStaffCatalogOrdering) {
+      return globalThis.ForgeStaffCatalogOrdering;
+    }
+    if (typeof require === 'function') {
+      try {
+        return require('./forge-staff-catalog-ordering.js');
+      } catch (error) {
+        return {
+          compareCustomOrder(left, right) {
+            return normalizePositiveInteger(left?.sort_order) - normalizePositiveInteger(right?.sort_order);
+          },
+          compareNullableText(left, right) {
+            return String(left || '').localeCompare(String(right || ''), undefined, { sensitivity: 'base' });
+          },
+          compareDatesDescending(left, right) {
+            return (Date.parse(String(right || '')) || 0) - (Date.parse(String(left || '')) || 0);
+          },
+          sortCatalogRecords(records) {
+            return Array.isArray(records) ? records.slice() : [];
+          },
+          getReorderAvailability() {
+            return { enabled: false, reason: '' };
+          }
+        };
+      }
+    }
+    return {
+      compareCustomOrder(left, right) {
+        return normalizePositiveInteger(left?.sort_order) - normalizePositiveInteger(right?.sort_order);
+      },
+      compareNullableText(left, right) {
+        return String(left || '').localeCompare(String(right || ''), undefined, { sensitivity: 'base' });
+      },
+      compareDatesDescending(left, right) {
+        return (Date.parse(String(right || '')) || 0) - (Date.parse(String(left || '')) || 0);
+      },
+      sortCatalogRecords(records) {
+        return Array.isArray(records) ? records.slice() : [];
+      },
+      getReorderAvailability() {
+        return { enabled: false, reason: '' };
+      }
+    };
+  }
+
   return {
     STATUS_LABELS,
     COST_BASIS_LABELS,
     DEFAULT_FORM_VALUES,
     MISSING_SWATCH_COPY,
+    SORT_OPTIONS,
     createStaffMaterialCatalogModule,
     filterMaterialRecords,
     normalizeMaterialRecord,
     getMaterialSwatchDisplay,
     getMaterialSwatchFitMode,
     formatMaterialUnitReference,
-    getMaterialStatusLabel
+    getMaterialStatusLabel,
+    sortMaterialRecords
   };
 }));

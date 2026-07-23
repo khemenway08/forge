@@ -106,6 +106,37 @@ test('createFinishedHat and updateFinishedHat send POST JSON to the approved end
   assert.equal(JSON.parse(requests[1].options.body).placement_status, 'sample');
 });
 
+test('reorderFinishedHats sends the approved shared reorder payload', async () => {
+  const requests = [];
+  const client = finishedHatCatalogApiModule.createForgeStaffFinishedHatCatalogApiClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return createJsonResponse(200, {
+        application: 'Forge',
+        api_version: '1',
+        status: 'ok',
+        data: {
+          resource_type: 'finished_hats',
+          records: [
+            { id: 'finished-2', sort_order: 1000 },
+            { id: 'finished-1', sort_order: 2000 }
+          ]
+        }
+      });
+    }
+  });
+
+  const result = await client.reorderFinishedHats(['finished-2', 'finished-1']);
+
+  assert.equal(result.ok, true);
+  assert.equal(requests[0].url, '/api/v1/staff/catalog/reorder.php');
+  assert.equal(requests[0].options.method, 'POST');
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    resource_type: 'finished_hats',
+    ordered_ids: ['finished-2', 'finished-1']
+  });
+});
+
 test('uploadPhoto sends POST form data and unauthenticated responses stay safe', async () => {
   const requests = [];
   const fakeFormData = {

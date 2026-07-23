@@ -13,11 +13,19 @@ const catalogCssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/ap
 test('catalog scripts load before app.js and only in the protected staff shell', () => {
   assert.match(
     indexSource,
-    /<script src="js\/forge-staff-api-client\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260723-30"><\/script>\s*<script src="js\/forge-local-orders-queue\.js\?v=20260723-30"><\/script>\s*<script src="js\/app\.js\?v=20260723-30"><\/script>/
+    /<script src="js\/forge-staff-api-client\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-catalog-ordering\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-local-orders-queue\.js\?v=20260723-31"><\/script>\s*<script src="js\/app\.js\?v=20260723-31"><\/script>/
   );
   assert.match(indexSource, /data-screen="staff-catalog"/);
   assert.match(indexSource, /data-staff-catalog-content/);
   assert.doesNotMatch(indexSource, /data-screen="categories"[\s\S]*staff-open-catalog/);
+});
+
+test('design catalog wires the shared sort and reorder controls without replacing normal card editing', () => {
+  assert.match(catalogModuleSource, /sortKey:\s*'custom'/);
+  assert.match(catalogModuleSource, /catalog-sort-designs/);
+  assert.match(catalogModuleSource, /catalog-design-reorder-handle/);
+  assert.match(catalogModuleSource, /reorderDesigns\(orderedIds\)/);
+  assert.match(catalogModuleSource, /orderingApi\?\.getReorderAvailability/);
 });
 
 test('catalog label maps expose readable staff-facing labels', () => {

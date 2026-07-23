@@ -102,6 +102,7 @@ final class PdoStaffFinishedHatCatalogRepository implements StaffFinishedHatCata
                     finished_hats.retail_price,
                     finished_hats.status,
                     finished_hats.notes,
+                    finished_hats.sort_order,
                     finished_hats.created_at,
                     finished_hats.updated_at,
                     designs.design_name,
@@ -119,7 +120,12 @@ final class PdoStaffFinishedHatCatalogRepository implements StaffFinishedHatCata
                     ON hats.id = finished_hats.hat_id
                  LEFT JOIN forge_catalog_materials AS materials
                     ON materials.id = finished_hats.material_id
-                 ORDER BY finished_hats.updated_at DESC, finished_hats.finished_hat_name ASC, finished_hats.id ASC'
+                 ORDER BY
+                    CASE WHEN finished_hats.sort_order > 0 THEN 0 ELSE 1 END ASC,
+                    finished_hats.sort_order ASC,
+                    finished_hats.finished_hat_name ASC,
+                    finished_hats.created_at ASC,
+                    finished_hats.id ASC'
             );
             $records = $statement ? $statement->fetchAll() : [];
         } catch (PDOException $exception) {
@@ -166,6 +172,7 @@ final class PdoStaffFinishedHatCatalogRepository implements StaffFinishedHatCata
                     finished_hats.retail_price,
                     finished_hats.status,
                     finished_hats.notes,
+                    finished_hats.sort_order,
                     finished_hats.created_at,
                     finished_hats.updated_at,
                     designs.design_name,
@@ -234,6 +241,7 @@ final class PdoStaffFinishedHatCatalogRepository implements StaffFinishedHatCata
         $normalized = $this->validateAndNormalizeInput($input);
         $id = createStaffCatalogFinishedHatUuid();
         $timestamp = gmdate('Y-m-d H:i:s.u');
+        $sortOrder = getNextStaffCatalogSortOrder($this->pdo, 'forge_catalog_finished_hats');
 
         try {
             $statement = $this->pdo->prepare(
@@ -253,6 +261,7 @@ final class PdoStaffFinishedHatCatalogRepository implements StaffFinishedHatCata
                     retail_price,
                     status,
                     notes,
+                    sort_order,
                     created_at,
                     updated_at
                  ) VALUES (
@@ -271,6 +280,7 @@ final class PdoStaffFinishedHatCatalogRepository implements StaffFinishedHatCata
                     :retail_price,
                     :status,
                     :notes,
+                    :sort_order,
                     :created_at,
                     :updated_at
                  )'
@@ -291,6 +301,7 @@ final class PdoStaffFinishedHatCatalogRepository implements StaffFinishedHatCata
                 ':retail_price' => $normalized['retail_price'],
                 ':status' => $normalized['status'],
                 ':notes' => $normalized['notes'],
+                ':sort_order' => $sortOrder,
                 ':created_at' => $timestamp,
                 ':updated_at' => $timestamp,
             ]);
@@ -386,6 +397,16 @@ final class PdoStaffFinishedHatCatalogRepository implements StaffFinishedHatCata
         }
 
         return $updated;
+    }
+
+    /**
+     * @param array<int, string> $orderedIds
+     * @return array<int, array<string, mixed>>
+     */
+    public function reorderFinishedHats(array $orderedIds): array
+    {
+        saveStaffCatalogSortOrder($this->pdo, 'forge_catalog_finished_hats', $orderedIds);
+        return $this->listFinishedHats();
     }
 
     /**
@@ -677,6 +698,7 @@ function normalizeStaffCatalogFinishedHatRecord($record): array
         'retail_price' => normalizeStaffCatalogFinishedHatRetailPriceString($normalized['retail_price'] ?? null),
         'status' => normalizeStaffCatalogFinishedHatEnumValue($normalized['status'] ?? null, PdoStaffFinishedHatCatalogRepository::STATUS_OPTIONS) ?? 'review',
         'notes' => normalizeStaffCatalogFinishedHatNullableString($normalized['notes'] ?? null),
+        'sort_order' => max(0, (int) ($normalized['sort_order'] ?? 0)),
         'created_at' => normalizeStaffCatalogFinishedHatDateTime($normalized['created_at'] ?? null),
         'updated_at' => normalizeStaffCatalogFinishedHatDateTime($normalized['updated_at'] ?? null),
         'design_name' => normalizeStaffCatalogFinishedHatNullableString($normalized['design_name'] ?? null),

@@ -103,10 +103,16 @@ final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportR
                     production_file_location,
                     made_on_hat,
                     notes,
+                    sort_order,
                     created_at,
                     updated_at
                  FROM forge_catalog_designs
-                 ORDER BY updated_at DESC, design_name ASC, id ASC'
+                 ORDER BY
+                    CASE WHEN sort_order > 0 THEN 0 ELSE 1 END ASC,
+                    sort_order ASC,
+                    design_name ASC,
+                    created_at ASC,
+                    id ASC'
             );
             $records = $statement ? $statement->fetchAll() : [];
         } catch (PDOException $exception) {
@@ -148,6 +154,7 @@ final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportR
                     production_file_location,
                     made_on_hat,
                     notes,
+                    sort_order,
                     created_at,
                     updated_at
                  FROM forge_catalog_designs
@@ -174,6 +181,7 @@ final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportR
         $normalized = validateAndNormalizeStaffCatalogDesignInput($input);
         $id = createStaffCatalogDesignUuid();
         $timestamp = gmdate('Y-m-d H:i:s.u');
+        $sortOrder = getNextStaffCatalogSortOrder($this->pdo, 'forge_catalog_designs');
 
         try {
             $statement = $this->pdo->prepare(
@@ -188,6 +196,7 @@ final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportR
                     production_file_location,
                     made_on_hat,
                     notes,
+                    sort_order,
                     created_at,
                     updated_at
                  ) VALUES (
@@ -201,6 +210,7 @@ final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportR
                     :production_file_location,
                     :made_on_hat,
                     :notes,
+                    :sort_order,
                     :created_at,
                     :updated_at
                  )'
@@ -216,6 +226,7 @@ final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportR
                 ':production_file_location' => $normalized['production_file_location'],
                 ':made_on_hat' => $normalized['made_on_hat'],
                 ':notes' => $normalized['notes'],
+                ':sort_order' => $sortOrder,
                 ':created_at' => $timestamp,
                 ':updated_at' => $timestamp,
             ]);
@@ -241,6 +252,7 @@ final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportR
         $normalizedThumbnailPath = normalizeStaffCatalogThumbnailPath($thumbnailPath);
         $id = createStaffCatalogDesignUuid();
         $timestamp = gmdate('Y-m-d H:i:s.u');
+        $sortOrder = getNextStaffCatalogSortOrder($this->pdo, 'forge_catalog_designs');
 
         try {
             $statement = $this->pdo->prepare(
@@ -255,6 +267,7 @@ final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportR
                     production_file_location,
                     made_on_hat,
                     notes,
+                    sort_order,
                     created_at,
                     updated_at
                  ) VALUES (
@@ -268,6 +281,7 @@ final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportR
                     :production_file_location,
                     :made_on_hat,
                     :notes,
+                    :sort_order,
                     :created_at,
                     :updated_at
                  )'
@@ -283,6 +297,7 @@ final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportR
                 ':production_file_location' => $normalized['production_file_location'],
                 ':made_on_hat' => $normalized['made_on_hat'],
                 ':notes' => $normalized['notes'],
+                ':sort_order' => $sortOrder,
                 ':created_at' => $timestamp,
                 ':updated_at' => $timestamp,
             ]);
@@ -353,6 +368,16 @@ final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportR
         }
 
         return $updated;
+    }
+
+    /**
+     * @param array<int, string> $orderedIds
+     * @return array<int, array<string, mixed>>
+     */
+    public function reorderDesigns(array $orderedIds): array
+    {
+        saveStaffCatalogSortOrder($this->pdo, 'forge_catalog_designs', $orderedIds);
+        return $this->listDesigns();
     }
 
     /**
@@ -554,6 +579,7 @@ function normalizeStaffCatalogDesignRecord($record): array
         'production_file_location' => normalizeStaffCatalogNullableString($normalized['production_file_location'] ?? null),
         'made_on_hat' => normalizeStaffCatalogNullableString($normalized['made_on_hat'] ?? '') ?? '',
         'notes' => normalizeStaffCatalogNullableString($normalized['notes'] ?? null),
+        'sort_order' => max(0, (int) ($normalized['sort_order'] ?? 0)),
         'created_at' => normalizeStaffCatalogDateTime($normalized['created_at'] ?? ''),
         'updated_at' => normalizeStaffCatalogDateTime($normalized['updated_at'] ?? ''),
     ];

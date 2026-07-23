@@ -91,10 +91,16 @@ final class PdoStaffMaterialCatalogRepository implements StaffMaterialCatalogImp
                     notes,
                     image_width,
                     image_height,
+                    sort_order,
                     created_at,
                     updated_at
                  FROM forge_catalog_materials
-                 ORDER BY updated_at DESC, material_name ASC, id ASC'
+                 ORDER BY
+                    CASE WHEN sort_order > 0 THEN 0 ELSE 1 END ASC,
+                    sort_order ASC,
+                    material_name ASC,
+                    created_at ASC,
+                    id ASC'
             );
             $records = $statement ? $statement->fetchAll() : [];
         } catch (PDOException $exception) {
@@ -140,6 +146,7 @@ final class PdoStaffMaterialCatalogRepository implements StaffMaterialCatalogImp
                     notes,
                     image_width,
                     image_height,
+                    sort_order,
                     created_at,
                     updated_at
                  FROM forge_catalog_materials
@@ -166,6 +173,7 @@ final class PdoStaffMaterialCatalogRepository implements StaffMaterialCatalogImp
         $normalized = validateAndNormalizeStaffCatalogMaterialInput($input);
         $id = createStaffCatalogMaterialUuid();
         $timestamp = gmdate('Y-m-d H:i:s.u');
+        $sortOrder = getNextStaffCatalogSortOrder($this->pdo, 'forge_catalog_materials');
 
         try {
             $statement = $this->pdo->prepare(
@@ -184,6 +192,7 @@ final class PdoStaffMaterialCatalogRepository implements StaffMaterialCatalogImp
                     notes,
                     image_width,
                     image_height,
+                    sort_order,
                     created_at,
                     updated_at
                  ) VALUES (
@@ -201,6 +210,7 @@ final class PdoStaffMaterialCatalogRepository implements StaffMaterialCatalogImp
                     :notes,
                     :image_width,
                     :image_height,
+                    :sort_order,
                     :created_at,
                     :updated_at
                  )'
@@ -220,6 +230,7 @@ final class PdoStaffMaterialCatalogRepository implements StaffMaterialCatalogImp
                 ':notes' => $normalized['notes'],
                 ':image_width' => $normalized['image_width'],
                 ':image_height' => $normalized['image_height'],
+                ':sort_order' => $sortOrder,
                 ':created_at' => $timestamp,
                 ':updated_at' => $timestamp,
             ]);
@@ -245,6 +256,7 @@ final class PdoStaffMaterialCatalogRepository implements StaffMaterialCatalogImp
         $normalizedSwatchPath = normalizeStaffCatalogMaterialSwatchPath($swatchPath);
         $id = createStaffCatalogMaterialUuid();
         $timestamp = gmdate('Y-m-d H:i:s.u');
+        $sortOrder = getNextStaffCatalogSortOrder($this->pdo, 'forge_catalog_materials');
 
         try {
             $statement = $this->pdo->prepare(
@@ -263,6 +275,7 @@ final class PdoStaffMaterialCatalogRepository implements StaffMaterialCatalogImp
                     notes,
                     image_width,
                     image_height,
+                    sort_order,
                     created_at,
                     updated_at
                  ) VALUES (
@@ -280,6 +293,7 @@ final class PdoStaffMaterialCatalogRepository implements StaffMaterialCatalogImp
                     :notes,
                     :image_width,
                     :image_height,
+                    :sort_order,
                     :created_at,
                     :updated_at
                  )'
@@ -299,6 +313,7 @@ final class PdoStaffMaterialCatalogRepository implements StaffMaterialCatalogImp
                 ':notes' => $normalized['notes'],
                 ':image_width' => $normalized['image_width'],
                 ':image_height' => $normalized['image_height'],
+                ':sort_order' => $sortOrder,
                 ':created_at' => $timestamp,
                 ':updated_at' => $timestamp,
             ]);
@@ -373,6 +388,16 @@ final class PdoStaffMaterialCatalogRepository implements StaffMaterialCatalogImp
         }
 
         return $updated;
+    }
+
+    /**
+     * @param array<int, string> $orderedIds
+     * @return array<int, array<string, mixed>>
+     */
+    public function reorderMaterials(array $orderedIds): array
+    {
+        saveStaffCatalogSortOrder($this->pdo, 'forge_catalog_materials', $orderedIds);
+        return $this->listMaterials();
     }
 
     /**
@@ -582,6 +607,7 @@ function normalizeStaffCatalogMaterialRecord($record): array
         'notes' => normalizeStaffCatalogMaterialNullableString($normalized['notes'] ?? null),
         'image_width' => normalizeStaffCatalogMaterialImageDimension($normalized['image_width'] ?? null),
         'image_height' => normalizeStaffCatalogMaterialImageDimension($normalized['image_height'] ?? null),
+        'sort_order' => max(0, (int) ($normalized['sort_order'] ?? 0)),
         'created_at' => normalizeStaffCatalogMaterialDateTime($normalized['created_at'] ?? ''),
         'updated_at' => normalizeStaffCatalogMaterialDateTime($normalized['updated_at'] ?? ''),
     ];

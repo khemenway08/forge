@@ -34,6 +34,18 @@
   };
   const MISSING_PHOTO_COPY = 'No photo yet';
   const LINK_TYPES = ['design', 'hat', 'material'];
+  const SORT_OPTIONS = [
+    { value: 'custom', label: 'Custom Order' },
+    { value: 'az', label: 'A–Z' },
+    { value: 'recent', label: 'Recently Added' },
+    { value: 'status', label: 'Status' },
+    { value: 'placement_status', label: 'Placement Status' },
+    { value: 'hat_color', label: 'Hat Color' },
+    { value: 'hat_manufacturer', label: 'Hat Manufacturer' },
+    { value: 'hat_model', label: 'Hat Model' },
+    { value: 'design_name', label: 'Design' },
+    { value: 'material_name', label: 'Material' }
+  ];
 
   function createStaffFinishedHatCatalogModule(options = {}) {
     const apiClient = options.apiClient || null;
@@ -42,6 +54,7 @@
     const materialApiClient = options.materialApiClient || null;
     const documentRef = options.document || document;
     const windowLike = options.window || window;
+    const orderingApi = resolveCatalogOrderingApi(options.orderingApi);
     const canLoadProtectedRecords = typeof options.canLoadProtectedRecords === 'function'
       ? options.canLoadProtectedRecords
       : () => true;
@@ -88,7 +101,11 @@
       pickerCurrentId: '',
       pickerSaving: false,
       pickerError: '',
-      pickerTriggerLabel: ''
+      pickerTriggerLabel: '',
+      sortKey: 'custom',
+      notice: '',
+      noticeTone: 'muted',
+      announcement: ''
     };
 
     let container = null;
@@ -98,6 +115,25 @@
     let statusNode = null;
     let lastFocusTarget = null;
     let lastPickerFocusTarget = null;
+    const reorderController = orderingApi?.createCatalogReorderController({
+      document: documentRef,
+      window: windowLike,
+      cardSelector: '[data-catalog-order-id]',
+      onStateChange() {
+        renderContent();
+      },
+      onAnnounce(message) {
+        state.announcement = String(message || '');
+        renderContent();
+      },
+      async onCommit(orderedIds) {
+        return saveFinishedHatOrder(orderedIds);
+      },
+      getLabel(itemId) {
+        const record = state.records.find((entry) => entry.id === itemId);
+        return record?.finished_hat_name || 'catalog record';
+      }
+    }) || null;
 
     function render(nextContainer) {
       if (nextContainer) {
@@ -145,8 +181,9 @@
         }
 
         state.records = Array.isArray(result.finished_hats)
-          ? result.finished_hats.map(normalizeFinishedHatRecord).sort(compareFinishedHatsByName)
+          ? sortRecordsForCustomOrder(result.finished_hats.map(normalizeFinishedHatRecord))
           : [];
+        reorderController?.sync(state.records.map((record) => record.id));
         state.loaded = true;
         state.loading = false;
         state.error = '';
@@ -211,12 +248,15 @@
       }
     }
 
-    function renderContent() {
+    function renderContent(options = {}) {
       if (!container) {
         return;
       }
 
+      const focusState = options.preserveFocus ? captureCatalogFocus() : null;
       const filteredRecords = filterFinishedHatRecords(state.records, state.filters);
+      const reorderAvailability = getReorderAvailability();
+      const sortedRecords = sortFinishedHatRecords(filteredRecords, state.sortKey);
       const hasActiveFilters = Object.values(state.filters).some(Boolean);
       const designOptions = collectFinishedHatFilterOptions(state.records, 'design_name');
       const manufacturerOptions = collectFinishedHatFilterOptions(state.records, 'hat_manufacturer');
@@ -278,16 +318,85 @@
                 <option value="fully_linked" ${state.filters.needs_linking === 'fully_linked' ? 'selected' : ''}>Fully Linked</option>
               </select>
             </label>
+            <label class="staff-catalog-designs-filter">
+              <span>Sort</span>
+              <select data-action="catalog-sort-finished-hats">${renderStaticOptions(SORT_OPTIONS, state.sortKey)}</select>
+            </label>
             <div class="staff-catalog-designs-filter-clear">
               <button class="secondary-button" type="button" data-action="catalog-clear-finished-hat-filters">Clear Filters</button>
             </div>
           </div>
-          ${renderFinishedHatBody(filteredRecords, hasActiveFilters)}
+          <div class="staff-catalog-sort-row">
+            <p class="staff-catalog-sort-help">${escapeHtml(reorderAvailability.reason || 'Drag handles appear while Custom Order is active.')}</p>
+            ${state.notice ? `<div class="staff-inline-notice staff-inline-notice--${escapeAttribute(state.noticeTone)}" role="status" aria-live="polite">${escapeHtml(state.notice)}</div>` : ''}
+          </div>
+          <p class="staff-catalog-reorder-announcer" aria-live="polite">${escapeHtml(state.announcement)}</p>
+          ${renderFinishedHatBody(sortedRecords, hasActiveFilters, reorderAvailability)}
         </section>
       `;
+      restoreCatalogFocus(focusState);
     }
 
-    function renderFinishedHatBody(filteredRecords, hasActiveFilters) {
+    function captureCatalogFocus() {
+      const activeElement = documentRef?.activeElement;
+      if (!activeElement || !container || !isElementInsideContainer(activeElement)) {
+        return null;
+      }
+
+      const action = activeElement.dataset?.action || '';
+      if (![
+        'catalog-finished-hat-search',
+        'catalog-filter-finished-hat-design',
+        'catalog-filter-finished-hat-manufacturer',
+        'catalog-filter-finished-hat-model',
+        'catalog-filter-finished-hat-color',
+        'catalog-filter-finished-hat-material',
+        'catalog-filter-finished-hat-placement-status',
+        'catalog-filter-finished-hat-status',
+        'catalog-filter-finished-hat-needs-linking',
+        'catalog-sort-finished-hats'
+      ].includes(action)) {
+        return null;
+      }
+
+      return {
+        action,
+        selectionStart: Number.isInteger(activeElement.selectionStart) ? activeElement.selectionStart : null,
+        selectionEnd: Number.isInteger(activeElement.selectionEnd) ? activeElement.selectionEnd : null
+      };
+    }
+
+    function restoreCatalogFocus(focusState) {
+      if (!focusState || !container || typeof container.querySelector !== 'function') {
+        return;
+      }
+
+      const nextElement = container.querySelector(`[data-action="${focusState.action}"]`);
+      if (!nextElement || typeof nextElement.focus !== 'function') {
+        return;
+      }
+
+      nextElement.focus({ preventScroll: true });
+      if (
+        Number.isInteger(focusState.selectionStart)
+        && Number.isInteger(focusState.selectionEnd)
+        && typeof nextElement.setSelectionRange === 'function'
+      ) {
+        nextElement.setSelectionRange(focusState.selectionStart, focusState.selectionEnd);
+      }
+    }
+
+    function isElementInsideContainer(element) {
+      if (typeof container.contains === 'function') {
+        return container.contains(element);
+      }
+      if (typeof element.closest === 'function') {
+        return element.closest('[role="tabpanel"]') !== null;
+      }
+      return true;
+    }
+
+    function renderFinishedHatBody(filteredRecords, hasActiveFilters, reorderAvailability) {
       if (state.loading) {
         return '<div class="staff-catalog-designs-state"><p>Loading shared finished hat records...</p></div>';
       }
@@ -301,39 +410,52 @@
         return `<div class="staff-catalog-designs-state"><h4>No finished hats match these filters</h4><p>${hasActiveFilters ? 'Adjust the search or clear filters to see more shared finished hats.' : 'No shared finished hats are available yet.'}</p></div>`;
       }
 
-      return `<div class="staff-design-card-grid staff-finished-hat-card-grid">${filteredRecords.map((record) => renderFinishedHatCard(record)).join('')}</div>`;
+      return `<div class="staff-design-card-grid staff-finished-hat-card-grid">${filteredRecords.map((record) => renderFinishedHatCard(record, reorderAvailability.enabled)).join('')}</div>`;
     }
 
-    function renderFinishedHatCard(record) {
+    function renderFinishedHatCard(record, reorderEnabled) {
       const photo = getFinishedHatPhotoDisplay(record);
       const compactSummary = getFinishedHatCompactSummary(record);
       const missingLinksSummary = getFinishedHatMissingLinksSummary(record);
       const primaryBadge = getFinishedHatPrimaryBadge(record);
       return `
-        <article
-          class="staff-design-card staff-finished-hat-card"
-          role="button"
-          tabindex="0"
-          data-action="catalog-open-finished-hat-detail"
-          data-finished-hat-id="${escapeAttribute(record.id)}"
-          aria-label="${escapeAttribute(`Open ${record.finished_hat_name || 'finished hat'}`)}"
-        >
-          <div class="staff-design-card-thumb staff-finished-hat-card-thumb">
-            ${photo.html}
-          </div>
-          <div class="staff-design-card-body">
-            <div class="staff-finished-hat-card-header">
-              <div class="staff-design-card-top">
-                <h4 class="staff-finished-hat-card-title">${escapeHtml(record.finished_hat_name)}</h4>
-                <span class="staff-design-status-badge staff-design-status-badge--${escapeAttribute(primaryBadge.tone)}">${escapeHtml(primaryBadge.label)}</span>
+        <div class="staff-catalog-card-shell${reorderController?.isDraggingId(record.id) ? ' staff-catalog-card-shell--dragging' : ''}${reorderController?.isSaving() ? ' staff-catalog-card-shell--saving' : ''}" data-catalog-order-id="${escapeAttribute(record.id)}">
+          ${reorderEnabled ? `
+            <button
+              class="staff-catalog-reorder-handle"
+              type="button"
+              data-action="catalog-finished-hat-reorder-handle"
+              data-finished-hat-id="${escapeAttribute(record.id)}"
+              aria-label="Reorder ${escapeAttribute(record.finished_hat_name)}"
+            >
+              <span aria-hidden="true">::</span>
+            </button>
+          ` : ''}
+          <article
+            class="staff-design-card staff-finished-hat-card"
+            role="button"
+            tabindex="0"
+            data-action="catalog-open-finished-hat-detail"
+            data-finished-hat-id="${escapeAttribute(record.id)}"
+            aria-label="${escapeAttribute(`Open ${record.finished_hat_name || 'finished hat'}`)}"
+          >
+            <div class="staff-design-card-thumb staff-finished-hat-card-thumb">
+              ${photo.html}
+            </div>
+            <div class="staff-design-card-body">
+              <div class="staff-finished-hat-card-header">
+                <div class="staff-design-card-top">
+                  <h4 class="staff-finished-hat-card-title">${escapeHtml(record.finished_hat_name)}</h4>
+                  <span class="staff-design-status-badge staff-design-status-badge--${escapeAttribute(primaryBadge.tone)}">${escapeHtml(primaryBadge.label)}</span>
+                </div>
+              </div>
+              <div class="staff-finished-hat-card-summary">
+                ${compactSummary ? `<p class="staff-finished-hat-card-summary-line">${escapeHtml(compactSummary)}</p>` : ''}
+                ${missingLinksSummary ? `<p class="staff-finished-hat-card-missing-links">${escapeHtml(missingLinksSummary)}</p>` : ''}
               </div>
             </div>
-            <div class="staff-finished-hat-card-summary">
-              ${compactSummary ? `<p class="staff-finished-hat-card-summary-line">${escapeHtml(compactSummary)}</p>` : ''}
-              ${missingLinksSummary ? `<p class="staff-finished-hat-card-missing-links">${escapeHtml(missingLinksSummary)}</p>` : ''}
-            </div>
-          </div>
-        </article>
+          </article>
+        </div>
       `;
     }
 
@@ -346,11 +468,21 @@
       container.addEventListener('keydown', onContainerKeyDown);
       container.addEventListener('input', onContainerInput);
       container.addEventListener('change', onContainerChange);
+      container.addEventListener('pointerdown', onContainerPointerDown);
     }
 
     function onContainerClick(event) {
       const action = event.target.closest('[data-action]')?.dataset.action;
       if (!action) {
+        return;
+      }
+      if (action === 'catalog-finished-hat-reorder-handle') {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (reorderController?.shouldSuppressActivation()) {
+        event.preventDefault();
         return;
       }
       if (action === 'catalog-retry-finished-hat-load') {
@@ -369,6 +501,7 @@
           status: '',
           needs_linking: ''
         };
+        state.notice = '';
         renderContent();
         return;
       }
@@ -387,6 +520,11 @@
 
     function onContainerKeyDown(event) {
       const action = event.target.closest('[data-action]')?.dataset.action;
+      if (action === 'catalog-finished-hat-reorder-handle') {
+        const orderedIds = sortFinishedHatRecords(filterFinishedHatRecords(state.records, state.filters), state.sortKey).map((record) => record.id);
+        reorderController?.handleHandleKeydown(event, String(event.target.closest('[data-finished-hat-id]')?.dataset.finishedHatId || ''), orderedIds);
+        return;
+      }
       if (action !== 'catalog-open-finished-hat-detail') {
         return;
       }
@@ -400,7 +538,7 @@
     function onContainerInput(event) {
       if (event.target?.dataset?.action === 'catalog-finished-hat-search') {
         state.filters.search = String(event.target.value || '');
-        renderContent();
+        renderContent({ preserveFocus: true });
       }
     }
 
@@ -419,11 +557,34 @@
         'catalog-filter-finished-hat-status': 'status',
         'catalog-filter-finished-hat-needs-linking': 'needs_linking'
       };
+      if (action === 'catalog-sort-finished-hats') {
+        state.sortKey = String(event.target.value || 'custom').trim() || 'custom';
+        state.notice = '';
+        renderContent();
+        return;
+      }
       const filterKey = filterMap[action];
       if (filterKey) {
         state.filters[filterKey] = String(event.target.value || '');
         renderContent();
       }
+    }
+
+    function onContainerPointerDown(event) {
+      const handle = event.target.closest('[data-action="catalog-finished-hat-reorder-handle"]');
+      if (!handle || !reorderController || !getReorderAvailability().enabled) {
+        return;
+      }
+
+      const orderedIds = sortFinishedHatRecords(filterFinishedHatRecords(state.records, state.filters), state.sortKey).map((record) => record.id);
+      const finishedHatId = String(handle.dataset.finishedHatId || '').trim();
+      if (!finishedHatId) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      reorderController.beginPointer(event, finishedHatId, orderedIds);
     }
 
     function ensureDialogUi() {
@@ -1069,9 +1230,55 @@
       if (existingIndex >= 0) {
         state.records.splice(existingIndex, 1, nextRecord);
       } else {
-        state.records.unshift(nextRecord);
+        state.records.push(nextRecord);
       }
-      state.records.sort(compareFinishedHatsByName);
+      state.records = sortRecordsForCustomOrder(state.records);
+      reorderController?.sync(state.records.map((item) => item.id));
+    }
+
+    function getReorderAvailability() {
+      return orderingApi?.getReorderAvailability(state.sortKey, state.filters) || { enabled: false, reason: '' };
+    }
+
+    async function saveFinishedHatOrder(orderedIds) {
+      if (!apiClient || typeof apiClient.reorderFinishedHats !== 'function') {
+        state.notice = 'Finished hat ordering is currently unavailable.';
+        state.noticeTone = 'error';
+        renderContent();
+        return false;
+      }
+
+      try {
+        const result = await apiClient.reorderFinishedHats(orderedIds);
+        const sortOrderMap = new Map(
+          Array.isArray(result.records)
+            ? result.records.map((record) => [String(record.id || '').trim(), Number(record.sort_order || 0)])
+            : []
+        );
+        const recordMap = new Map(state.records.map((record) => [record.id, record]));
+        state.records = orderedIds
+          .map((id) => recordMap.get(id))
+          .filter(Boolean)
+          .map((record, index) => ({
+            ...record,
+            sort_order: sortOrderMap.get(record.id) || ((index + 1) * 1000)
+          }));
+        state.notice = 'Custom order saved.';
+        state.noticeTone = 'success';
+        renderContent();
+        return true;
+      } catch (error) {
+        if (error?.code === 'catalog_order_conflict') {
+          state.notice = 'The finished hat order changed elsewhere. Reloaded the latest order.';
+          state.noticeTone = 'error';
+          await loadFinishedHats();
+          return false;
+        }
+        state.notice = safeErrorMessage(error, 'Finished hat order could not be saved right now.');
+        state.noticeTone = 'error';
+        renderContent();
+        return false;
+      }
     }
 
     function switchDialogToEdit() {
@@ -1231,7 +1438,8 @@
       material_name: asNullableTrimmedString(normalized.material_name),
       material_type: asNullableTrimmedString(normalized.material_type),
       material_color: asNullableTrimmedString(normalized.material_color),
-      needs_linking: Boolean(normalized.needs_linking)
+      needs_linking: Boolean(normalized.needs_linking),
+      sort_order: asPositiveInteger(normalized.sort_order)
     };
   }
 
@@ -1327,7 +1535,48 @@
   }
 
   function compareFinishedHatsByName(left, right) {
-    return left.finished_hat_name.localeCompare(right.finished_hat_name, undefined, { sensitivity: 'base' });
+    const orderingApi = resolveCatalogOrderingApi();
+    return orderingApi.compareNullableText(left?.finished_hat_name, right?.finished_hat_name);
+  }
+
+  function sortFinishedHatRecords(records, sortKey) {
+    const orderingApi = resolveCatalogOrderingApi();
+    return orderingApi.sortCatalogRecords(records, {
+      sortKey,
+      compareLabel: compareFinishedHatsByName,
+      comparators: {
+        custom: orderingApi.compareCustomOrder,
+        az: compareFinishedHatsByName,
+        recent(left, right) {
+          return orderingApi.compareDatesDescending(left?.created_at, right?.created_at);
+        },
+        status(left, right) {
+          return orderingApi.compareNullableText(getFinishedHatStatusLabel(left?.status), getFinishedHatStatusLabel(right?.status));
+        },
+        placement_status(left, right) {
+          return orderingApi.compareNullableText(getPlacementStatusLabel(left?.placement_status), getPlacementStatusLabel(right?.placement_status));
+        },
+        hat_color(left, right) {
+          return orderingApi.compareNullableText(left?.hat_color, right?.hat_color);
+        },
+        hat_manufacturer(left, right) {
+          return orderingApi.compareNullableText(left?.hat_manufacturer, right?.hat_manufacturer);
+        },
+        hat_model(left, right) {
+          return orderingApi.compareNullableText(left?.hat_model, right?.hat_model);
+        },
+        design_name(left, right) {
+          return orderingApi.compareNullableText(left?.design_name, right?.design_name);
+        },
+        material_name(left, right) {
+          return orderingApi.compareNullableText(left?.material_name, right?.material_name);
+        }
+      }
+    });
+  }
+
+  function sortRecordsForCustomOrder(records) {
+    return sortFinishedHatRecords(records, 'custom');
   }
 
   function compareOptionsByLabel(left, right) {
@@ -1684,6 +1933,12 @@
     return escapeHtml(value);
   }
 
+  function renderStaticOptions(options, selectedValue) {
+    return options.map((option) => (
+      `<option value="${escapeAttribute(option.value)}"${option.value === selectedValue ? ' selected' : ''}>${escapeHtml(option.label)}</option>`
+    )).join('');
+  }
+
   function asTrimmedString(value) {
     return typeof value === 'string' ? value.trim() : '';
   }
@@ -1704,9 +1959,73 @@
     return null;
   }
 
+  function asPositiveInteger(value) {
+    if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+      return value;
+    }
+    if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+      const normalized = Number.parseInt(value.trim(), 10);
+      return normalized > 0 ? normalized : 0;
+    }
+    return 0;
+  }
+
+  function resolveCatalogOrderingApi(providedApi) {
+    if (providedApi && typeof providedApi.sortCatalogRecords === 'function') {
+      return providedApi;
+    }
+    if (typeof ForgeStaffCatalogOrdering !== 'undefined' && ForgeStaffCatalogOrdering) {
+      return ForgeStaffCatalogOrdering;
+    }
+    if (typeof globalThis !== 'undefined' && globalThis.ForgeStaffCatalogOrdering) {
+      return globalThis.ForgeStaffCatalogOrdering;
+    }
+    if (typeof require === 'function') {
+      try {
+        return require('./forge-staff-catalog-ordering.js');
+      } catch (error) {
+        return {
+          compareCustomOrder(left, right) {
+            return asPositiveInteger(left?.sort_order) - asPositiveInteger(right?.sort_order);
+          },
+          compareNullableText(left, right) {
+            return String(left || '').localeCompare(String(right || ''), undefined, { sensitivity: 'base' });
+          },
+          compareDatesDescending(left, right) {
+            return (Date.parse(String(right || '')) || 0) - (Date.parse(String(left || '')) || 0);
+          },
+          sortCatalogRecords(records) {
+            return Array.isArray(records) ? records.slice() : [];
+          },
+          getReorderAvailability() {
+            return { enabled: false, reason: '' };
+          }
+        };
+      }
+    }
+    return {
+      compareCustomOrder(left, right) {
+        return asPositiveInteger(left?.sort_order) - asPositiveInteger(right?.sort_order);
+      },
+      compareNullableText(left, right) {
+        return String(left || '').localeCompare(String(right || ''), undefined, { sensitivity: 'base' });
+      },
+      compareDatesDescending(left, right) {
+        return (Date.parse(String(right || '')) || 0) - (Date.parse(String(left || '')) || 0);
+      },
+      sortCatalogRecords(records) {
+        return Array.isArray(records) ? records.slice() : [];
+      },
+      getReorderAvailability() {
+        return { enabled: false, reason: '' };
+      }
+    };
+  }
+
   return {
     STATUS_LABELS,
     PLACEMENT_STATUS_LABELS,
+    SORT_OPTIONS,
     createStaffFinishedHatCatalogModule,
     filterFinishedHatRecords,
     normalizeFinishedHatRecord,
@@ -1716,6 +2035,7 @@
     formatFinishedHatHatSummary,
     formatFinishedHatMaterialSummary,
     getPlacementStatusLabel,
-    getMaterialSwatchFitMode
+    getMaterialSwatchFitMode,
+    sortFinishedHatRecords
   };
 }));

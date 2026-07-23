@@ -17,6 +17,7 @@
     authentication_required: 'Staff authentication is required.',
     unsupported_media_type: 'The hat library rejected the request format.',
     hat_not_found: 'That hat could not be found.',
+    catalog_order_conflict: 'The hat order changed elsewhere. Reload and try again.',
     storage_unavailable: 'Hat catalog storage is currently unavailable.',
     server_error: 'Hat catalog is currently unavailable.',
     unavailable: 'Hat catalog is currently unavailable.',
@@ -120,6 +121,10 @@
       return saveHat('update', hatId, input);
     }
 
+    async function reorderHats(orderedIds) {
+      return reorderCatalogRecords('hats', orderedIds);
+    }
+
     async function saveHat(mode, hatId, input) {
       const payload = normalizeHatInputPayload(input);
       const requestBody = JSON.stringify(payload);
@@ -197,11 +202,53 @@
       }
     }
 
+    async function reorderCatalogRecords(resourceType, orderedIds) {
+      const normalizedIds = Array.isArray(orderedIds)
+        ? orderedIds.map((value) => asTrimmedString(value)).filter(Boolean)
+        : [];
+
+      try {
+        const response = await performJsonRequest(fetchImpl, `${baseUrl}/reorder.php`, timeoutMs, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json'
+          },
+          credentials: 'same-origin',
+          cache: 'no-store',
+          body: JSON.stringify({
+            resource_type: resourceType,
+            ordered_ids: normalizedIds
+          })
+        });
+        const payload = await parseJsonResponse(response);
+        if (response.status === 401) {
+          return {
+            ok: false,
+            authenticated: false,
+            unauthenticated: true,
+            records: []
+          };
+        }
+        if (!response.ok) {
+          throw buildServerError(response.status, payload);
+        }
+        return {
+          ok: true,
+          authenticated: true,
+          records: Array.isArray(payload?.data?.records) ? payload.data.records : []
+        };
+      } catch (error) {
+        throw normalizeClientError(error);
+      }
+    }
+
     return {
       listHats,
       getHat,
       createHat,
       updateHat,
+      reorderHats,
       uploadPhoto
     };
   }
@@ -239,6 +286,7 @@
       base_cost: asNullableTrimmedString(normalized.base_cost),
       status: asTrimmedString(normalized.status),
       notes: asNullableTrimmedString(normalized.notes),
+      sort_order: asPositiveInteger(normalized.sort_order),
       created_at: asTrimmedString(normalized.created_at),
       updated_at: asTrimmedString(normalized.updated_at)
     };
@@ -351,6 +399,17 @@
   function asNullableTrimmedString(value) {
     const normalized = asTrimmedString(value);
     return normalized === '' ? null : normalized;
+  }
+
+  function asPositiveInteger(value) {
+    if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+      return value;
+    }
+    if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+      const normalized = Number.parseInt(value.trim(), 10);
+      return normalized > 0 ? normalized : 0;
+    }
+    return 0;
   }
 
   return {

@@ -87,6 +87,37 @@ test('createMaterial sends POST JSON and updateMaterial targets the approved end
   assert.equal(requests[1].url, '/api/v1/staff/catalog/material.php?id=123e4567-e89b-42d3-a456-426614174abc');
 });
 
+test('reorderMaterials sends the approved shared reorder payload', async () => {
+  const requests = [];
+  const client = materialCatalogApiModule.createForgeStaffMaterialCatalogApiClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return createJsonResponse(200, {
+        application: 'Forge',
+        api_version: '1',
+        status: 'ok',
+        data: {
+          resource_type: 'materials',
+          records: [
+            { id: 'mat-2', sort_order: 1000 },
+            { id: 'mat-1', sort_order: 2000 }
+          ]
+        }
+      });
+    }
+  });
+
+  const result = await client.reorderMaterials(['mat-2', 'mat-1']);
+
+  assert.equal(result.ok, true);
+  assert.equal(requests[0].url, '/api/v1/staff/catalog/reorder.php');
+  assert.equal(requests[0].options.method, 'POST');
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    resource_type: 'materials',
+    ordered_ids: ['mat-2', 'mat-1']
+  });
+});
+
 test('uploadSwatch sends POST form data and malformed responses stay safe', async () => {
   const requests = [];
   const fakeFormData = {
