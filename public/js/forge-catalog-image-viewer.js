@@ -21,6 +21,7 @@
       scale: 1,
       panX: 0,
       panY: 0,
+      viewMode: 'fit',
       opener: null,
       open: false,
       loadFailed: false,
@@ -32,6 +33,10 @@
     let backdrop = null;
     let dialog = null;
     let imageNode = null;
+    let stageNode = null;
+    let canvasNode = null;
+    let panLayerNode = null;
+    let imageFrameNode = null;
     let lastBodyOverflow = '';
 
     function openViewer(config = {}) {
@@ -51,8 +56,12 @@
       state.open = true;
       resetViewState();
       lockBodyScroll();
-      render();
       backdrop.hidden = false;
+      render();
+      if (imageNode?.naturalWidth && imageNode?.naturalHeight) {
+        applyFitToScreen();
+        render();
+      }
       dialog?.focus({ preventScroll: true });
       return true;
     }
@@ -100,7 +109,15 @@
             </div>
           </div>
           <div class="forge-catalog-image-viewer__stage" data-viewer-stage>
-            <img class="forge-catalog-image-viewer__image" data-viewer-image alt="">
+            <div class="forge-catalog-image-viewer__canvas" data-viewer-canvas>
+              <div class="forge-catalog-image-viewer__center-anchor" data-viewer-center-anchor>
+                <div class="forge-catalog-image-viewer__pan-layer" data-viewer-pan-layer>
+                  <div class="forge-catalog-image-viewer__image-frame" data-viewer-image-frame>
+                    <img class="forge-catalog-image-viewer__image" data-viewer-image alt="">
+                  </div>
+                </div>
+              </div>
+            </div>
             <p class="forge-catalog-image-viewer__error" data-viewer-error hidden>Image could not be loaded.</p>
           </div>
           <p class="forge-catalog-image-viewer__status" aria-live="polite" data-viewer-status></p>
@@ -109,20 +126,25 @@
       documentRef.body.appendChild(backdrop);
       dialog = backdrop.querySelector('.forge-catalog-image-viewer__dialog');
       imageNode = backdrop.querySelector('[data-viewer-image]');
+      stageNode = backdrop.querySelector('[data-viewer-stage]');
+      canvasNode = backdrop.querySelector('[data-viewer-canvas]');
+      panLayerNode = backdrop.querySelector('[data-viewer-pan-layer]');
+      imageFrameNode = backdrop.querySelector('[data-viewer-image-frame]');
 
       backdrop.addEventListener('click', onBackdropClick);
       backdrop.addEventListener('keydown', onKeyDown);
       backdrop.addEventListener('wheel', onWheel, { passive: false });
+      windowRef?.addEventListener?.('resize', onViewportResize);
+      windowRef?.addEventListener?.('orientationchange', onViewportResize);
       imageNode?.addEventListener('load', onImageLoad);
       imageNode?.addEventListener('error', onImageError);
-      const stage = backdrop.querySelector('[data-viewer-stage]');
-      stage?.addEventListener('pointerdown', onPointerDown);
-      stage?.addEventListener('pointermove', onPointerMove);
-      stage?.addEventListener('pointerup', onPointerEnd);
-      stage?.addEventListener('pointercancel', onPointerEnd);
-      stage?.addEventListener('touchstart', onTouchStart, { passive: false });
-      stage?.addEventListener('touchmove', onTouchMove, { passive: false });
-      stage?.addEventListener('touchend', onTouchEnd);
+      stageNode?.addEventListener('pointerdown', onPointerDown);
+      stageNode?.addEventListener('pointermove', onPointerMove);
+      stageNode?.addEventListener('pointerup', onPointerEnd);
+      stageNode?.addEventListener('pointercancel', onPointerEnd);
+      stageNode?.addEventListener('touchstart', onTouchStart, { passive: false });
+      stageNode?.addEventListener('touchmove', onTouchMove, { passive: false });
+      stageNode?.addEventListener('touchend', onTouchEnd);
     }
 
     function render() {
@@ -166,7 +188,11 @@
         handleAction(action);
         return;
       }
-      if (event.target === backdrop || event.target?.dataset?.viewerStage !== undefined) {
+      if (
+        event.target === backdrop ||
+        event.target?.dataset?.viewerStage !== undefined ||
+        event.target?.dataset?.viewerCanvas !== undefined
+      ) {
         closeViewer();
       }
     }
@@ -183,7 +209,7 @@
       } else if (action === 'zoom-out') {
         zoomBy(1 / SCALE_STEP);
       } else if (action === 'fit') {
-        resetViewState();
+        applyFitToScreen();
         render();
       } else if (action === 'actual') {
         zoomToActualSize();
@@ -211,7 +237,7 @@
         zoomBy(1 / SCALE_STEP);
       } else if (event.key === '0') {
         event.preventDefault();
-        resetViewState();
+        applyFitToScreen();
         render();
       } else if (event.key === 'Tab') {
         trapFocus(event);
@@ -224,6 +250,19 @@
       }
       event.preventDefault();
       zoomBy(event.deltaY < 0 ? 1.08 : 1 / 1.08);
+    }
+
+    function onViewportResize() {
+      if (!state.open || !imageNode || !imageNode.naturalWidth) {
+        return;
+      }
+      if (state.viewMode === 'fit') {
+        applyFitToScreen();
+        render();
+        return;
+      }
+      constrainPan();
+      render();
     }
 
     function onPointerDown(event) {
@@ -269,7 +308,7 @@
       }
       if (event.touches.length === 2 && state.pinchStartDistance > 0) {
         event.preventDefault();
-        setScale(state.pinchStartScale * (getTouchDistance(event.touches) / state.pinchStartDistance));
+        setScale(state.pinchStartScale * (getTouchDistance(event.touches) / state.pinchStartDistance), 'manual');
       } else if (event.touches.length === 1 && state.lastPanPoint) {
         event.preventDefault();
         const touch = event.touches[0];
@@ -288,7 +327,8 @@
 
     function onImageLoad() {
       state.loadFailed = false;
-      resetViewState();
+      setImageNaturalSize();
+      applyFitToScreen();
       render();
     }
 
@@ -306,70 +346,109 @@
         return;
       }
       state.index = nextIndex;
-      resetViewState();
+      resetViewState('fit');
       render();
     }
 
     function zoomBy(factor) {
-      setScale(state.scale * factor);
+      setScale(state.scale * factor, 'manual');
     }
 
-    function setScale(nextScale) {
+    function setScale(nextScale, mode = 'manual') {
       state.scale = clamp(Number(nextScale) || 1, MIN_SCALE, MAX_SCALE);
+      state.viewMode = mode;
       constrainPan();
       render();
     }
 
     function zoomToActualSize() {
-      if (!imageNode || !imageNode.naturalWidth) {
-        setScale(1);
+      if (!imageNode || !imageNode.naturalWidth || !imageNode.naturalHeight) {
+        setScale(1, 'actual');
         return;
       }
-      const rect = imageNode.getBoundingClientRect();
-      const displayedWidth = rect.width / Math.max(state.scale, 0.001);
-      if (!displayedWidth) {
-        setScale(1);
-        return;
-      }
-      setScale(clamp(imageNode.naturalWidth / displayedWidth, MIN_SCALE, MAX_SCALE));
+      setImageNaturalSize();
+      state.panX = 0;
+      state.panY = 0;
+      setScale(1, 'actual');
     }
 
     function panBy(deltaX, deltaY) {
-      if (state.scale <= 1) {
-        state.panX = 0;
-        state.panY = 0;
-      } else {
-        state.panX += deltaX;
-        state.panY += deltaY;
-      }
+      state.panX += deltaX;
+      state.panY += deltaY;
       constrainPan();
       applyImageTransform();
     }
 
     function constrainPan() {
-      if (!imageNode || state.scale <= 1) {
+      if (!imageNode || !stageNode) {
         state.panX = 0;
         state.panY = 0;
         return;
       }
-      const rect = imageNode.getBoundingClientRect();
-      const maxX = Math.max(0, rect.width * (state.scale - 1) / 2);
-      const maxY = Math.max(0, rect.height * (state.scale - 1) / 2);
+      const stageSize = getUsableStageSize();
+      const imageWidth = Number(imageNode.naturalWidth || 0) * state.scale;
+      const imageHeight = Number(imageNode.naturalHeight || 0) * state.scale;
+      const maxX = Math.max(0, (imageWidth - stageSize.width) / 2);
+      const maxY = Math.max(0, (imageHeight - stageSize.height) / 2);
       state.panX = clamp(state.panX, -maxX, maxX);
       state.panY = clamp(state.panY, -maxY, maxY);
     }
 
     function applyImageTransform() {
-      if (!imageNode) {
+      if (!imageNode || !panLayerNode) {
         return;
       }
-      imageNode.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.scale})`;
+      panLayerNode.style.transform = `translate3d(${state.panX}px, ${state.panY}px, 0)`;
+      imageNode.style.transform = `scale(${state.scale})`;
     }
 
-    function resetViewState() {
+    function applyFitToScreen() {
+      if (!imageNode || !imageNode.naturalWidth || !imageNode.naturalHeight) {
+        resetViewState('fit');
+        return;
+      }
+      setImageNaturalSize();
+      const stageSize = getUsableStageSize();
+      state.scale = calculateFitScale(
+        Number(imageNode.naturalWidth),
+        Number(imageNode.naturalHeight),
+        stageSize.width,
+        stageSize.height
+      );
+      state.panX = 0;
+      state.panY = 0;
+      state.viewMode = 'fit';
+    }
+
+    function setImageNaturalSize() {
+      if (!imageNode || !imageNode.naturalWidth || !imageNode.naturalHeight) {
+        return;
+      }
+      if (imageFrameNode) {
+        imageFrameNode.style.width = `${imageNode.naturalWidth}px`;
+        imageFrameNode.style.height = `${imageNode.naturalHeight}px`;
+      }
+    }
+
+    function getUsableStageSize() {
+      if (!stageNode || typeof stageNode.getBoundingClientRect !== 'function') {
+        return { width: 1, height: 1 };
+      }
+      const rect = stageNode.getBoundingClientRect();
+      const styles = windowRef?.getComputedStyle ? windowRef.getComputedStyle(stageNode) : null;
+      const horizontalPadding = parseCssPixels(styles?.paddingLeft) + parseCssPixels(styles?.paddingRight);
+      const verticalPadding = parseCssPixels(styles?.paddingTop) + parseCssPixels(styles?.paddingBottom);
+      return {
+        width: Math.max(1, rect.width - horizontalPadding),
+        height: Math.max(1, rect.height - verticalPadding)
+      };
+    }
+
+    function resetViewState(mode = 'fit') {
       state.scale = 1;
       state.panX = 0;
       state.panY = 0;
+      state.viewMode = mode;
       state.lastPanPoint = null;
       state.pinchStartDistance = 0;
       state.pinchStartScale = 1;
@@ -428,6 +507,7 @@
           scale: state.scale,
           panX: state.panX,
           panY: state.panY,
+          viewMode: state.viewMode,
           itemCount: state.items.length
         };
       }
@@ -456,12 +536,49 @@
     return typeof value === 'string' ? value.trim() : '';
   }
 
+  function calculateFitScale(imageWidth, imageHeight, stageWidth, stageHeight) {
+    const safeImageWidth = Number(imageWidth) || 0;
+    const safeImageHeight = Number(imageHeight) || 0;
+    const safeStageWidth = Number(stageWidth) || 0;
+    const safeStageHeight = Number(stageHeight) || 0;
+    if (safeImageWidth <= 0 || safeImageHeight <= 0 || safeStageWidth <= 0 || safeStageHeight <= 0) {
+      return 1;
+    }
+    return clamp(Math.min(safeStageWidth / safeImageWidth, safeStageHeight / safeImageHeight), MIN_SCALE, MAX_SCALE);
+  }
+
+  function calculateCenteredImageBox(imageWidth, imageHeight, scale, stageWidth, stageHeight, panX = 0, panY = 0) {
+    const renderedWidth = Math.max(0, (Number(imageWidth) || 0) * (Number(scale) || 0));
+    const renderedHeight = Math.max(0, (Number(imageHeight) || 0) * (Number(scale) || 0));
+    const safeStageWidth = Math.max(0, Number(stageWidth) || 0);
+    const safeStageHeight = Math.max(0, Number(stageHeight) || 0);
+    const safePanX = Number(panX) || 0;
+    const safePanY = Number(panY) || 0;
+    const left = ((safeStageWidth - renderedWidth) / 2) + safePanX;
+    const top = ((safeStageHeight - renderedHeight) / 2) + safePanY;
+    return {
+      left,
+      top,
+      width: renderedWidth,
+      height: renderedHeight,
+      centerX: left + (renderedWidth / 2),
+      centerY: top + (renderedHeight / 2)
+    };
+  }
+
+  function parseCssPixels(value) {
+    const parsed = Number.parseFloat(String(value || '0'));
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
   function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
   }
 
   return {
     BODY_LOCK_CLASS,
+    calculateCenteredImageBox,
+    calculateFitScale,
     createCatalogImageViewer,
     normalizeViewerItem
   };
