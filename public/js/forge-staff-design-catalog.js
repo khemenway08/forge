@@ -100,10 +100,15 @@
       dialogThumbnailPath: '',
       dialogThumbnailFile: null,
       dialogThumbnailFileName: '',
+      dialogFinishedHatLinkCount: 0,
+      dialogDeleteConfirmOpen: false,
+      dialogDeleting: false,
+      dialogDeleteError: '',
       sortKey: 'custom',
       notice: '',
       noticeTone: 'muted',
-      announcement: ''
+      announcement: '',
+      pendingFocusDesignId: ''
     };
 
     let container = null;
@@ -257,6 +262,7 @@
         </section>
       `;
       restoreCatalogFocus(focusState);
+      focusPendingDesignCard();
     }
 
     function captureCatalogFocus() {
@@ -589,6 +595,7 @@
               </label>
             </div>
             <p class="staff-orders-status staff-design-dialog-status" data-catalog-dialog-status aria-live="polite"></p>
+            <div class="staff-design-dialog-danger-zone" data-catalog-design-danger-zone></div>
           </form>
         </div>
       `;
@@ -602,6 +609,25 @@
         const action = event.target.closest('[data-action]')?.dataset.action;
         if (event.target === dialogBackdrop || action === 'catalog-close-dialog') {
           closeDialog();
+          return;
+        }
+        if (action === 'catalog-request-delete-design') {
+          if (state.dialogSaving || state.dialogDeleting) {
+            return;
+          }
+          state.dialogDeleteConfirmOpen = true;
+          state.dialogDeleteError = '';
+          renderDialog();
+          return;
+        }
+        if (action === 'catalog-cancel-delete-design') {
+          state.dialogDeleteConfirmOpen = false;
+          state.dialogDeleteError = '';
+          renderDialog();
+          return;
+        }
+        if (action === 'catalog-confirm-delete-design') {
+          deleteCurrentDesign();
         }
       });
       dialogBackdrop.addEventListener('change', onDialogChange);
@@ -630,6 +656,10 @@
       state.dialogThumbnailPath = record?.thumbnail_path || '';
       state.dialogThumbnailFile = null;
       state.dialogThumbnailFileName = '';
+      state.dialogFinishedHatLinkCount = normalizeNonnegativeInteger(record?.finished_hat_link_count);
+      state.dialogDeleteConfirmOpen = false;
+      state.dialogDeleting = false;
+      state.dialogDeleteError = '';
       renderDialog();
       dialogBackdrop.hidden = false;
       dialogNode.focus();
@@ -644,6 +674,8 @@
       }
       state.dialogOpen = false;
       state.dialogSaving = false;
+      state.dialogDeleting = false;
+      state.dialogDeleteConfirmOpen = false;
       dialogBackdrop.hidden = true;
       if (lastFocusTarget instanceof HTMLElement) {
         lastFocusTarget.focus();
@@ -672,20 +704,66 @@
       formNode.setAttribute('aria-busy', state.dialogSaving ? 'true' : 'false');
       dialogBackdrop.querySelectorAll('input, select, textarea, button').forEach((node) => {
         if (node.dataset.action === 'catalog-close-dialog') {
-          node.disabled = false;
+          node.disabled = state.dialogDeleting;
           return;
         }
-        node.disabled = state.dialogSaving;
+        node.disabled = state.dialogSaving || state.dialogDeleting;
       });
 
       const saveButton = dialogBackdrop.querySelector('[data-action="catalog-save-design"]');
       if (saveButton) {
-        saveButton.textContent = state.dialogSaving ? 'Saving Design...' : 'Save Design';
+        saveButton.textContent = state.dialogSaving ? 'Saving...' : 'Save Design';
       }
 
       renderThumbnailPanel();
       renderDialogStatus();
+      renderDeletePanel();
       applyDialogFieldErrors();
+    }
+
+    function renderDeletePanel() {
+      const dangerZone = dialogBackdrop.querySelector('[data-catalog-design-danger-zone]');
+      if (!dangerZone) {
+        return;
+      }
+
+      if (state.dialogMode !== 'edit') {
+        dangerZone.innerHTML = '';
+        return;
+      }
+
+      const designName = state.dialogValues.design_name || 'this Design';
+      if (state.dialogFinishedHatLinkCount > 0) {
+        dangerZone.innerHTML = `
+          <div class="staff-design-dialog-linked-delete-message" role="status">
+            <strong>Delete unavailable</strong>
+            <p>This Design is linked to ${state.dialogFinishedHatLinkCount} Finished Hat${state.dialogFinishedHatLinkCount === 1 ? '' : 's'}. Clear those Finished Hat links before deleting it.</p>
+          </div>
+        `;
+        return;
+      }
+
+      if (state.dialogDeleteConfirmOpen) {
+        dangerZone.innerHTML = `
+          <div class="staff-design-dialog-delete-confirmation" role="alertdialog" aria-label="Confirm Design deletion">
+            <div>
+              <strong>Delete ${escapeHtml(designName)}?</strong>
+              <p>This cannot be undone. The Design record will be removed from the shared library.</p>
+              ${state.dialogDeleteError ? `<p class="staff-design-dialog-delete-error">${escapeHtml(state.dialogDeleteError)}</p>` : ''}
+            </div>
+            <div class="staff-design-dialog-delete-actions">
+              <button class="secondary-button staff-design-delete-action" type="button" data-action="catalog-confirm-delete-design"${state.dialogDeleting ? ' disabled' : ''}>${state.dialogDeleting ? 'Deleting...' : 'Delete Design'}</button>
+              <button class="ghost-button" type="button" data-action="catalog-cancel-delete-design"${state.dialogDeleting ? ' disabled' : ''}>Keep Design</button>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      dangerZone.innerHTML = `
+        <button class="ghost-button staff-design-delete-trigger" type="button" data-action="catalog-request-delete-design"${state.dialogSaving || state.dialogDeleting ? ' disabled' : ''}>Delete Design</button>
+        ${state.dialogDeleteError ? `<p class="staff-design-dialog-delete-error">${escapeHtml(state.dialogDeleteError)}</p>` : ''}
+      `;
     }
 
     function renderThumbnailPanel() {
@@ -755,6 +833,12 @@
     function onDialogKeydown(event) {
       if (event.key === 'Escape') {
         event.preventDefault();
+        if (state.dialogDeleteConfirmOpen) {
+          state.dialogDeleteConfirmOpen = false;
+          state.dialogDeleteError = '';
+          renderDialog();
+          return;
+        }
         closeDialog();
       }
     }
@@ -783,6 +867,7 @@
       };
 
       state.dialogFieldErrors = validateDesignDialogPayload(payload);
+      state.dialogValues = payload;
       state.dialogError = '';
       if (Object.keys(state.dialogFieldErrors).length > 0) {
         renderDialog();
@@ -803,14 +888,59 @@
           design = normalizeDesignRecord(uploadResult.design);
         }
 
+        const wasCreate = state.dialogMode === 'create';
         upsertDesignRecord(design);
         state.dialogSaving = false;
+        if (wasCreate) {
+          state.notice = 'Design added successfully.';
+          state.noticeTone = 'success';
+          state.pendingFocusDesignId = design.id;
+        }
         closeDialog();
         renderContent();
       } catch (error) {
         state.dialogSaving = false;
         state.dialogError = safeErrorMessage(error, 'Design could not be saved right now.');
         state.dialogFieldErrors = error?.fields && typeof error.fields === 'object' ? error.fields : {};
+        renderDialog();
+      }
+    }
+
+    async function deleteCurrentDesign() {
+      if (state.dialogDeleting || state.dialogSaving) {
+        return;
+      }
+      if (!apiClient || typeof apiClient.deleteDesign !== 'function') {
+        state.dialogDeleteError = 'Design catalog is currently unavailable.';
+        renderDialog();
+        return;
+      }
+      if (state.dialogFinishedHatLinkCount > 0) {
+        state.dialogDeleteError = 'Clear Finished Hat links before deleting this Design.';
+        renderDialog();
+        return;
+      }
+
+      state.dialogDeleting = true;
+      state.dialogDeleteError = '';
+      renderDialog();
+
+      try {
+        await apiClient.deleteDesign(state.dialogDesignId);
+        const deletedId = state.dialogDesignId;
+        state.records = state.records.filter((record) => record.id !== deletedId);
+        reorderController?.sync(state.records.map((record) => record.id));
+        state.dialogDeleting = false;
+        state.notice = 'Design deleted successfully.';
+        state.noticeTone = 'success';
+        closeDialog();
+        renderContent();
+      } catch (error) {
+        state.dialogDeleting = false;
+        state.dialogDeleteError = safeErrorMessage(error, 'Design could not be deleted right now.');
+        if (error?.code === 'design_delete_blocked') {
+          state.dialogFinishedHatLinkCount = Math.max(1, state.dialogFinishedHatLinkCount);
+        }
         renderDialog();
       }
     }
@@ -828,6 +958,25 @@
       reorderController?.sync(state.records.map((record) => record.id));
       state.loaded = true;
       state.error = '';
+    }
+
+    function focusPendingDesignCard() {
+      if (!state.pendingFocusDesignId || !container || typeof container.querySelector !== 'function') {
+        return;
+      }
+
+      const pendingId = state.pendingFocusDesignId;
+      state.pendingFocusDesignId = '';
+      const card = container.querySelector(`[data-design-id="${escapeAttribute(pendingId)}"][data-action="catalog-edit-design"]`);
+      if (!card) {
+        return;
+      }
+      if (typeof card.scrollIntoView === 'function') {
+        card.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      }
+      if (typeof card.focus === 'function') {
+        card.focus({ preventScroll: true });
+      }
     }
 
     function getReorderAvailability() {
@@ -936,6 +1085,7 @@
       made_on_hat: typeof normalized.made_on_hat === 'string' ? normalized.made_on_hat.trim() : '',
       notes: normalizeNullableString(normalized.notes),
       sort_order: normalizePositiveInteger(normalized.sort_order),
+      finished_hat_link_count: normalizeNonnegativeInteger(normalized.finished_hat_link_count),
       created_at: typeof normalized.created_at === 'string' ? normalized.created_at.trim() : '',
       updated_at: typeof normalized.updated_at === 'string' ? normalized.updated_at.trim() : ''
     };
@@ -1074,6 +1224,17 @@
     return 0;
   }
 
+  function normalizeNonnegativeInteger(value) {
+    if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
+      return value;
+    }
+    if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+      const normalized = Number.parseInt(value.trim(), 10);
+      return normalized >= 0 ? normalized : 0;
+    }
+    return 0;
+  }
+
   function resolveCatalogOrderingApi(providedApi) {
     if (providedApi && typeof providedApi.sortCatalogRecords === 'function') {
       return providedApi;
@@ -1138,6 +1299,7 @@
     createStaffDesignCatalogModule,
     filterDesignRecords,
     normalizeDesignRecord,
+    normalizeNonnegativeInteger,
     getDesignThumbnailDisplay,
     sortDesignRecords,
     getCategoryLabel,

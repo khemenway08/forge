@@ -1157,11 +1157,12 @@ $runner->run('private bootstrap normalization preserves both staff auth and tray
     assertTrue(!array_key_exists('IGNORED_KEY', $normalized));
 });
 
-$runner->run('staff endpoint bootstrap candidates preserve the hosted forge_server_test sibling layout', static function (): void {
+$runner->run('staff endpoint bootstrap candidates prefer the live hosted forge_server_test sibling layout', static function (): void {
     $candidates = forge_staff_bootstrap_candidates(null, '/home/example/domains/forge.thehilltopshop.com/public_html/api/v1/staff');
 
-    assertSame('/home/example/domains/forge.thehilltopshop.com/forge_server_test/bootstrap.php', $candidates[0]);
-    assertSame('/home/example/domains/forge.thehilltopshop.com/public_html/server/bootstrap.php', $candidates[1]);
+    assertSame('/home/example/domains/forge_server_test/bootstrap.php', $candidates[0]);
+    assertSame('/home/example/domains/forge.thehilltopshop.com/forge_server_test/bootstrap.php', $candidates[1]);
+    assertSame('/home/example/domains/forge.thehilltopshop.com/public_html/server/bootstrap.php', $candidates[2]);
 });
 
 $runner->run('stateless staff pin verification validates a correct pin without creating a php session', static function (): void {
@@ -2245,6 +2246,88 @@ $runner->run('design hat material and finished-hat repositories append sort orde
     assertSame((string) $secondFinishedHat['id'], $finishedHatRepository->listFinishedHats()[0]['id']);
 });
 
+$runner->run('design repository blocks linked deletes and deletes unlinked designs safely', static function (): void {
+    $pdo = createDesignCatalogTestPdo();
+    $repository = new \Forge\Server\PdoStaffDesignCatalogRepository($pdo);
+
+    $linkedDesign = $repository->createDesign([
+        'design_name' => 'Linked Design',
+        'category' => 'other',
+        'store_fit' => 'undecided',
+        'status' => 'review',
+        'production_method' => 'tbd',
+        'production_file_location' => '',
+        'made_on_hat' => 'unknown',
+        'notes' => ''
+    ]);
+    $unlinkedDesign = $repository->createDesign([
+        'design_name' => 'Unlinked Design',
+        'category' => 'other',
+        'store_fit' => 'undecided',
+        'status' => 'review',
+        'production_method' => 'tbd',
+        'production_file_location' => '',
+        'made_on_hat' => 'unknown',
+        'notes' => ''
+    ]);
+
+    $pdo->prepare(
+        'INSERT INTO forge_catalog_finished_hats (
+            id,
+            finished_hat_name,
+            design_id,
+            created_at,
+            updated_at
+        ) VALUES (
+            :id,
+            :finished_hat_name,
+            :design_id,
+            :created_at,
+            :updated_at
+        )'
+    )->execute([
+        ':id' => 'finished-1',
+        ':finished_hat_name' => 'Linked Finished Hat',
+        ':design_id' => $linkedDesign['id'],
+        ':created_at' => '2026-07-24 10:00:00.000000',
+        ':updated_at' => '2026-07-24 10:00:00.000000',
+    ]);
+
+    $linkedRecord = $repository->getDesign((string) $linkedDesign['id']);
+    assertSame(1, $linkedRecord['finished_hat_link_count']);
+
+    assertThrows(
+        static function () use ($repository, $linkedDesign): void {
+            $repository->deleteDesign((string) $linkedDesign['id']);
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof \Forge\Server\StaffDesignCatalogDeleteConflictException);
+            assertSame(1, $exception->getLinkedFinishedHatCount());
+        }
+    );
+
+    $deleted = $repository->deleteDesign((string) $unlinkedDesign['id']);
+    assertSame('Unlinked Design', $deleted['design']['design_name']);
+    assertSame(null, $repository->getDesign((string) $unlinkedDesign['id']));
+    assertSame(1, count($repository->listDesigns()));
+});
+
+$runner->run('design delete endpoint requires auth and returns sanitized linked-record conflicts', static function (): void {
+    $endpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/design.php');
+    $repositorySource = file_get_contents(dirname(__DIR__, 2) . '/server/lib/staff-design-catalog-repository.php');
+
+    assertTrue(is_string($endpointSource));
+    assertTrue(strpos($endpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($endpointSource, "\$method !== 'DELETE'") !== false);
+    assertTrue(strpos($endpointSource, 'deleteDesign($designId)') !== false);
+    assertTrue(strpos($endpointSource, 'design_delete_blocked') !== false);
+    assertTrue(strpos($endpointSource, 'finished_hat_link_count') !== false);
+    assertTrue(strpos($endpointSource, 'SQLSTATE') === false);
+    assertTrue(is_string($repositorySource));
+    assertTrue(strpos($repositorySource, 'FROM forge_catalog_finished_hats') !== false);
+    assertTrue(strpos($repositorySource, 'WHERE design_id = :id') !== false);
+});
+
 $runner->run('finished hat importer normalization grouping primary-photo selection and exact unique link matching are conservative', static function (): void {
     assertSame(true, \Forge\Server\isSupportedStaffCatalogFinishedHatImportFile('texas-flag-acrylic-patch-hat-black-performance-rope-main.jpg'));
     assertSame(false, \Forge\Server\isSupportedStaffCatalogFinishedHatImportFile('.DS_Store'));
@@ -2645,7 +2728,6 @@ function createFinishedHatCatalogTestPdo(): PDO
             updated_at TEXT NOT NULL
         )'
     );
-
     return $pdo;
 }
 
@@ -2666,6 +2748,15 @@ function createDesignCatalogTestPdo(): PDO
             made_on_hat TEXT NOT NULL,
             notes TEXT DEFAULT NULL,
             sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )'
+    );
+    $pdo->exec(
+        'CREATE TABLE forge_catalog_finished_hats (
+            id TEXT PRIMARY KEY,
+            finished_hat_name TEXT NOT NULL,
+            design_id TEXT DEFAULT NULL,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )'

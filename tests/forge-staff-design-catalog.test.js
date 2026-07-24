@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const catalogModule = require('../public/js/forge-staff-design-catalog.js');
+const catalogApi = require('../public/js/forge-staff-design-catalog-api.js');
 
 const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'), 'utf8');
 const catalogApiSource = fs.readFileSync(path.join(process.cwd(), 'public/js/forge-staff-design-catalog-api.js'), 'utf8');
@@ -13,7 +14,7 @@ const catalogCssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/ap
 test('catalog scripts load before app.js and only in the protected staff shell', () => {
   assert.match(
     indexSource,
-    /<script src="js\/forge-staff-api-client\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-catalog-ordering\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260723-31"><\/script>\s*<script src="js\/forge-local-orders-queue\.js\?v=20260723-31"><\/script>\s*<script src="js\/app\.js\?v=20260723-31"><\/script>/
+    /<script src="js\/forge-staff-api-client\.js\?v=20260724-32"><\/script>\s*<script src="js\/forge-staff-catalog-ordering\.js\?v=20260724-32"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260724-32"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260724-32"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260724-32"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260724-32"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260724-32"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260724-32"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260724-32"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260724-32"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260724-32"><\/script>\s*<script src="js\/forge-local-orders-queue\.js\?v=20260724-32"><\/script>\s*<script src="js\/app\.js\?v=20260724-32"><\/script>/
   );
   assert.match(indexSource, /data-screen="staff-catalog"/);
   assert.match(indexSource, /data-staff-catalog-content/);
@@ -129,6 +130,91 @@ test('catalog headers filters and card actions use the shared top-aligned consis
 test('catalog client and module do not introduce local browser persistence for catalog records', () => {
   assert.doesNotMatch(catalogApiSource, /localStorage|sessionStorage|indexedDB|createOrderStore|ForgeOrderStore/);
   assert.doesNotMatch(catalogModuleSource, /localStorage|sessionStorage|indexedDB|createOrderStore|ForgeOrderStore/);
+});
+
+test('design create dialog prevents duplicate saves and gives clear success feedback', () => {
+  assert.match(catalogModuleSource, /if \(state\.dialogSaving\) \{\s*return;\s*\}/);
+  assert.match(catalogModuleSource, /saveButton\.textContent = state\.dialogSaving \? 'Saving\.\.\.' : 'Save Design';/);
+  assert.match(catalogModuleSource, /node\.disabled = state\.dialogSaving \|\| state\.dialogDeleting;/);
+  assert.match(catalogModuleSource, /state\.dialogValues = payload;/);
+  assert.match(catalogModuleSource, /const wasCreate = state\.dialogMode === 'create';/);
+  assert.match(catalogModuleSource, /state\.notice = 'Design added successfully\.';/);
+  assert.match(catalogModuleSource, /state\.pendingFocusDesignId = design\.id;/);
+  assert.match(catalogModuleSource, /focusPendingDesignCard\(\);/);
+  assert.match(catalogModuleSource, /card\.scrollIntoView\(\{ block: 'nearest', inline: 'nearest' \}\);/);
+  assert.match(catalogModuleSource, /card\.focus\(\{ preventScroll: true \}\);/);
+});
+
+test('design delete action is edit-only names the design and protects linked records in the UI', () => {
+  assert.match(catalogModuleSource, /state\.dialogMode !== 'edit'/);
+  assert.match(catalogModuleSource, /data-action="catalog-request-delete-design"/);
+  assert.match(catalogModuleSource, />Delete Design<\/button>/);
+  assert.match(catalogModuleSource, /data-action="catalog-confirm-delete-design"/);
+  assert.match(catalogModuleSource, /Delete \$\{escapeHtml\(designName\)\}\?/);
+  assert.match(catalogModuleSource, /This cannot be undone\. The Design record will be removed from the shared library\./);
+  assert.match(catalogModuleSource, /This Design is linked to \$\{state\.dialogFinishedHatLinkCount\} Finished Hat/);
+  assert.match(catalogModuleSource, /Clear those Finished Hat links before deleting it\./);
+  assert.match(catalogModuleSource, /state\.notice = 'Design deleted successfully\.';/);
+  assert.match(catalogModuleSource, /state\.records = state\.records\.filter\(\(record\) => record\.id !== deletedId\);/);
+});
+
+test('design API client sends authenticated delete requests and normalizes blocked deletes safely', async () => {
+  const calls = [];
+  const client = catalogApi.createForgeStaffDesignCatalogApiClient({
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return new Response(JSON.stringify({
+        application: 'Forge',
+        api_version: '1',
+        status: 'ok',
+        data: {
+          design: {
+            id: '123e4567-e89b-42d3-a456-426614174101',
+            design_name: 'Test Design',
+            finished_hat_link_count: 0
+          }
+        }
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+
+  const result = await client.deleteDesign('123e4567-e89b-42d3-a456-426614174101');
+
+  assert.equal(result.design.design_name, 'Test Design');
+  assert.equal(result.design.finished_hat_link_count, 0);
+  assert.equal(calls[0].url, '/api/v1/staff/catalog/design.php?id=123e4567-e89b-42d3-a456-426614174101');
+  assert.equal(calls[0].options.method, 'DELETE');
+  assert.equal(calls[0].options.credentials, 'same-origin');
+  assert.equal(calls[0].options.cache, 'no-store');
+
+  const blockedClient = catalogApi.createForgeStaffDesignCatalogApiClient({
+    fetchImpl: async () => new Response(JSON.stringify({
+      application: 'Forge',
+      api_version: '1',
+      status: 'error',
+      error: {
+        code: 'design_delete_blocked',
+        message: 'Clear Finished Hat links before deleting this Design.',
+        finished_hat_link_count: 2
+      }
+    }), {
+      status: 409,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  });
+
+  await assert.rejects(
+    blockedClient.deleteDesign('123e4567-e89b-42d3-a456-426614174101'),
+    (error) => {
+      assert.equal(error.code, 'design_delete_blocked');
+      assert.equal(error.message, 'Clear Finished Hat links before deleting this Design.');
+      assert.equal(error.status, 409);
+      return true;
+    }
+  );
 });
 
 test('initial unauthenticated catalog render does not request protected design records', async () => {

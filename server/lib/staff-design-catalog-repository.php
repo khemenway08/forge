@@ -33,6 +33,22 @@ final class StaffDesignCatalogValidationException extends \RuntimeException
     }
 }
 
+final class StaffDesignCatalogDeleteConflictException extends \RuntimeException
+{
+    private int $linkedFinishedHatCount;
+
+    public function __construct(int $linkedFinishedHatCount)
+    {
+        parent::__construct('Clear Finished Hat links before deleting this Design.');
+        $this->linkedFinishedHatCount = max(0, $linkedFinishedHatCount);
+    }
+
+    public function getLinkedFinishedHatCount(): int
+    {
+        return $this->linkedFinishedHatCount;
+    }
+}
+
 final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportRepositoryInterface
 {
     public const CATEGORY_OPTIONS = [
@@ -104,6 +120,11 @@ final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportR
                     made_on_hat,
                     notes,
                     sort_order,
+                    (
+                        SELECT COUNT(*)
+                        FROM forge_catalog_finished_hats
+                        WHERE forge_catalog_finished_hats.design_id = forge_catalog_designs.id
+                    ) AS finished_hat_link_count,
                     created_at,
                     updated_at
                  FROM forge_catalog_designs
@@ -155,6 +176,11 @@ final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportR
                     made_on_hat,
                     notes,
                     sort_order,
+                    (
+                        SELECT COUNT(*)
+                        FROM forge_catalog_finished_hats
+                        WHERE forge_catalog_finished_hats.design_id = forge_catalog_designs.id
+                    ) AS finished_hat_link_count,
                     created_at,
                     updated_at
                  FROM forge_catalog_designs
@@ -381,6 +407,89 @@ final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportR
     }
 
     /**
+     * @return array{design: array<string, mixed>, thumbnail_path: ?string, thumbnail_was_exclusive: bool}
+     */
+    public function deleteDesign(string $id): array
+    {
+        $normalizedId = normalizeStaffCatalogDesignId($id);
+        if ($normalizedId === null) {
+            throw new StaffDesignCatalogNotFoundException('That design could not be found.');
+        }
+
+        $existing = $this->getDesign($normalizedId);
+        if ($existing === null) {
+            throw new StaffDesignCatalogNotFoundException('That design could not be found.');
+        }
+
+        $linkedFinishedHatCount = $this->countFinishedHatLinks($normalizedId);
+        if ($linkedFinishedHatCount > 0) {
+            throw new StaffDesignCatalogDeleteConflictException($linkedFinishedHatCount);
+        }
+
+        $thumbnailPath = is_string($existing['thumbnail_path'] ?? null) ? $existing['thumbnail_path'] : null;
+        $thumbnailWasExclusive = $thumbnailPath !== null && $this->countDesignsUsingThumbnail($thumbnailPath) === 1;
+
+        try {
+            $statement = $this->pdo->prepare('DELETE FROM forge_catalog_designs WHERE id = :id');
+            $statement->execute([
+                ':id' => $normalizedId,
+            ]);
+        } catch (PDOException $exception) {
+            throw new StorageUnavailableException('Design catalog storage is currently unavailable.', 0, $exception);
+        }
+
+        return [
+            'design' => $existing,
+            'thumbnail_path' => $thumbnailPath,
+            'thumbnail_was_exclusive' => $thumbnailWasExclusive,
+        ];
+    }
+
+    public function countFinishedHatLinks(string $id): int
+    {
+        $normalizedId = normalizeStaffCatalogDesignId($id);
+        if ($normalizedId === null) {
+            return 0;
+        }
+
+        try {
+            $statement = $this->pdo->prepare(
+                'SELECT COUNT(*)
+                 FROM forge_catalog_finished_hats
+                 WHERE design_id = :id'
+            );
+            $statement->execute([
+                ':id' => $normalizedId,
+            ]);
+            return max(0, (int) $statement->fetchColumn());
+        } catch (PDOException $exception) {
+            throw new StorageUnavailableException('Design catalog storage is currently unavailable.', 0, $exception);
+        }
+    }
+
+    public function countDesignsUsingThumbnail(string $thumbnailPath): int
+    {
+        $normalizedThumbnailPath = normalizeStaffCatalogNullableString($thumbnailPath);
+        if ($normalizedThumbnailPath === null) {
+            return 0;
+        }
+
+        try {
+            $statement = $this->pdo->prepare(
+                'SELECT COUNT(*)
+                 FROM forge_catalog_designs
+                 WHERE thumbnail_path = :thumbnail_path'
+            );
+            $statement->execute([
+                ':thumbnail_path' => $normalizedThumbnailPath,
+            ]);
+            return max(0, (int) $statement->fetchColumn());
+        } catch (PDOException $exception) {
+            throw new StorageUnavailableException('Design catalog storage is currently unavailable.', 0, $exception);
+        }
+    }
+
+    /**
      * @return array{design: array<string, mixed>, previous_thumbnail_path: ?string}
      */
     public function updateThumbnailPath(string $id, string $thumbnailPath): array
@@ -580,6 +689,7 @@ function normalizeStaffCatalogDesignRecord($record): array
         'made_on_hat' => normalizeStaffCatalogNullableString($normalized['made_on_hat'] ?? '') ?? '',
         'notes' => normalizeStaffCatalogNullableString($normalized['notes'] ?? null),
         'sort_order' => max(0, (int) ($normalized['sort_order'] ?? 0)),
+        'finished_hat_link_count' => max(0, (int) ($normalized['finished_hat_link_count'] ?? 0)),
         'created_at' => normalizeStaffCatalogDateTime($normalized['created_at'] ?? ''),
         'updated_at' => normalizeStaffCatalogDateTime($normalized['updated_at'] ?? ''),
     ];

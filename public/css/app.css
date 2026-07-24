@@ -3380,6 +3380,60 @@ h1 {
   margin: 0;
 }
 
+.staff-design-dialog-danger-zone {
+  display: grid;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.staff-design-delete-trigger {
+  justify-self: start;
+  border-color: rgba(217,106,94,.38);
+  color: #f6b5ad;
+}
+
+.staff-design-dialog-linked-delete-message,
+.staff-design-dialog-delete-confirmation {
+  padding: 16px;
+  border: 1px solid rgba(217,106,94,.3);
+  border-radius: 18px;
+  background: rgba(217,106,94,.12);
+  color: var(--staff-text);
+}
+
+.staff-design-dialog-linked-delete-message p,
+.staff-design-dialog-delete-confirmation p {
+  margin: 6px 0 0;
+  color: var(--staff-muted-strong);
+  line-height: 1.45;
+}
+
+.staff-design-dialog-delete-confirmation {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.staff-design-dialog-delete-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.staff-design-delete-action {
+  border-color: rgba(217,106,94,.58);
+  background: rgba(217,106,94,.16);
+  color: #ffd8d3;
+}
+
+.staff-design-dialog-delete-error {
+  color: #f6b5ad;
+  font-weight: 700;
+}
+
 .staff-catalog-placeholder {
   min-height: 100%;
   padding: 22px;

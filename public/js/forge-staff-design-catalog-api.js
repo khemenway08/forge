@@ -17,6 +17,7 @@
     authentication_required: 'Staff authentication is required.',
     unsupported_media_type: 'The design catalog rejected the request format.',
     design_not_found: 'That design could not be found.',
+    design_delete_blocked: 'Clear Finished Hat links before deleting this Design.',
     catalog_order_conflict: 'The design order changed elsewhere. Reload and try again.',
     storage_unavailable: 'Design catalog storage is currently unavailable.',
     server_error: 'Design catalog is currently unavailable.',
@@ -119,6 +120,44 @@
 
     async function updateDesign(designId, input) {
       return saveDesign('update', designId, input);
+    }
+
+    async function deleteDesign(designId) {
+      const normalizedId = asTrimmedString(designId);
+      if (!normalizedId) {
+        throw new ForgeStaffDesignCatalogApiError('invalid_request', 'A valid design is required.');
+      }
+
+      try {
+        const response = await performJsonRequest(
+          fetchImpl,
+          `${baseUrl}/design.php?id=${encodeURIComponent(normalizedId)}`,
+          timeoutMs,
+          {
+            method: 'DELETE',
+            headers: {
+              Accept: 'application/json'
+            },
+            credentials: 'same-origin',
+            cache: 'no-store'
+          }
+        );
+        const payload = await parseJsonResponse(response);
+        if (response.status === 401) {
+          return {
+            ok: false,
+            authenticated: false,
+            unauthenticated: true,
+            design: null
+          };
+        }
+        if (!response.ok) {
+          throw buildServerError(response.status, payload);
+        }
+        return normalizeSingleDesignPayload(payload);
+      } catch (error) {
+        throw normalizeClientError(error);
+      }
     }
 
     async function reorderDesigns(orderedIds) {
@@ -248,6 +287,7 @@
       getDesign,
       createDesign,
       updateDesign,
+      deleteDesign,
       reorderDesigns,
       uploadThumbnail
     };
@@ -287,6 +327,7 @@
       made_on_hat: asTrimmedString(normalized.made_on_hat),
       notes: asNullableTrimmedString(normalized.notes),
       sort_order: asPositiveInteger(normalized.sort_order),
+      finished_hat_link_count: asNonnegativeInteger(normalized.finished_hat_link_count),
       created_at: asTrimmedString(normalized.created_at),
       updated_at: asTrimmedString(normalized.updated_at)
     };
@@ -412,6 +453,17 @@
     if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
       const normalized = Number.parseInt(value.trim(), 10);
       return normalized > 0 ? normalized : 0;
+    }
+    return 0;
+  }
+
+  function asNonnegativeInteger(value) {
+    if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
+      return value;
+    }
+    if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+      const normalized = Number.parseInt(value.trim(), 10);
+      return normalized >= 0 ? normalized : 0;
     }
     return 0;
   }
