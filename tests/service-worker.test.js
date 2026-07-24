@@ -4,8 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const BUILD_VERSION = '20260724-32';
-const CACHE_NAME = 'forge-starter-v32';
+const BUILD_VERSION = '20260724-33';
+const CACHE_NAME = 'forge-starter-v33';
 
 function normalizeRequestUrl(input) {
   if (typeof input === 'string') {
@@ -208,6 +208,7 @@ test('service worker install fetches current precache assets with cache reload a
   assert.ok(cacheKeys.includes('unrelated-cache'));
   assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-design-catalog-api.js?v=${BUILD_VERSION}`)));
   assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-catalog-ordering.js?v=${BUILD_VERSION}`)));
+  assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-catalog-image-viewer.js?v=${BUILD_VERSION}`)));
   assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-design-catalog.js?v=${BUILD_VERSION}`)));
   assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-hat-catalog-api.js?v=${BUILD_VERSION}`)));
   assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-hat-catalog.js?v=${BUILD_VERSION}`)));
@@ -293,7 +294,7 @@ test('index.html versions every Forge JavaScript bootstrap URL with the same bui
   const scriptMatches = [...html.matchAll(/<script\s+src="([^"]+)"><\/script>/g)];
   const scriptSources = scriptMatches.map((match) => match[1]);
 
-  assert.equal(scriptSources.length, 20);
+  assert.equal(scriptSources.length, 21);
   assert.ok(scriptSources.every((src) => src.includes(`?v=${BUILD_VERSION}`)));
   assert.deepEqual(scriptSources, [
     `js/forge-product-catalog.js?v=${BUILD_VERSION}`,
@@ -305,6 +306,7 @@ test('index.html versions every Forge JavaScript bootstrap URL with the same bui
     `js/forge-order-submission.js?v=${BUILD_VERSION}`,
     `js/forge-staff-api-client.js?v=${BUILD_VERSION}`,
     `js/forge-staff-catalog-ordering.js?v=${BUILD_VERSION}`,
+    `js/forge-catalog-image-viewer.js?v=${BUILD_VERSION}`,
     `js/forge-staff-design-catalog-api.js?v=${BUILD_VERSION}`,
     `js/forge-staff-design-catalog.js?v=${BUILD_VERSION}`,
     `js/forge-staff-hat-catalog-api.js?v=${BUILD_VERSION}`,

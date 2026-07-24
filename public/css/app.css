@@ -2628,6 +2628,35 @@ h1 {
   display: block;
 }
 
+.staff-catalog-image-trigger {
+  cursor: zoom-in;
+  position: relative;
+}
+
+.staff-catalog-image-trigger::after {
+  content: "View";
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  border-radius: 999px;
+  background: rgba(8, 12, 18, .78);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  padding: 6px 10px;
+  text-transform: uppercase;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity .16s ease, transform .16s ease;
+}
+
+.staff-catalog-image-trigger:hover::after,
+.staff-catalog-image-trigger:focus-within::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .staff-material-card-thumb {
   background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.03));
 }
@@ -3154,6 +3183,151 @@ h1 {
   margin: 0;
   color: var(--staff-text);
   font-size: 15px;
+}
+
+body.forge-catalog-image-viewer-open {
+  overflow: hidden;
+}
+
+.forge-catalog-image-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(2, 5, 10, .92);
+  color: #f7f4ec;
+  display: grid;
+  place-items: stretch;
+  padding: clamp(12px, 2vw, 24px);
+}
+
+.forge-catalog-image-viewer[hidden] {
+  display: none;
+}
+
+.forge-catalog-image-viewer__dialog {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  outline: none;
+}
+
+.forge-catalog-image-viewer__chrome {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 22px;
+  background: rgba(15, 20, 28, .82);
+  box-shadow: 0 20px 60px rgba(0,0,0,.35);
+  padding: 14px;
+}
+
+.forge-catalog-image-viewer__heading {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.forge-catalog-image-viewer__eyebrow {
+  margin: 0;
+  color: rgba(247,244,236,.68);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+.forge-catalog-image-viewer__heading h2 {
+  margin: 0;
+  color: #fff;
+  font-size: clamp(20px, 3vw, 34px);
+  line-height: 1.05;
+}
+
+.forge-catalog-image-viewer__meta,
+.forge-catalog-image-viewer__status {
+  margin: 0;
+  color: rgba(247,244,236,.78);
+  font-size: 14px;
+}
+
+.forge-catalog-image-viewer__controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.forge-catalog-image-viewer__controls .primary-button,
+.forge-catalog-image-viewer__controls .secondary-button {
+  min-height: 40px;
+  width: auto;
+  white-space: nowrap;
+}
+
+.forge-catalog-image-viewer__stage {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 22% 18%, rgba(255,255,255,.11), transparent 28%),
+    radial-gradient(circle at 82% 82%, rgba(47,89,56,.18), transparent 30%),
+    rgba(0,0,0,.34);
+  cursor: grab;
+  touch-action: none;
+}
+
+.forge-catalog-image-viewer__stage:active {
+  cursor: grabbing;
+}
+
+.forge-catalog-image-viewer__image {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  display: block;
+  object-fit: contain;
+  transform-origin: center;
+  will-change: transform;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.forge-catalog-image-viewer__error {
+  margin: 0;
+  color: #fff;
+  font-weight: 800;
+}
+
+.forge-catalog-image-viewer__status {
+  justify-self: center;
+}
+
+@media (max-width: 760px) {
+  .forge-catalog-image-viewer {
+    padding: 10px;
+  }
+
+  .forge-catalog-image-viewer__chrome {
+    display: grid;
+  }
+
+  .forge-catalog-image-viewer__controls {
+    justify-content: stretch;
+  }
+
+  .forge-catalog-image-viewer__controls .primary-button,
+  .forge-catalog-image-viewer__controls .secondary-button {
+    flex: 1 1 120px;
+  }
 }
 
 .staff-design-status-badge {

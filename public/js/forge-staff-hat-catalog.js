@@ -38,6 +38,7 @@
     const documentRef = options.document || document;
     const windowLike = options.window || window;
     const orderingApi = resolveCatalogOrderingApi(options.orderingApi);
+    const imageViewer = resolveCatalogImageViewer(options.imageViewer, documentRef, windowLike);
     const canLoadProtectedRecords = typeof options.canLoadProtectedRecords === 'function'
       ? options.canLoadProtectedRecords
       : () => true;
@@ -340,7 +341,10 @@
             data-hat-id="${escapeAttribute(record.id)}"
             aria-label="Edit ${escapeAttribute(record.hat_name)}"
           >
-            <div class="staff-design-card-thumb">
+            <div
+              class="staff-design-card-thumb ${photo.type === 'image' ? 'staff-catalog-image-trigger' : ''}"
+              ${photo.type === 'image' ? `data-action="catalog-open-image-viewer" data-hat-id="${escapeAttribute(record.id)}" title="Open ${escapeAttribute(record.hat_name)} image viewer"` : ''}
+            >
               ${photo.html}
             </div>
             <div class="staff-design-card-body">
@@ -388,6 +392,13 @@
 
       if (reorderController?.shouldSuppressActivation()) {
         event.preventDefault();
+        return;
+      }
+
+      if (action === 'catalog-open-image-viewer') {
+        event.preventDefault();
+        event.stopPropagation();
+        openImageViewer(event.target.closest('[data-hat-id]')?.dataset.hatId || '', event.target.closest('[data-action]'));
         return;
       }
 
@@ -835,6 +846,36 @@
       }
     }
 
+    function openImageViewer(hatId, opener) {
+      const record = state.records.find((item) => item.id === hatId) || null;
+      if (!record || !record.photo_path || !imageViewer || typeof imageViewer.open !== 'function') {
+        return;
+      }
+      imageViewer.open({
+        items: getVisibleImageViewerItems(),
+        selectedId: hatId,
+        opener
+      });
+    }
+
+    function getVisibleImageViewerItems() {
+      return sortHatRecords(filterHatRecords(state.records, state.filters), state.sortKey)
+        .filter((record) => record.photo_path)
+        .map((record) => ({
+          id: record.id,
+          typeLabel: 'Hat',
+          name: record.hat_name,
+          metadata: [
+            record.manufacturer,
+            record.model,
+            record.color,
+            getHatStatusLabel(record.status)
+          ].filter(Boolean).join(' | '),
+          src: record.photo_path,
+          alt: `${record.hat_name || 'Hat'} photo`
+        }));
+    }
+
     function setFormValue(fieldName, value) {
       const field = formNode?.querySelector(`[name="${fieldName}"]`);
       if (!field) {
@@ -1132,6 +1173,17 @@
         return { enabled: false, reason: '' };
       }
     };
+  }
+
+  function resolveCatalogImageViewer(explicitViewer, documentRef, windowLike) {
+    if (explicitViewer && typeof explicitViewer.open === 'function') {
+      return explicitViewer;
+    }
+    const viewerApi = windowLike?.ForgeCatalogImageViewer || globalThis?.ForgeCatalogImageViewer;
+    if (viewerApi && typeof viewerApi.createCatalogImageViewer === 'function') {
+      return viewerApi.createCatalogImageViewer({ document: documentRef, window: windowLike });
+    }
+    return null;
   }
 
   return {

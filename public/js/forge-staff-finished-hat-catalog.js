@@ -55,6 +55,7 @@
     const documentRef = options.document || document;
     const windowLike = options.window || window;
     const orderingApi = resolveCatalogOrderingApi(options.orderingApi);
+    const imageViewer = resolveCatalogImageViewer(options.imageViewer, documentRef, windowLike);
     const canLoadProtectedRecords = typeof options.canLoadProtectedRecords === 'function'
       ? options.canLoadProtectedRecords
       : () => true;
@@ -439,7 +440,10 @@
             data-finished-hat-id="${escapeAttribute(record.id)}"
             aria-label="${escapeAttribute(`Open ${record.finished_hat_name || 'finished hat'}`)}"
           >
-            <div class="staff-design-card-thumb staff-finished-hat-card-thumb">
+            <div
+              class="staff-design-card-thumb staff-finished-hat-card-thumb ${record.photo_path ? 'staff-catalog-image-trigger' : ''}"
+              ${record.photo_path ? `data-action="catalog-open-image-viewer" data-finished-hat-id="${escapeAttribute(record.id)}" title="Open ${escapeAttribute(record.finished_hat_name)} image viewer"` : ''}
+            >
               ${photo.html}
             </div>
             <div class="staff-design-card-body">
@@ -483,6 +487,12 @@
       }
       if (reorderController?.shouldSuppressActivation()) {
         event.preventDefault();
+        return;
+      }
+      if (action === 'catalog-open-image-viewer') {
+        event.preventDefault();
+        event.stopPropagation();
+        openImageViewer(event.target.closest('[data-finished-hat-id]')?.dataset.finishedHatId || '', event.target.closest('[data-action]'));
         return;
       }
       if (action === 'catalog-retry-finished-hat-load') {
@@ -1281,6 +1291,35 @@
       }
     }
 
+    function openImageViewer(finishedHatId, opener) {
+      const record = state.records.find((item) => item.id === finishedHatId) || null;
+      if (!record || !record.photo_path || !imageViewer || typeof imageViewer.open !== 'function') {
+        return;
+      }
+      imageViewer.open({
+        items: getVisibleImageViewerItems(),
+        selectedId: finishedHatId,
+        opener
+      });
+    }
+
+    function getVisibleImageViewerItems() {
+      return sortFinishedHatRecords(filterFinishedHatRecords(state.records, state.filters), state.sortKey)
+        .filter((record) => record.photo_path)
+        .map((record) => ({
+          id: record.id,
+          typeLabel: 'Finished Hat',
+          name: record.finished_hat_name,
+          metadata: [
+            getFinishedHatCompactSummary(record),
+            getPlacementStatusLabel(record.placement_status),
+            getFinishedHatStatusLabel(record.status)
+          ].filter(Boolean).join(' | '),
+          src: record.photo_path,
+          alt: `${record.finished_hat_name || 'Finished hat'} photo`
+        }));
+    }
+
     function switchDialogToEdit() {
       if (!state.dialogRecord) {
         return;
@@ -2020,6 +2059,17 @@
         return { enabled: false, reason: '' };
       }
     };
+  }
+
+  function resolveCatalogImageViewer(explicitViewer, documentRef, windowLike) {
+    if (explicitViewer && typeof explicitViewer.open === 'function') {
+      return explicitViewer;
+    }
+    const viewerApi = windowLike?.ForgeCatalogImageViewer || globalThis?.ForgeCatalogImageViewer;
+    if (viewerApi && typeof viewerApi.createCatalogImageViewer === 'function') {
+      return viewerApi.createCatalogImageViewer({ document: documentRef, window: windowLike });
+    }
+    return null;
   }
 
   return {

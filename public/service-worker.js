@@ -1,5 +1,5 @@
-const BUILD_VERSION = '20260724-32';
-const CACHE_NAME = 'forge-starter-v32';
+const BUILD_VERSION = '20260724-33';
+const CACHE_NAME = 'forge-starter-v33';
 const FORGE_CACHE_PREFIX = 'forge-starter-v';
 const PRECACHE_ASSETS = [
   './',
@@ -14,6 +14,7 @@ const PRECACHE_ASSETS = [
   `./js/forge-order-submission.js?v=${BUILD_VERSION}`,
   `./js/forge-staff-api-client.js?v=${BUILD_VERSION}`,
   `./js/forge-staff-catalog-ordering.js?v=${BUILD_VERSION}`,
+  `./js/forge-catalog-image-viewer.js?v=${BUILD_VERSION}`,
   `./js/forge-staff-design-catalog-api.js?v=${BUILD_VERSION}`,
   `./js/forge-staff-design-catalog.js?v=${BUILD_VERSION}`,
   `./js/forge-staff-hat-catalog-api.js?v=${BUILD_VERSION}`,

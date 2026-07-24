@@ -74,6 +74,7 @@
     const documentRef = options.document || document;
     const windowLike = options.window || window;
     const orderingApi = resolveCatalogOrderingApi(options.orderingApi);
+    const imageViewer = resolveCatalogImageViewer(options.imageViewer, documentRef, windowLike);
     const canLoadProtectedRecords = typeof options.canLoadProtectedRecords === 'function'
       ? options.canLoadProtectedRecords
       : () => true;
@@ -381,7 +382,10 @@
             data-design-id="${escapeAttribute(record.id)}"
             aria-label="Edit ${escapeAttribute(record.design_name)}"
           >
-            <div class="staff-design-card-thumb">
+            <div
+              class="staff-design-card-thumb ${thumbnail.type === 'image' ? 'staff-catalog-image-trigger' : ''}"
+              ${thumbnail.type === 'image' ? `data-action="catalog-open-image-viewer" data-design-id="${escapeAttribute(record.id)}" title="Open ${escapeAttribute(record.design_name)} image viewer"` : ''}
+            >
               ${thumbnail.html}
             </div>
             <div class="staff-design-card-body">
@@ -432,6 +436,13 @@
 
       if (reorderController?.shouldSuppressActivation()) {
         event.preventDefault();
+        return;
+      }
+
+      if (action === 'catalog-open-image-viewer') {
+        event.preventDefault();
+        event.stopPropagation();
+        openImageViewer(event.target.closest('[data-design-id]')?.dataset.designId || '', event.target.closest('[data-action]'));
         return;
       }
 
@@ -1024,6 +1035,35 @@
       }
     }
 
+    function openImageViewer(designId, opener) {
+      const record = state.records.find((item) => item.id === designId) || null;
+      if (!record || !record.thumbnail_path || !imageViewer || typeof imageViewer.open !== 'function') {
+        return;
+      }
+      imageViewer.open({
+        items: getVisibleImageViewerItems(),
+        selectedId: designId,
+        opener
+      });
+    }
+
+    function getVisibleImageViewerItems() {
+      return sortDesignRecords(filterDesignRecords(state.records, state.filters), state.sortKey)
+        .filter((record) => record.thumbnail_path)
+        .map((record) => ({
+          id: record.id,
+          typeLabel: 'Design',
+          name: record.design_name,
+          metadata: [
+            getCategoryLabel(record.category),
+            getProductionMethodLabel(record.production_method),
+            getStatusLabel(record.status)
+          ].filter(Boolean).join(' | '),
+          src: record.thumbnail_path,
+          alt: `${record.design_name || 'Design'} artwork`
+        }));
+    }
+
     function setFormValue(fieldName, value) {
       const field = formNode?.querySelector(`[name="${fieldName}"]`);
       if (!field) {
@@ -1285,6 +1325,17 @@
         return { enabled: false, reason: '' };
       }
     };
+  }
+
+  function resolveCatalogImageViewer(explicitViewer, documentRef, windowLike) {
+    if (explicitViewer && typeof explicitViewer.open === 'function') {
+      return explicitViewer;
+    }
+    const viewerApi = windowLike?.ForgeCatalogImageViewer || globalThis?.ForgeCatalogImageViewer;
+    if (viewerApi && typeof viewerApi.createCatalogImageViewer === 'function') {
+      return viewerApi.createCatalogImageViewer({ document: documentRef, window: windowLike });
+    }
+    return null;
   }
 
   return {
