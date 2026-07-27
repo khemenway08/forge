@@ -14,6 +14,10 @@
   const LOGOUT_ENDPOINT = 'logout.php';
   const VERIFY_PIN_ENDPOINT = 'verify-pin.php';
   const ORDERS_ENDPOINT = 'orders.php';
+  const EVENTS_ENDPOINT = 'events.php';
+  const ACTIVE_EVENT_ENDPOINT = 'active-event.php';
+  const START_EVENT_ENDPOINT = 'start-event.php';
+  const END_EVENT_ENDPOINT = 'end-event.php';
   const TRAYS_ENDPOINT = 'trays.php';
   const ASSIGN_TRAY_ENDPOINT = 'assign-tray.php';
   const COMPLETE_ITEM_ENDPOINT = 'complete-item.php';
@@ -27,6 +31,8 @@
     network_error: 'The Forge staff server could not be reached.',
     unavailable: 'The Forge staff server is currently unavailable.',
     storage_unavailable: 'Staff order retrieval is currently unavailable.',
+    event_not_found: 'That event could not be found.',
+    event_conflict: 'That event could not be updated right now.',
     no_trays_configured: 'No production trays are configured.',
     order_not_found: 'That order could not be found.',
     tray_not_found: 'That production tray could not be found.',
@@ -225,6 +231,78 @@
       }
     }
 
+    async function listEvents() {
+      try {
+        const response = await performJsonRequest(fetchImpl, `${baseUrl}/${EVENTS_ENDPOINT}`, timeoutMs, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json'
+          },
+          credentials: 'same-origin',
+          cache: 'no-store'
+        });
+        const payload = await parseJsonResponse(response);
+        if (response.status === 401) {
+          return {
+            ok: false,
+            authenticated: false,
+            unauthenticated: true,
+            events: []
+          };
+        }
+        if (!response.ok) {
+          throw buildServerError(response.status, payload);
+        }
+        return normalizeEventsPayload(payload);
+      } catch (error) {
+        throw normalizeClientError(error);
+      }
+    }
+
+    async function createEvent(eventInput) {
+      return submitEventMutation(`${baseUrl}/${EVENTS_ENDPOINT}`, eventInput || {});
+    }
+
+    async function getActiveEvent() {
+      try {
+        const response = await performJsonRequest(fetchImpl, `${baseUrl}/${ACTIVE_EVENT_ENDPOINT}`, timeoutMs, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json'
+          },
+          credentials: 'same-origin',
+          cache: 'no-store'
+        });
+        const payload = await parseJsonResponse(response);
+        if (response.status === 401) {
+          return {
+            ok: false,
+            authenticated: false,
+            unauthenticated: true,
+            event: null
+          };
+        }
+        if (!response.ok) {
+          throw buildServerError(response.status, payload);
+        }
+        return normalizeActiveEventPayload(payload);
+      } catch (error) {
+        throw normalizeClientError(error);
+      }
+    }
+
+    async function startEvent(eventId) {
+      return submitEventMutation(`${baseUrl}/${START_EVENT_ENDPOINT}`, {
+        event_id: asTrimmedString(eventId)
+      });
+    }
+
+    async function endEvent(eventId) {
+      return submitEventMutation(`${baseUrl}/${END_EVENT_ENDPOINT}`, {
+        event_id: asTrimmedString(eventId)
+      });
+    }
+
     async function listTrays() {
       try {
         const response = await performJsonRequest(fetchImpl, `${baseUrl}/${TRAYS_ENDPOINT}`, timeoutMs, {
@@ -352,11 +430,53 @@
       }
     }
 
+    async function submitEventMutation(url, payload) {
+      let requestBody = '';
+      try {
+        requestBody = JSON.stringify(payload);
+      } catch (error) {
+        throw new ForgeStaffApiError('invalid_request', 'Staff event management could not be prepared.', { cause: error });
+      }
+
+      try {
+        const response = await performJsonRequest(fetchImpl, url, timeoutMs, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json'
+          },
+          credentials: 'same-origin',
+          cache: 'no-store',
+          body: requestBody
+        });
+        const responsePayload = await parseJsonResponse(response);
+        if (response.status === 401) {
+          return {
+            ok: false,
+            authenticated: false,
+            unauthenticated: true,
+            event: null
+          };
+        }
+        if (!response.ok) {
+          throw buildServerError(response.status, responsePayload);
+        }
+        return normalizeSingleEventPayload(responsePayload);
+      } catch (error) {
+        throw normalizeClientError(error);
+      }
+    }
+
     return {
       checkSession,
       login,
       logout,
       verifyPin,
+      listEvents,
+      createEvent,
+      getActiveEvent,
+      startEvent,
+      endEvent,
       listOrders,
       listTrays,
       assignTray,
@@ -556,6 +676,75 @@
       alreadyApplied: Boolean(data.already_applied),
       order: data.order && typeof data.order === 'object' ? data.order : null,
       item: data.item && typeof data.item === 'object' ? data.item : null
+    };
+  }
+
+  function normalizeEventsPayload(payload) {
+    const application = asTrimmedString(payload && payload.application);
+    const apiVersion = asTrimmedString(payload && payload.api_version);
+    const status = asTrimmedString(payload && payload.status);
+    const data = payload && typeof payload === 'object' ? payload.data : null;
+    const events = data && typeof data === 'object' ? data.events : null;
+
+    if (application !== 'Forge' || apiVersion !== '1' || status !== 'ok' || !Array.isArray(events)) {
+      throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+    }
+
+    return {
+      ok: true,
+      authenticated: true,
+      events: events.map((event) => normalizeEventRecord(event))
+    };
+  }
+
+  function normalizeActiveEventPayload(payload) {
+    const application = asTrimmedString(payload && payload.application);
+    const apiVersion = asTrimmedString(payload && payload.api_version);
+    const status = asTrimmedString(payload && payload.status);
+    const data = payload && typeof payload === 'object' ? payload.data : null;
+
+    if (application !== 'Forge' || apiVersion !== '1' || status !== 'ok' || !data || typeof data !== 'object') {
+      throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+    }
+
+    return {
+      ok: true,
+      authenticated: true,
+      event: data.event && typeof data.event === 'object' ? normalizeEventRecord(data.event) : null
+    };
+  }
+
+  function normalizeSingleEventPayload(payload) {
+    const application = asTrimmedString(payload && payload.application);
+    const apiVersion = asTrimmedString(payload && payload.api_version);
+    const status = asTrimmedString(payload && payload.status);
+    const data = payload && typeof payload === 'object' ? payload.data : null;
+
+    if (application !== 'Forge' || apiVersion !== '1' || status !== 'ok' || !data || typeof data !== 'object' || !data.event || typeof data.event !== 'object') {
+      throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+    }
+
+    return {
+      ok: true,
+      authenticated: true,
+      event: normalizeEventRecord(data.event)
+    };
+  }
+
+  function normalizeEventRecord(record) {
+    return {
+      event_id: asTrimmedString(record && record.event_id),
+      public_order_token: asTrimmedString(record && record.public_order_token),
+      event_name: asTrimmedString(record && record.event_name),
+      event_type: asTrimmedString(record && record.event_type),
+      start_date: asTrimmedString(record && record.start_date),
+      end_date: asTrimmedString(record && record.end_date),
+      event_location: normalizeNullableString(record && record.event_location),
+      event_status: asTrimmedString(record && record.event_status),
+      started_at: normalizeNullableString(record && record.started_at),
+      ended_at: normalizeNullableString(record && record.ended_at),
+      created_at: normalizeNullableString(record && record.created_at),
+      updated_at: normalizeNullableString(record && record.updated_at)
     };
   }
 

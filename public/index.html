@@ -41,10 +41,11 @@
         <div class="hero">
           <div class="hero-card">
             <img class="logo" src="assets/brand/hilltop-logo.png" alt="The Hilltop Shop">
-            <p class="eyebrow">Custom Order Experience</p>
-            <h1>Let’s create something personal.</h1>
-            <p class="lead">Build your custom ornament or sign through a simple guided order.</p>
-            <button class="primary-button" type="button" data-action="start">Start Order</button>
+            <p class="eyebrow" data-ordering-eyebrow>Custom Order Experience</p>
+            <h1 data-ordering-title>Let’s create something personal.</h1>
+            <p class="lead" data-ordering-copy>Build your custom ornament or sign through a simple guided order.</p>
+            <p class="staff-orders-status" data-ordering-status aria-live="polite"></p>
+            <button class="primary-button" type="button" data-action="start" data-ordering-start-button>Start Order</button>
             <div class="debug-order-tools" data-debug-order-tools="welcome" hidden></div>
           </div>
         </div>
@@ -120,6 +121,7 @@
           <div class="staff-orders-summary" data-staff-orders-summary></div>
 
           <section class="staff-orders-controls staff-panel-surface">
+            <div data-staff-event-controls></div>
             <div class="staff-orders-search">
               <label for="staff-orders-search">Search Orders</label>
               <input id="staff-orders-search" type="search" placeholder="Search customer, phone, order reference, product, or family name" data-staff-orders-search>
@@ -764,6 +766,7 @@
   <script src="js/forge-order-store.js?v=20260724-34"></script>
   <script src="js/forge-order-server-sync.js?v=20260724-34"></script>
   <script src="js/forge-order-submission.js?v=20260724-34"></script>
+  <script src="js/forge-event-state.js?v=20260724-34"></script>
   <script src="js/forge-staff-api-client.js?v=20260724-34"></script>
   <script src="js/forge-staff-catalog-ordering.js?v=20260724-34"></script>
   <script src="js/forge-catalog-image-viewer.js?v=20260724-34"></script>

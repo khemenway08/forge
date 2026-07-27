@@ -11,6 +11,7 @@
   const DEFAULT_TIMEOUT_MS = 8000;
   const HEALTH_ENDPOINT = 'health.php';
   const ORDERS_ENDPOINT = 'orders.php';
+  const EVENT_STATUS_ENDPOINT = 'event-status.php';
   const HEX_64_PATTERN = /^[0-9a-f]{64}$/;
 
   class ForgeApiError extends Error {
@@ -93,8 +94,32 @@
       }
     }
 
+    async function getOrderingState(options = {}) {
+      const requestUrl = buildOrderingStateRequestUrl(baseUrl, options.eventToken);
+      try {
+        const response = await performJsonRequest(fetchImpl, requestUrl, timeoutMs, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json'
+          },
+          credentials: 'same-origin',
+          cache: 'no-store'
+        });
+        const payload = await parseJsonResponse(response);
+
+        if (!response.ok) {
+          throw buildServerOrderError(response.status, payload);
+        }
+
+        return normalizeOrderingStatePayload(payload);
+      } catch (error) {
+        throw normalizeClientError(error);
+      }
+    }
+
     return {
       checkHealth,
+      getOrderingState,
       submitOrder
     };
   }
@@ -199,6 +224,47 @@
       receivedAt,
       payloadSha256
     };
+  }
+
+  function normalizeOrderingStatePayload(payload) {
+    const application = asTrimmedString(payload && payload.application);
+    const apiVersion = asTrimmedString(payload && payload.api_version);
+    const status = asTrimmedString(payload && payload.status);
+    const data = payload && typeof payload === 'object' ? payload.data : null;
+    const orderingOpen = data && typeof data === 'object' ? data.ordering_open : undefined;
+    const event = data && typeof data === 'object' ? data.event : null;
+    const resolutionScope = asTrimmedString(data && data.resolution_scope);
+    const requestedPublicOrderToken = asTrimmedString(data && data.requested_public_order_token);
+    const availability = asTrimmedString(data && data.availability);
+
+    if (
+      application !== 'Forge'
+      || apiVersion !== '1'
+      || status !== 'ok'
+      || typeof orderingOpen !== 'boolean'
+      || !['active_event', 'event_token'].includes(resolutionScope)
+      || availability === ''
+    ) {
+      throw new ForgeApiError('invalid_response', 'The Forge server returned an unexpected response.');
+    }
+
+    return {
+      ok: true,
+      orderingOpen,
+      event: event && typeof event === 'object' ? event : null,
+      resolutionScope,
+      requestedPublicOrderToken: requestedPublicOrderToken || null,
+      availability
+    };
+  }
+
+  function buildOrderingStateRequestUrl(baseUrl, eventToken) {
+    const normalizedToken = asTrimmedString(eventToken);
+    if (!normalizedToken) {
+      return `${baseUrl}/${EVENT_STATUS_ENDPOINT}`;
+    }
+
+    return `${baseUrl}/${EVENT_STATUS_ENDPOINT}?event=${encodeURIComponent(normalizedToken)}`;
   }
 
   function buildServerOrderError(httpStatus, payload) {

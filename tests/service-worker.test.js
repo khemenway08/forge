@@ -294,7 +294,7 @@ test('index.html versions every Forge JavaScript bootstrap URL with the same bui
   const scriptMatches = [...html.matchAll(/<script\s+src="([^"]+)"><\/script>/g)];
   const scriptSources = scriptMatches.map((match) => match[1]);
 
-  assert.equal(scriptSources.length, 21);
+  assert.equal(scriptSources.length, 22);
   assert.ok(scriptSources.every((src) => src.includes(`?v=${BUILD_VERSION}`)));
   assert.deepEqual(scriptSources, [
     `js/forge-product-catalog.js?v=${BUILD_VERSION}`,
@@ -304,6 +304,7 @@ test('index.html versions every Forge JavaScript bootstrap URL with the same bui
     `js/forge-order-store.js?v=${BUILD_VERSION}`,
     `js/forge-order-server-sync.js?v=${BUILD_VERSION}`,
     `js/forge-order-submission.js?v=${BUILD_VERSION}`,
+    `js/forge-event-state.js?v=${BUILD_VERSION}`,
     `js/forge-staff-api-client.js?v=${BUILD_VERSION}`,
     `js/forge-staff-catalog-ordering.js?v=${BUILD_VERSION}`,
     `js/forge-catalog-image-viewer.js?v=${BUILD_VERSION}`,

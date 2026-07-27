@@ -19,7 +19,11 @@ function createContext(overrides = {}) {
     deviceId: 'ipad-1',
     event: {
       event_id: 'event-9',
-      event_name: 'Holiday Market'
+      event_name: 'Holiday Market',
+      event_type: 'live_event',
+      event_start_date: '2026-11-10',
+      event_end_date: '2026-11-12',
+      event_location: 'Denver'
     },
     orderStatus: 'draft',
     ...overrides
@@ -99,7 +103,7 @@ test('shared runtime source is authoritative for app and builder pricing', () =>
   assert.match(appSource, /applyCatalogPricingToItems/);
   assert.match(
     indexSource,
-    /<script src="js\/forge-product-catalog\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-order-payload-builder\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-order-payload-preview\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-api-client\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-order-store\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-order-server-sync\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-order-submission\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-api-client\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-catalog-ordering\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-catalog-image-viewer\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-local-orders-queue\.js\?v=20260724-34"><\/script>\s*<script src="js\/app\.js\?v=20260724-34"><\/script>/
+    /<script src="js\/forge-product-catalog\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-order-payload-builder\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-order-payload-preview\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-api-client\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-order-store\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-order-server-sync\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-order-submission\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-event-state\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-api-client\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-catalog-ordering\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-catalog-image-viewer\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260724-34"><\/script>\s*<script src="js\/forge-local-orders-queue\.js\?v=20260724-34"><\/script>\s*<script src="js\/app\.js\?v=20260724-34"><\/script>/
   );
 });
 
@@ -157,6 +161,17 @@ test('submitted payloads preserve approved external payment metadata and reject 
     ),
     /supported externalPaymentMethod/i
   );
+});
+
+test('active event snapshots preserve immutable event metadata on the order payload', () => {
+  const payload = buildForgeOrderPayload(createOrderState([createItem()]), createContext());
+
+  assert.equal(payload.event.event_id, 'event-9');
+  assert.equal(payload.event.event_name, 'Holiday Market');
+  assert.equal(payload.event.event_type, 'live_event');
+  assert.equal(payload.event.event_start_date, '2026-11-10');
+  assert.equal(payload.event.event_end_date, '2026-11-12');
+  assert.equal(payload.event.event_location, 'Denver');
 });
 
 test('normalizes a Tree Ornament shipping order with size-based pricing and exact mixed personalization order', () => {

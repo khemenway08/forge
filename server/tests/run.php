@@ -98,6 +98,139 @@ final class DatabaseTimestampOrderRepository implements OrderRepositoryInterface
     }
 }
 
+final class InMemoryEventRepository
+{
+    /** @var array<string, array<string, mixed>> */
+    private array $events = [];
+
+    /**
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    public function createEvent(array $payload): array
+    {
+        $eventId = 'event-' . (count($this->events) + 1);
+        $event = [
+            'event_id' => $eventId,
+            'public_order_token' => \Forge\Server\PdoEventRepository::generatePublicOrderToken(),
+            'event_name' => (string) ($payload['event_name'] ?? ''),
+            'event_type' => (string) ($payload['event_type'] ?? 'live_event'),
+            'start_date' => (string) ($payload['start_date'] ?? ''),
+            'end_date' => (string) ($payload['end_date'] ?? ''),
+            'event_location' => $payload['event_location'] ?? null,
+            'event_status' => 'scheduled',
+        ];
+        $this->events[$eventId] = $event;
+        return $event;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function startEvent(string $eventId): array
+    {
+        foreach ($this->events as $existingEventId => $event) {
+            if ($existingEventId !== $eventId && ($event['event_status'] ?? '') === 'active') {
+                throw new RuntimeException('Only one event may be active at a time.');
+            }
+        }
+        if (($this->events[$eventId]['event_status'] ?? '') === 'ended') {
+            throw new RuntimeException('Ended events cannot be started again.');
+        }
+        $this->events[$eventId]['event_status'] = 'active';
+        return $this->events[$eventId];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function endEvent(string $eventId): array
+    {
+        $this->events[$eventId]['event_status'] = 'ended';
+        return $this->events[$eventId];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    public function getActiveEvent(): ?array
+    {
+        foreach ($this->events as $event) {
+            if (($event['event_status'] ?? '') === 'active') {
+                return $event;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function getPublicOrderingStatus(?string $requestedPublicOrderToken = null): array
+    {
+        if (is_string($requestedPublicOrderToken) && trim($requestedPublicOrderToken) !== '') {
+            foreach ($this->events as $event) {
+                if (($event['public_order_token'] ?? '') === trim($requestedPublicOrderToken)) {
+                    return [
+                        'ordering_open' => ($event['event_status'] ?? '') === 'active',
+                        'resolution_scope' => 'event_token',
+                        'requested_public_order_token' => trim($requestedPublicOrderToken),
+                        'availability' => ($event['event_status'] ?? '') === 'active'
+                            ? 'active'
+                            : (($event['event_status'] ?? '') === 'scheduled' ? 'scheduled' : 'ended'),
+                        'event' => [
+                            'event_id' => $event['event_id'],
+                            'public_order_token' => $event['public_order_token'],
+                            'event_name' => $event['event_name'],
+                            'event_type' => $event['event_type'],
+                            'event_status' => $event['event_status'],
+                            'start_date' => $event['start_date'],
+                            'end_date' => $event['end_date'],
+                            'event_location' => $event['event_location'],
+                        ],
+                    ];
+                }
+            }
+
+            return [
+                'ordering_open' => false,
+                'resolution_scope' => 'event_token',
+                'requested_public_order_token' => trim($requestedPublicOrderToken),
+                'availability' => 'invalid_token',
+                'event' => null,
+            ];
+        }
+
+        $activeEvent = $this->getActiveEvent();
+        if ($activeEvent === null) {
+            return [
+                'ordering_open' => false,
+                'resolution_scope' => 'active_event',
+                'requested_public_order_token' => null,
+                'availability' => 'no_active_event',
+                'event' => null,
+            ];
+        }
+
+        return [
+            'ordering_open' => true,
+            'resolution_scope' => 'active_event',
+            'requested_public_order_token' => null,
+            'availability' => 'active',
+            'event' => [
+                'event_id' => $activeEvent['event_id'],
+                'public_order_token' => $activeEvent['public_order_token'],
+                'event_name' => $activeEvent['event_name'],
+                'event_type' => $activeEvent['event_type'],
+                'event_status' => $activeEvent['event_status'],
+                'start_date' => $activeEvent['start_date'],
+                'end_date' => $activeEvent['end_date'],
+                'event_location' => $activeEvent['event_location'],
+            ],
+        ];
+    }
+}
+
 final class TestRunner
 {
     private int $passed = 0;
@@ -169,7 +302,12 @@ function createValidPayload(array $overrides = []): array
         'device_id' => 'ipad-1',
         'event' => [
             'event_id' => 'holiday-market',
+            'public_order_token' => 'test-public-order-token',
             'event_name' => 'Holiday Market',
+            'event_type' => 'live_event',
+            'event_start_date' => '2026-11-10',
+            'event_end_date' => '2026-11-12',
+            'event_location' => 'Denver',
         ],
         'currency' => 'USD',
         'customer' => [
@@ -250,6 +388,16 @@ $runner = new TestRunner();
 $runner->run('valid UUID acceptance', static function (): void {
     OrderPayload::validatePayload(createValidPayload());
     assertTrue(true);
+});
+
+$runner->run('existing orders with null event data remain valid', static function (): void {
+    $payload = createValidPayload([
+        'event' => null,
+    ]);
+
+    OrderPayload::validatePayload($payload);
+    $metadata = OrderPayload::extractMetadata($payload);
+    assertSame(null, $metadata['event_id']);
 });
 
 $runner->run('approved external payment metadata is accepted and preserved in canonical json', static function (): void {
@@ -816,6 +964,155 @@ $runner->run('missing required values produce storage-unavailable behavior', sta
             assertSame('Forge order storage is currently unavailable.', $exception->getMessage());
         }
     );
+});
+
+$runner->run('new order stores event id and snapshot in the canonical payload', static function (): void {
+    [$handler, $repository] = createHandler();
+    $payload = createValidPayload();
+
+    $result = $handler->handleRequest('POST', 'application/json', json_encode($payload, JSON_THROW_ON_ERROR));
+    assertSame(201, $result['statusCode']);
+
+    $storedPayload = $repository->getStoredPayload('123e4567-e89b-42d3-a456-426614174000');
+    assertSame('holiday-market', $storedPayload['event']['event_id'] ?? null);
+    assertSame('live_event', $storedPayload['event']['event_type'] ?? null);
+    assertSame('2026-11-10', $storedPayload['event']['event_start_date'] ?? null);
+    assertSame('2026-11-12', $storedPayload['event']['event_end_date'] ?? null);
+    assertSame('Denver', $storedPayload['event']['event_location'] ?? null);
+});
+
+$runner->run('duplicate UUID retry preserves the original event assignment', static function (): void {
+    [$handler, $repository] = createHandler();
+    $payload = createValidPayload();
+    $handler->handleRequest('POST', 'application/json', json_encode($payload, JSON_THROW_ON_ERROR));
+
+    $retryPayload = createValidPayload([
+        'event' => [
+            'event_id' => 'different-event',
+            'event_name' => 'Different Event',
+            'event_type' => 'test_session',
+            'event_start_date' => '2026-11-13',
+            'event_end_date' => '2026-11-13',
+            'event_location' => 'Austin',
+        ],
+    ]);
+    $retryResult = $handler->handleRequest('POST', 'application/json', json_encode($payload, JSON_THROW_ON_ERROR));
+
+    assertSame(200, $retryResult['statusCode']);
+    $storedPayload = $repository->getStoredPayload('123e4567-e89b-42d3-a456-426614174000');
+    assertSame('holiday-market', $storedPayload['event']['event_id'] ?? null);
+    assertSame('Holiday Market', $storedPayload['event']['event_name'] ?? null);
+});
+
+$runner->run('create scheduled event start end and public ordering status are server-safe', static function (): void {
+    $repository = new InMemoryEventRepository();
+    $scheduled = $repository->createEvent([
+        'event_name' => 'Holiday Market',
+        'event_type' => 'live_event',
+        'start_date' => '2026-11-10',
+        'end_date' => '2026-11-12',
+        'event_location' => 'Denver',
+    ]);
+    assertSame('scheduled', $scheduled['event_status']);
+
+    $active = $repository->startEvent($scheduled['event_id']);
+    assertSame('active', $active['event_status']);
+
+    $publicStatus = $repository->getPublicOrderingStatus();
+    assertSame(true, $publicStatus['ordering_open']);
+    assertSame('Holiday Market', $publicStatus['event']['event_name']);
+    assertTrue(\Forge\Server\PdoEventRepository::isValidPublicOrderToken($publicStatus['event']['public_order_token']));
+    assertTrue(!array_key_exists('created_at', $publicStatus['event']), 'Public event response should stay minimal.');
+
+    $ended = $repository->endEvent($scheduled['event_id']);
+    assertSame('ended', $ended['event_status']);
+    assertSame(false, $repository->getPublicOrderingStatus()['ordering_open']);
+});
+
+$runner->run('starting a second active event is rejected', static function (): void {
+    $repository = new InMemoryEventRepository();
+    $first = $repository->createEvent([
+        'event_name' => 'First',
+        'event_type' => 'live_event',
+        'start_date' => '2026-11-10',
+        'end_date' => '2026-11-10',
+    ]);
+    $second = $repository->createEvent([
+        'event_name' => 'Second',
+        'event_type' => 'test_session',
+        'start_date' => '2026-11-11',
+        'end_date' => '2026-11-11',
+    ]);
+    $repository->startEvent($first['event_id']);
+
+    assertThrows(
+        static function () use ($repository, $second): void {
+            $repository->startEvent($second['event_id']);
+        },
+        static function (\Throwable $exception): void {
+            assertSame('Only one event may be active at a time.', $exception->getMessage());
+        }
+    );
+});
+
+$runner->run('creating an event generates a unique public token that is not derived from its name', static function (): void {
+    $repository = new InMemoryEventRepository();
+    $first = $repository->createEvent([
+        'event_name' => 'Holiday Market',
+        'event_type' => 'live_event',
+        'start_date' => '2026-11-10',
+        'end_date' => '2026-11-12',
+    ]);
+    $second = $repository->createEvent([
+        'event_name' => 'Holiday Market',
+        'event_type' => 'live_event',
+        'start_date' => '2026-12-01',
+        'end_date' => '2026-12-03',
+    ]);
+
+    assertTrue(\Forge\Server\PdoEventRepository::isValidPublicOrderToken($first['public_order_token']));
+    assertTrue(\Forge\Server\PdoEventRepository::isValidPublicOrderToken($second['public_order_token']));
+    assertTrue($first['public_order_token'] !== $second['public_order_token']);
+    assertNotContains('Holiday', $first['public_order_token']);
+    assertNotContains('Market', $first['public_order_token']);
+});
+
+$runner->run('token-scoped public ordering status never falls back to another active event', static function (): void {
+    $repository = new InMemoryEventRepository();
+    $eventA = $repository->createEvent([
+        'event_name' => 'Autumn Fair',
+        'event_type' => 'live_event',
+        'start_date' => '2026-10-01',
+        'end_date' => '2026-10-02',
+    ]);
+    $eventB = $repository->createEvent([
+        'event_name' => 'Winter Market',
+        'event_type' => 'live_event',
+        'start_date' => '2026-12-01',
+        'end_date' => '2026-12-02',
+    ]);
+
+    $repository->startEvent($eventA['event_id']);
+    $statusA = $repository->getPublicOrderingStatus($eventA['public_order_token']);
+    assertSame(true, $statusA['ordering_open']);
+    assertSame('active', $statusA['availability']);
+
+    $repository->endEvent($eventA['event_id']);
+    $repository->startEvent($eventB['event_id']);
+
+    $endedStatusA = $repository->getPublicOrderingStatus($eventA['public_order_token']);
+    assertSame(false, $endedStatusA['ordering_open']);
+    assertSame('ended', $endedStatusA['availability']);
+    assertSame('Autumn Fair', $endedStatusA['event']['event_name']);
+
+    $invalidStatus = $repository->getPublicOrderingStatus('invalid-token');
+    assertSame(false, $invalidStatus['ordering_open']);
+    assertSame('invalid_token', $invalidStatus['availability']);
+    assertSame(null, $invalidStatus['event']);
+
+    $noTokenStatus = $repository->getPublicOrderingStatus();
+    assertSame(true, $noTokenStatus['ordering_open']);
+    assertSame('Winter Market', $noTokenStatus['event']['event_name']);
 });
 
 $runner->run('invalid config return type fails safely', static function (): void {

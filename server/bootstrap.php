@@ -7,6 +7,7 @@ require_once __DIR__ . '/lib/api-response.php';
 require_once __DIR__ . '/lib/order-handler.php';
 require_once __DIR__ . '/lib/order-payload.php';
 require_once __DIR__ . '/lib/database.php';
+require_once __DIR__ . '/lib/event-repository.php';
 require_once __DIR__ . '/lib/order-repository.php';
 require_once __DIR__ . '/lib/staff-auth.php';
 require_once __DIR__ . '/lib/staff-order-repository.php';
@@ -34,6 +35,12 @@ function buildStaffOrderRepositoryFromEnvironment(): PdoStaffOrderRepository
 {
     $pdo = DatabaseConnectionFactory::createFromEnvironment(loadPrivateDatabaseConfig());
     return new PdoStaffOrderRepository($pdo, loadPrivateTrayConfig());
+}
+
+function buildEventRepositoryFromEnvironment(): PdoEventRepository
+{
+    $pdo = DatabaseConnectionFactory::createFromEnvironment(loadPrivateDatabaseConfig());
+    return new PdoEventRepository($pdo);
 }
 
 function buildStaffDesignCatalogRepositoryFromEnvironment(): PdoStaffDesignCatalogRepository

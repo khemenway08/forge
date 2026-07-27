@@ -76,6 +76,12 @@ const staffDefaultActions = document.querySelector('[data-staff-actions="default
 const staffConfirmActions = document.querySelector('[data-staff-actions="confirm"]');
 const customerOrderContext = document.querySelector('[data-customer-order-context]');
 const customerStatus = document.querySelector('[data-customer-form-status]');
+const orderingEyebrow = document.querySelector('[data-ordering-eyebrow]');
+const orderingTitle = document.querySelector('[data-ordering-title]');
+const orderingCopy = document.querySelector('[data-ordering-copy]');
+const orderingStatus = document.querySelector('[data-ordering-status]');
+const orderingStartButton = document.querySelector('[data-ordering-start-button]');
+const staffEventControls = document.querySelector('[data-staff-event-controls]');
 const contactChoiceButtons = [...document.querySelectorAll('[data-contact-choice]')];
 const fulfillmentChoiceButtons = [...document.querySelectorAll('[data-fulfillment-choice]')];
 const shippingFieldsContainer = document.querySelector('[data-shipping-fields]');
@@ -88,6 +94,7 @@ const forgeApiClient = globalThis.ForgeApiClient;
 const forgeOrderStore = globalThis.ForgeOrderStore;
 const forgeOrderServerSync = globalThis.ForgeOrderServerSync;
 const forgeOrderSubmission = globalThis.ForgeOrderSubmission;
+const forgeEventState = globalThis.ForgeEventState;
 const forgeStaffApiClient = globalThis.ForgeStaffApiClient;
 const forgeStaffDesignCatalogApi = globalThis.ForgeStaffDesignCatalogApi;
 const forgeStaffDesignCatalog = globalThis.ForgeStaffDesignCatalog;
@@ -162,6 +169,32 @@ const staffOrdersState = {
   packingDialogNote: '',
   packingDialogCheckedLineIds: []
 };
+const customerEventState = {
+  loading: true,
+  orderingOpen: false,
+  unavailable: false,
+  activeEvent: null,
+  source: 'server',
+  requestedPublicOrderToken: null,
+  resolutionScope: 'active_event',
+  availability: 'no_active_event'
+};
+const staffEventState = {
+  loading: false,
+  error: '',
+  notice: '',
+  events: [],
+  formOpen: false,
+  formSubmitting: false,
+  formError: '',
+  form: {
+    event_name: '',
+    event_type: 'live_event',
+    start_date: '',
+    end_date: '',
+    event_location: ''
+  }
+};
 
 if (!forgeProductCatalog) {
   throw new Error('Forge product catalog failed to load before app.js.');
@@ -185,6 +218,10 @@ if (!forgeOrderServerSync) {
 
 if (!forgeOrderSubmission) {
   throw new Error('Forge order submission helpers failed to load before app.js.');
+}
+
+if (!forgeEventState) {
+  throw new Error('Forge event state helpers failed to load before app.js.');
 }
 
 if (!forgeStaffApiClient && !isLoopbackHost(window.location)) {
@@ -670,6 +707,10 @@ let lastStaffPackingFocusTarget = null;
 const payloadPreviewContextStore = forgeOrderPayloadPreview.createPayloadPreviewContextStore();
 const orderStore = forgeOrderStore.createOrderStore();
 const orderSyncApiClient = forgeApiClient.createForgeApiClient();
+const eventStateController = forgeEventState.createEventStateController({
+  apiClient: orderSyncApiClient,
+  storage: localStorage
+});
 const staffApiClient = createOptionalStaffApiClient();
 const staffDesignCatalogApiClient = createOptionalStaffDesignCatalogApiClient();
 const staffDesignCatalogModule = createOptionalStaffDesignCatalogModule(staffDesignCatalogApiClient);
@@ -1412,6 +1453,20 @@ function isColorFieldRequired(fieldName) {
 }
 
 function showScreen(name) {
+  const customerScreens = new Set([
+    'categories',
+    'ornaments',
+    'tree-customization',
+    'tree-review',
+    'current-order',
+    'customer-information',
+    'final-review',
+    'payment-handoff'
+  ]);
+  if (customerScreens.has(name) && !customerEventState.orderingOpen) {
+    name = 'welcome';
+  }
+
   screens.forEach((screen) => {
     screen.classList.toggle('active', screen.dataset.screen === name);
   });
@@ -1421,6 +1476,217 @@ function showScreen(name) {
   appState.currentScreen = name;
   saveAppState();
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function getCurrentOrderingHeadline() {
+  const requestedPublicOrderToken = getRequestedPublicEventToken();
+  if (customerEventState.orderingOpen && customerEventState.activeEvent) {
+    return {
+      eyebrow: customerEventState.activeEvent.event_type === 'test_session' ? 'Test Session Active' : 'Ordering Open',
+      title: customerEventState.activeEvent.event_name,
+      copy: customerEventState.activeEvent.event_type === 'test_session'
+        ? 'This kiosk is currently attached to a Forge test session.'
+        : (requestedPublicOrderToken
+          ? 'This ordering link is active for the current Forge event.'
+          : 'Custom ordering is open for the current Forge event.'),
+      status: customerEventState.unavailable
+        ? (requestedPublicOrderToken
+          ? 'Forge is temporarily offline, but this device is using the last confirmed event for this exact ordering link.'
+          : 'Forge is temporarily offline, but this kiosk is using the last confirmed active event.')
+        : buildOrderingEventSummary(customerEventState.activeEvent),
+      buttonLabel: 'Start Order',
+      buttonDisabled: false
+    };
+  }
+
+  if (requestedPublicOrderToken && customerEventState.availability === 'scheduled' && customerEventState.activeEvent) {
+    return {
+      eyebrow: customerEventState.activeEvent.event_type === 'test_session' ? 'Test Session Scheduled' : 'Event Scheduled',
+      title: customerEventState.activeEvent.event_name,
+      copy: 'This ordering link belongs to a scheduled event and will remain closed until that exact event is started.',
+      status: buildOrderingEventSummary(customerEventState.activeEvent),
+      buttonLabel: 'Ordering Closed',
+      buttonDisabled: true
+    };
+  }
+
+  if (requestedPublicOrderToken && customerEventState.availability === 'ended' && customerEventState.activeEvent) {
+    return {
+      eyebrow: customerEventState.activeEvent.event_type === 'test_session' ? 'Test Session Ended' : 'Event Ended',
+      title: customerEventState.activeEvent.event_name,
+      copy: 'This ordering link belongs to an event that has already ended and will not reopen when a later event starts.',
+      status: 'Please see a Hilltop Shop team member if you still need help with an order.',
+      buttonLabel: 'Ordering Closed',
+      buttonDisabled: true
+    };
+  }
+
+  if (requestedPublicOrderToken && customerEventState.availability === 'invalid_token') {
+    return {
+      eyebrow: 'Event Not Available',
+      title: 'This ordering link is not active.',
+      copy: 'This event-specific link is missing, invalid, or no longer available.',
+      status: 'Starting another event will not reactivate this older link.',
+      buttonLabel: 'Ordering Closed',
+      buttonDisabled: true
+    };
+  }
+
+  if (customerEventState.unavailable) {
+    return {
+      eyebrow: 'Ordering Unavailable',
+      title: requestedPublicOrderToken ? 'This ordering link is temporarily unavailable.' : 'Please see a Hilltop Shop team member.',
+      copy: requestedPublicOrderToken
+        ? 'This device cannot currently confirm the event attached to this exact ordering link.'
+        : 'This kiosk has not confirmed an active Forge event yet, so customer ordering is temporarily unavailable.',
+      status: 'Staff access is still available.',
+      buttonLabel: 'Ordering Unavailable',
+      buttonDisabled: true
+    };
+  }
+
+  return {
+    eyebrow: 'Ordering Closed',
+    title: 'Customer ordering is currently closed.',
+    copy: 'A staff member must start an active Forge event before this kiosk can accept new orders.',
+    status: 'Staff access remains available for existing orders and production.',
+    buttonLabel: 'Ordering Closed',
+    buttonDisabled: true
+  };
+}
+
+function renderOrderingGate() {
+  const headline = getCurrentOrderingHeadline();
+  if (orderingEyebrow) {
+    orderingEyebrow.textContent = headline.eyebrow;
+  }
+  if (orderingTitle) {
+    orderingTitle.textContent = headline.title;
+  }
+  if (orderingCopy) {
+    orderingCopy.textContent = headline.copy;
+  }
+  if (orderingStatus) {
+    orderingStatus.textContent = headline.status;
+  }
+  if (orderingStartButton) {
+    orderingStartButton.textContent = headline.buttonLabel;
+    orderingStartButton.disabled = headline.buttonDisabled;
+  }
+}
+
+function buildOrderingEventSummary(event) {
+  if (!event) {
+    return '';
+  }
+  const parts = [
+    event.event_start_date || '',
+    event.event_end_date && event.event_end_date !== event.event_start_date
+      ? `to ${event.event_end_date}`
+      : '',
+    event.event_location || ''
+  ].filter(Boolean);
+  return parts.join(' • ');
+}
+
+function getRequestedPublicEventToken() {
+  try {
+    const params = new URLSearchParams(window.location.search || '');
+    const normalized = String(params.get('event') || '').trim();
+    return normalized || null;
+  } catch {
+    return null;
+  }
+}
+
+function buildPublicOrderingLink(publicOrderToken) {
+  const normalizedToken = String(publicOrderToken || '').trim();
+  if (!normalizedToken) {
+    return '';
+  }
+
+  const baseUrl = `${window.location.origin}${window.location.pathname || '/'}`;
+  return `${baseUrl}?event=${encodeURIComponent(normalizedToken)}`;
+}
+
+function getLoopbackDevelopmentEvent() {
+  const requestedPublicOrderToken = getRequestedPublicEventToken();
+  return {
+    event_id: 'loopback-development-session',
+    public_order_token: requestedPublicOrderToken || 'loopback-development-token',
+    event_name: 'Local Development Test Session',
+    event_type: 'test_session',
+    event_start_date: getTodayIsoDate(),
+    event_end_date: getTodayIsoDate(),
+    event_location: 'Localhost',
+    event_status: 'active'
+  };
+}
+
+async function refreshCustomerOrderingGate(options = {}) {
+  const requestedPublicOrderToken = getRequestedPublicEventToken();
+  if (isLoopbackHost(window.location)) {
+    customerEventState.loading = false;
+    customerEventState.orderingOpen = true;
+    customerEventState.unavailable = false;
+    customerEventState.activeEvent = getLoopbackDevelopmentEvent();
+    customerEventState.source = 'loopback';
+    customerEventState.requestedPublicOrderToken = requestedPublicOrderToken;
+    customerEventState.resolutionScope = requestedPublicOrderToken ? 'event_token' : 'active_event';
+    customerEventState.availability = 'active';
+    renderOrderingGate();
+    return {
+      ok: true,
+      orderingOpen: true,
+      activeEvent: customerEventState.activeEvent,
+      source: 'loopback',
+      unavailable: false,
+      requestedPublicOrderToken,
+      resolutionScope: customerEventState.resolutionScope,
+      availability: 'active'
+    };
+  }
+
+  customerEventState.loading = true;
+  renderOrderingGate();
+
+  const result = await eventStateController.resolveOrderingGate({
+    eventToken: requestedPublicOrderToken
+  });
+  customerEventState.loading = false;
+  customerEventState.orderingOpen = result.orderingOpen === true;
+  customerEventState.unavailable = result.unavailable === true;
+  customerEventState.activeEvent = result.activeEvent || null;
+  customerEventState.source = result.source || 'server';
+  customerEventState.requestedPublicOrderToken = result.requestedPublicOrderToken || requestedPublicOrderToken;
+  customerEventState.resolutionScope = result.resolutionScope || (requestedPublicOrderToken ? 'event_token' : 'active_event');
+  customerEventState.availability = result.availability || (requestedPublicOrderToken ? 'invalid_token' : 'no_active_event');
+  renderOrderingGate();
+
+  if (!customerEventState.orderingOpen && !options.preserveCustomerScreens) {
+    const customerScreens = new Set(['categories', 'ornaments', 'tree-customization', 'tree-review', 'current-order', 'customer-information', 'final-review', 'payment-handoff']);
+    if (customerScreens.has(appState.currentScreen)) {
+      showScreen('welcome');
+    }
+  }
+
+  if (customerEventState.orderingOpen && appState.currentScreen === 'welcome' && orderingStartButton?.disabled === false && options.openImmediately === true) {
+    showScreen('categories');
+  }
+
+  return result;
+}
+
+async function handleCustomerStartOrder() {
+  if (!customerEventState.orderingOpen) {
+    await refreshCustomerOrderingGate({ openImmediately: false });
+    if (!customerEventState.orderingOpen) {
+      showScreen('welcome');
+      return;
+    }
+  }
+
+  showScreen('categories');
 }
 
 function renderCustomizationScreenContent() {
@@ -1533,7 +1799,7 @@ function resetDraftForProduct(productDefinitionId) {
 }
 
 document.querySelector('[data-action="start"]').addEventListener('click', () => {
-  showScreen('categories');
+  handleCustomerStartOrder();
 });
 
 document.querySelector('[data-action="start-next-order"]')?.addEventListener('click', () => {
@@ -5289,6 +5555,22 @@ function buildStaffSyncBadgeMarkup(record) {
   return `<span class="staff-status-badge ${escapeHtml(getStaffSyncStatusBadgeClass(record))}">${escapeHtml(getStaffSyncStatusLabel(record))}</span>`;
 }
 
+function getOrderEventSnapshot(record) {
+  return forgeEventState.normalizeEventSnapshot(record?.payload?.event || null);
+}
+
+function buildOrderEventBadges(record) {
+  const event = getOrderEventSnapshot(record);
+  if (!event) {
+    return '';
+  }
+
+  return `
+    <span class="staff-status-badge staff-status-badge--production-submitted">${escapeHtml(event.event_name)}</span>
+    ${event.event_type === 'test_session' ? '<span class="staff-flag-badge">TEST</span>' : ''}
+  `;
+}
+
 function getStaffItemProductionStatus(item) {
   return sanitizeText(
     item?.production_status
@@ -5637,6 +5919,7 @@ function renderStaffOrdersQueue() {
     return;
   }
 
+  renderStaffEventControls();
   renderStaffDemoControls();
   renderStaffSourceUi();
   const queueRecords = getCurrentStaffQueueRecords();
@@ -5867,6 +6150,289 @@ function buildStaffBatchMarkup(batchSummary, batchError = '') {
   `;
 }
 
+function getActiveStaffEvent() {
+  return staffEventState.events.find((event) => event?.event_status === 'active') || null;
+}
+
+function getNextScheduledStaffEvent() {
+  return staffEventState.events.find((event) => event?.event_status === 'scheduled') || null;
+}
+
+function getLatestEndedStaffEvent() {
+  return staffEventState.events.find((event) => event?.event_status === 'ended') || null;
+}
+
+function getStaffEventStatusSummary() {
+  const activeEvent = getActiveStaffEvent();
+  if (activeEvent) {
+    return {
+      title: 'Active Event',
+      summary: `${activeEvent.event_name} · Ordering Open`,
+      detail: buildOrderingEventSummary({
+        event_start_date: activeEvent.start_date,
+        event_end_date: activeEvent.end_date,
+        event_location: activeEvent.event_location
+      })
+    };
+  }
+
+  const scheduledEvent = getNextScheduledStaffEvent();
+  if (scheduledEvent) {
+    return {
+      title: 'Scheduled Event',
+      summary: scheduledEvent.event_name,
+      detail: `${scheduledEvent.start_date} to ${scheduledEvent.end_date}`
+    };
+  }
+
+  const endedEvent = getLatestEndedStaffEvent();
+  if (endedEvent) {
+    return {
+      title: 'Event Ended',
+      summary: `${endedEvent.event_name} · Ended · Ordering Closed`,
+      detail: endedEvent.ended_at ? `Ended ${formatReadableDateTime(endedEvent.ended_at)}` : 'Ordering is closed until another event is started.'
+    };
+  }
+
+  return {
+    title: 'No Active Event',
+    summary: 'Ordering Closed',
+    detail: 'Create and start a Forge event to reopen customer ordering.'
+  };
+}
+
+function renderStaffEventControls() {
+  if (!staffEventControls) {
+    return;
+  }
+
+  const eventStatus = getStaffEventStatusSummary();
+  const activeEvent = getActiveStaffEvent();
+  const canManageEvents = Boolean(staffApiClient && typeof staffApiClient.listEvents === 'function');
+  const scheduledEvents = staffEventState.events.filter((event) => event?.event_status === 'scheduled');
+
+  staffEventControls.innerHTML = `
+    <div class="staff-section-heading">
+      <div>
+        <p class="eyebrow staff-orders-eyebrow">Event Control</p>
+        <h2>${escapeHtml(eventStatus.title)}</h2>
+        <p>${escapeHtml(eventStatus.summary)}</p>
+      </div>
+      <div class="staff-order-card-actions">
+        <button class="secondary-button" type="button" data-action="staff-refresh-events"${canManageEvents ? '' : ' disabled'}>Refresh Events</button>
+        <button class="primary-button" type="button" data-action="staff-toggle-event-form"${canManageEvents ? '' : ' disabled'}>${staffEventState.formOpen ? 'Cancel' : 'Create Event'}</button>
+      </div>
+    </div>
+    <p class="staff-orders-status">${escapeHtml(staffEventState.error || staffEventState.notice || eventStatus.detail || (canManageEvents ? '' : 'Staff event controls are unavailable on this device.'))}</p>
+    ${staffEventState.formOpen ? `
+      <div class="staff-orders-filters">
+        <div class="staff-filter-field">
+          <label for="staff-event-name">Event Name</label>
+          <input id="staff-event-name" type="text" data-staff-event-field="event_name" value="${escapeHtml(staffEventState.form.event_name)}">
+        </div>
+        <div class="staff-filter-field">
+          <label for="staff-event-type">Event Type</label>
+          <select id="staff-event-type" data-staff-event-field="event_type">
+            <option value="live_event"${staffEventState.form.event_type === 'live_event' ? ' selected' : ''}>Live Event</option>
+            <option value="test_session"${staffEventState.form.event_type === 'test_session' ? ' selected' : ''}>Test Session</option>
+          </select>
+        </div>
+        <div class="staff-filter-field">
+          <label for="staff-event-start-date">Start Date</label>
+          <input id="staff-event-start-date" type="date" data-staff-event-field="start_date" value="${escapeHtml(staffEventState.form.start_date)}">
+        </div>
+        <div class="staff-filter-field">
+          <label for="staff-event-end-date">End Date</label>
+          <input id="staff-event-end-date" type="date" data-staff-event-field="end_date" value="${escapeHtml(staffEventState.form.end_date)}">
+        </div>
+        <div class="staff-filter-field">
+          <label for="staff-event-location">Location</label>
+          <input id="staff-event-location" type="text" data-staff-event-field="event_location" value="${escapeHtml(staffEventState.form.event_location)}">
+        </div>
+      </div>
+      <div class="staff-order-card-actions">
+        <button class="primary-button" type="button" data-action="staff-submit-event"${staffEventState.formSubmitting ? ' disabled' : ''}>${staffEventState.formSubmitting ? 'Saving...' : 'Save Event'}</button>
+      </div>
+    ` : ''}
+    ${scheduledEvents.length || activeEvent ? `
+      <div class="staff-orders-list">
+        ${staffEventState.events.slice(0, 4).map((event) => `
+          <article class="staff-order-card">
+            <div class="staff-order-card-header">
+              <div class="staff-order-card-title">
+                <div class="staff-order-ref">${escapeHtml(event.event_name)}</div>
+                <p>${escapeHtml(`${event.start_date} to ${event.end_date}`)}</p>
+              </div>
+              <div class="staff-order-card-badges">
+                <span class="staff-status-badge ${escapeHtml(event.event_type === 'test_session' ? 'staff-status-badge--sync-pending' : 'staff-status-badge--synced')}">${escapeHtml(event.event_type === 'test_session' ? 'TEST' : 'LIVE')}</span>
+                <span class="staff-status-badge ${escapeHtml(event.event_status === 'active' ? 'staff-status-badge--production-ready-to-pack' : (event.event_status === 'ended' ? 'staff-status-badge--production-cancelled' : 'staff-status-badge--production-submitted'))}">${escapeHtml(event.event_status.replace('_', ' '))}</span>
+              </div>
+            </div>
+            <div class="staff-order-card-meta staff-order-card-meta--primary">
+              <div><span>Location</span><strong>${escapeHtml(event.event_location || 'Not provided')}</strong></div>
+              <div><span>Status</span><strong>${escapeHtml(event.event_status.replace('_', ' '))}</strong></div>
+            </div>
+            <div class="staff-order-card-meta staff-order-card-meta--secondary">
+              <div><span>Ordering Link</span><strong>${event.public_order_token ? escapeHtml(buildPublicOrderingLink(event.public_order_token)) : 'Unavailable'}</strong></div>
+              <div><span>Link Rule</span><strong>Ending this event disables this exact link.</strong></div>
+            </div>
+            <div class="staff-order-card-actions">
+              ${event.public_order_token ? `<button class="secondary-button" type="button" data-action="staff-copy-ordering-link" data-event-token="${escapeHtml(event.public_order_token)}">Copy Ordering Link</button>` : ''}
+              ${event.event_status === 'scheduled' ? `<button class="primary-button" type="button" data-action="staff-start-event" data-event-id="${escapeHtml(event.event_id)}">Start Event</button>` : ''}
+              ${event.event_status === 'active' ? `<button class="secondary-button" type="button" data-action="staff-end-event" data-event-id="${escapeHtml(event.event_id)}">End Event</button>` : ''}
+            </div>
+          </article>
+        `).join('')}
+      </div>
+    ` : ''}
+  `;
+}
+
+async function loadStaffEvents() {
+  if (!staffApiClient || typeof staffApiClient.listEvents !== 'function') {
+    staffEventState.events = [];
+    staffEventState.error = '';
+    renderStaffEventControls();
+    return;
+  }
+
+  staffEventState.loading = true;
+  staffEventState.error = '';
+  renderStaffEventControls();
+
+  try {
+    const result = await staffApiClient.listEvents();
+    if (!result.ok && result.unauthenticated) {
+      showUnauthenticatedStaffAccess();
+      return;
+    }
+    staffEventState.events = Array.isArray(result.events) ? result.events : [];
+  } catch (error) {
+    console.error('Forge staff events failed to load', error);
+    staffEventState.error = error?.message || 'Staff event management is currently unavailable.';
+  } finally {
+    staffEventState.loading = false;
+    renderStaffEventControls();
+  }
+}
+
+async function submitStaffEventForm() {
+  if (!staffApiClient || typeof staffApiClient.createEvent !== 'function' || staffEventState.formSubmitting) {
+    return;
+  }
+
+  staffEventState.formSubmitting = true;
+  staffEventState.error = '';
+  staffEventState.notice = '';
+  renderStaffEventControls();
+
+  try {
+    const result = await staffApiClient.createEvent({ ...staffEventState.form });
+    if (!result.ok && result.unauthenticated) {
+      showUnauthenticatedStaffAccess();
+      return;
+    }
+    staffEventState.formSubmitting = false;
+    staffEventState.formOpen = false;
+    staffEventState.notice = `Created ${result.event.event_name}.`;
+    staffEventState.form = {
+      event_name: '',
+      event_type: 'live_event',
+      start_date: '',
+      end_date: '',
+      event_location: ''
+    };
+    await loadStaffEvents();
+  } catch (error) {
+    console.error('Forge event creation failed', error);
+    staffEventState.formSubmitting = false;
+    staffEventState.error = error?.message || 'Staff event management is currently unavailable.';
+    renderStaffEventControls();
+  }
+}
+
+async function startStaffEvent(eventId) {
+  const event = staffEventState.events.find((candidate) => candidate?.event_id === eventId);
+  if (!event || !staffApiClient || typeof staffApiClient.startEvent !== 'function') {
+    return;
+  }
+
+  const confirmed = window.confirm(`Start event?\n\n${event.event_name}\n${event.start_date} to ${event.end_date}\n\nCustomer ordering will open.`);
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    const result = await staffApiClient.startEvent(eventId);
+    if (!result.ok && result.unauthenticated) {
+      showUnauthenticatedStaffAccess();
+      return;
+    }
+    staffEventState.notice = `${result.event.event_name} · Ordering Open`;
+    await Promise.all([
+      loadStaffEvents(),
+      refreshCustomerOrderingGate({ preserveCustomerScreens: true })
+    ]);
+  } catch (error) {
+    console.error('Forge event start failed', error);
+    staffEventState.error = error?.message || 'That event could not be started.';
+    renderStaffEventControls();
+  }
+}
+
+async function endStaffEvent(eventId) {
+  const event = staffEventState.events.find((candidate) => candidate?.event_id === eventId);
+  if (!event || !staffApiClient || typeof staffApiClient.endEvent !== 'function') {
+    return;
+  }
+
+  const confirmed = window.confirm(`End event?\n\n${event.event_name}\n\nCustomer ordering will close. Existing orders and staff access will remain available.`);
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    const result = await staffApiClient.endEvent(eventId);
+    if (!result.ok && result.unauthenticated) {
+      showUnauthenticatedStaffAccess();
+      return;
+    }
+    staffEventState.notice = `${result.event.event_name} · Ended · Ordering Closed`;
+    await Promise.all([
+      loadStaffEvents(),
+      refreshCustomerOrderingGate({ preserveCustomerScreens: false })
+    ]);
+  } catch (error) {
+    console.error('Forge event end failed', error);
+    staffEventState.error = error?.message || 'That event could not be ended.';
+    renderStaffEventControls();
+  }
+}
+
+async function copyStaffOrderingLink(publicOrderToken) {
+  const link = buildPublicOrderingLink(publicOrderToken);
+  if (!link) {
+    return;
+  }
+
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(link);
+      staffEventState.notice = 'Ordering link copied.';
+      staffEventState.error = '';
+      renderStaffEventControls();
+      return;
+    }
+  } catch (error) {
+    console.error('Forge ordering link copy failed', error);
+  }
+
+  window.prompt('Copy this ordering link:', link);
+  staffEventState.notice = 'Ordering link ready to copy.';
+  staffEventState.error = '';
+  renderStaffEventControls();
+}
+
 function buildStaffOrderCardMarkup(record, filters) {
   const payload = record.payload || {};
   const matchingItems = forgeLocalOrdersQueue.getMatchingOrderItems(record, filters);
@@ -5894,6 +6460,7 @@ function buildStaffOrderCardMarkup(record, filters) {
         <div class="staff-order-card-badges">
           <span class="staff-tray-badge ${escapeHtml(getOrderTrayBadgeClass(record))}">${escapeHtml(trayLabel)}</span>
           <span class="staff-status-badge ${escapeHtml(getOrderProductionStatusBadgeClass(record))}">${escapeHtml(productionStatusLabel)}</span>
+          ${buildOrderEventBadges(record)}
           ${buildStaffSyncBadgeMarkup(record)}
           ${hasFlags ? '<span class="staff-flag-badge">Open Flags</span>' : ''}
         </div>
@@ -5951,7 +6518,10 @@ async function loadStaffOrdersQueue() {
   renderReadyToPackQueue();
 
   try {
-    const result = await staffRuntime.loadOrders();
+    const [result] = await Promise.all([
+      staffRuntime.loadOrders(),
+      loadStaffEvents()
+    ]);
     if (!result.ok && result.unauthenticated) {
       showUnauthenticatedStaffAccess();
       return;
@@ -6111,6 +6681,7 @@ function renderStaffOrderDetail() {
     && completionCounts.totalItemCount > 0
     && completionCounts.completedItemCount >= completionCounts.totalItemCount
     && openFlags.length > 0;
+  const eventSnapshot = getOrderEventSnapshot(record);
 
   const renderedDetailContainer = staffOrderDetailDialog;
   renderedDetailContainer.innerHTML = `
@@ -6122,6 +6693,7 @@ function renderStaffOrderDetail() {
         <div class="staff-order-detail-badges">
           <span class="staff-tray-badge ${escapeHtml(getOrderTrayBadgeClass(record))}">${escapeHtml(trayLabel)}</span>
           <span class="staff-status-badge ${escapeHtml(getOrderProductionStatusBadgeClass(record))}">${escapeHtml(productionStatusLabel)}</span>
+          ${buildOrderEventBadges(record)}
           ${buildStaffSyncBadgeMarkup(record)}
           ${openFlags.length ? '<span class="staff-flag-badge">Open Flags</span>' : ''}
         </div>
@@ -6159,6 +6731,8 @@ function renderStaffOrderDetail() {
       <div class="staff-order-detail-grid">
         <div><span>Tray State</span><strong>${escapeHtml(trayLabel)}</strong></div>
         <div><span>Production Progress</span><strong>${escapeHtml(completionSummary)}</strong></div>
+        <div><span>Event</span><strong>${escapeHtml(eventSnapshot?.event_name || 'Not attached')}</strong></div>
+        <div><span>Event Type</span><strong>${escapeHtml(eventSnapshot?.event_type === 'test_session' ? 'Test Session' : (eventSnapshot ? 'Live Event' : 'Not attached'))}</strong></div>
       </div>
       ${showOpenFlagProgressNote ? '<p class="staff-order-detail-note">All required pieces are complete, but this order still has an open flag and cannot move to Ready to Pack yet.</p>' : ''}
       <div class="staff-order-detail-flags">
@@ -7316,7 +7890,7 @@ async function submitCurrentOrder() {
       activeOrderSessionId: appState.activeOrderSessionId,
       orderState: orderStateSnapshot,
       deviceId: null,
-      event: null,
+      event: customerEventState.activeEvent,
       paymentConfirmation
     });
 
@@ -7840,6 +8414,7 @@ if (treeForm) {
   renderCurrentOrderUtilityButtons();
   renderDiscardPanels();
   renderAddConfirmation();
+  renderOrderingGate();
   renderTreeSubmitButton();
   ensurePayloadPreviewUi();
   ensureSavedOrdersUi();
@@ -7875,6 +8450,20 @@ if (treeForm) {
   } else if (appState.currentScreen === 'current-order') {
     showScreen('current-order');
   }
+
+  refreshCustomerOrderingGate({ preserveCustomerScreens: false }).catch((error) => {
+    console.error('Forge ordering gate refresh failed', error);
+    renderOrderingGate();
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      refreshCustomerOrderingGate({ preserveCustomerScreens: false }).catch(() => {});
+    }
+  });
+  window.addEventListener('pageshow', () => {
+    refreshCustomerOrderingGate({ preserveCustomerScreens: false }).catch(() => {});
+  });
 
   staffButton?.addEventListener('click', () => {
     lastStaffFocusTarget = staffButton;
@@ -8669,20 +9258,28 @@ if (treeForm) {
     if (target.matches('[data-staff-orders-search]')) {
       staffOrdersState.searchTerm = target.value;
       renderStaffOrdersQueue();
+      return;
+    }
+    const eventField = target.dataset.staffEventField;
+    if (eventField) {
+      staffEventState.form[eventField] = target.value;
     }
   });
 
   document.querySelector('[data-screen="staff-orders"]')?.addEventListener('change', (event) => {
     const target = event.target;
-    if (!(target instanceof HTMLSelectElement)) {
-      return;
+    if (target instanceof HTMLSelectElement) {
+      const filterKey = target.dataset.staffFilter;
+      if (filterKey) {
+        staffOrdersState.filters[filterKey] = String(target.value || 'all').trim().toLowerCase();
+        renderStaffOrdersQueue();
+        return;
+      }
+      const eventField = target.dataset.staffEventField;
+      if (eventField) {
+        staffEventState.form[eventField] = String(target.value || '');
+      }
     }
-    const filterKey = target.dataset.staffFilter;
-    if (!filterKey) {
-      return;
-    }
-    staffOrdersState.filters[filterKey] = String(target.value || 'all').trim().toLowerCase();
-    renderStaffOrdersQueue();
   });
 
   document.querySelector('[data-screen="staff-orders"]')?.addEventListener('click', (event) => {
@@ -8695,6 +9292,39 @@ if (treeForm) {
     if (action === 'staff-refresh-orders') {
       staffOrdersState.notice = '';
       loadStaffOrdersQueue();
+      return;
+    }
+
+    if (action === 'staff-refresh-events') {
+      staffEventState.notice = '';
+      loadStaffEvents();
+      return;
+    }
+
+    if (action === 'staff-toggle-event-form') {
+      staffEventState.formOpen = !staffEventState.formOpen;
+      staffEventState.error = '';
+      renderStaffEventControls();
+      return;
+    }
+
+    if (action === 'staff-submit-event') {
+      submitStaffEventForm();
+      return;
+    }
+
+    if (action === 'staff-copy-ordering-link') {
+      copyStaffOrderingLink(event.target.closest('[data-event-token]')?.dataset.eventToken || '');
+      return;
+    }
+
+    if (action === 'staff-start-event') {
+      startStaffEvent(event.target.closest('[data-event-id]')?.dataset.eventId || '');
+      return;
+    }
+
+    if (action === 'staff-end-event') {
+      endStaffEvent(event.target.closest('[data-event-id]')?.dataset.eventId || '');
       return;
     }
 

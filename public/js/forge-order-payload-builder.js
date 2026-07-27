@@ -582,12 +582,20 @@
     }
     const eventId = asNullableTrimmedString(event.event_id || event.eventId);
     const eventName = asNullableTrimmedString(event.event_name || event.eventName);
+    const eventType = asNullableTrimmedString(event.event_type || event.eventType);
+    const eventStartDate = asNullableTrimmedString(event.event_start_date || event.start_date || event.startDate);
+    const eventEndDate = asNullableTrimmedString(event.event_end_date || event.end_date || event.endDate);
+    const eventLocation = asNullableTrimmedString(event.event_location || event.location);
     if (!eventId && !eventName) {
       return null;
     }
     return {
       event_id: eventId,
-      event_name: eventName
+      event_name: eventName,
+      event_type: eventType,
+      event_start_date: eventStartDate,
+      event_end_date: eventEndDate,
+      event_location: eventLocation
     };
   }
 

@@ -110,6 +110,44 @@ test('default client requests /api/v1/health.php', async () => {
   assert.equal(calls[0].url, '/api/v1/health.php');
 });
 
+test('ordering-state requests include the exact event token when provided', async () => {
+  let requestedUrl = '';
+  const client = apiClientModule.createForgeApiClient({
+    fetchImpl: async (url) => {
+      requestedUrl = url;
+      return createJsonResponse({
+        application: 'Forge',
+        api_version: '1',
+        status: 'ok',
+        data: {
+          ordering_open: false,
+          resolution_scope: 'event_token',
+          requested_public_order_token: 'phone-token-123',
+          availability: 'scheduled',
+          event: {
+            event_id: 'event-demo',
+            public_order_token: 'phone-token-123',
+            event_name: 'Demo Market',
+            event_type: 'live_event',
+            event_status: 'scheduled',
+            start_date: '2026-08-01',
+            end_date: '2026-08-02',
+            event_location: 'Austin'
+          }
+        }
+      });
+    }
+  });
+
+  const result = await client.getOrderingState({ eventToken: 'phone-token-123' });
+
+  assert.equal(requestedUrl, '/api/v1/event-status.php?event=phone-token-123');
+  assert.equal(result.orderingOpen, false);
+  assert.equal(result.requestedPublicOrderToken, 'phone-token-123');
+  assert.equal(result.availability, 'scheduled');
+  assert.equal(result.resolutionScope, 'event_token');
+});
+
 test('custom baseUrl is normalized correctly', async () => {
   let requestedUrl = '';
   const client = apiClientModule.createForgeApiClient({

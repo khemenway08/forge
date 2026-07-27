@@ -400,6 +400,7 @@ function loadForgeAppWithoutStaffModules() {
     'public/js/forge-order-store.js',
     'public/js/forge-order-server-sync.js',
     'public/js/forge-order-submission.js',
+    'public/js/forge-event-state.js',
     'public/js/forge-local-orders-queue.js',
     'public/js/app.js'
   ];
@@ -820,6 +821,7 @@ function loadForgeHostedStaffAppForTrayDetail() {
     'public/js/forge-order-store.js',
     'public/js/forge-order-server-sync.js',
     'public/js/forge-order-submission.js',
+    'public/js/forge-event-state.js',
     'public/js/forge-local-orders-queue.js',
     'public/js/app.js'
   ];
@@ -1140,6 +1142,7 @@ function loadForgeStaffDemoApp({
     'public/js/forge-order-store.js',
     'public/js/forge-order-server-sync.js',
     'public/js/forge-order-submission.js',
+    'public/js/forge-event-state.js',
     'public/js/forge-local-orders-queue.js',
     'public/js/app.js'
   ];
@@ -1297,6 +1300,136 @@ test('payment handoff authorization is tied to one order session and can be cons
     paymentConfirmedAt: '2026-07-21T18:45:00.000Z'
   }));
   assert.equal(secondConsume, null);
+});
+
+test('no-token customer access keeps the Hilltop Shop kiosk copy tied to the current active event', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    window.location.search = '';
+    customerEventState.orderingOpen = true;
+    customerEventState.unavailable = false;
+    customerEventState.availability = 'active';
+    customerEventState.activeEvent = {
+      event_id: 'event-kiosk',
+      public_order_token: 'kiosk-token',
+      event_name: 'Hilltop Holiday Market',
+      event_type: 'live_event',
+      event_start_date: '2026-11-10',
+      event_end_date: '2026-11-12',
+      event_location: 'Austin',
+      event_status: 'active'
+    };
+  `, context);
+
+  const headline = vm.runInContext('getCurrentOrderingHeadline()', context);
+
+  assert.equal(headline.eyebrow, 'Ordering Open');
+  assert.equal(headline.title, 'Hilltop Holiday Market');
+  assert.equal(headline.copy, 'Custom ordering is open for the current Forge event.');
+  assert.equal(headline.buttonDisabled, false);
+});
+
+test('a scheduled event token keeps customer ordering closed for that exact event link', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    window.location.search = '?event=scheduled-phone-token';
+    customerEventState.orderingOpen = false;
+    customerEventState.unavailable = false;
+    customerEventState.availability = 'scheduled';
+    customerEventState.activeEvent = {
+      event_id: 'event-scheduled',
+      public_order_token: 'scheduled-phone-token',
+      event_name: 'Tomorrow Market',
+      event_type: 'live_event',
+      event_start_date: '2026-11-20',
+      event_end_date: '2026-11-21',
+      event_location: 'Austin',
+      event_status: 'scheduled'
+    };
+  `, context);
+
+  const headline = vm.runInContext('getCurrentOrderingHeadline()', context);
+
+  assert.equal(headline.eyebrow, 'Event Scheduled');
+  assert.equal(headline.title, 'Tomorrow Market');
+  assert.match(headline.copy, /belongs to a scheduled event/);
+  assert.equal(headline.buttonLabel, 'Ordering Closed');
+  assert.equal(headline.buttonDisabled, true);
+});
+
+test('an ended event token remains closed and is not reopened by later events', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    window.location.search = '?event=ended-phone-token';
+    customerEventState.orderingOpen = false;
+    customerEventState.unavailable = false;
+    customerEventState.availability = 'ended';
+    customerEventState.activeEvent = {
+      event_id: 'event-ended',
+      public_order_token: 'ended-phone-token',
+      event_name: 'Last Weekend Market',
+      event_type: 'test_session',
+      event_start_date: '2026-07-18',
+      event_end_date: '2026-07-19',
+      event_location: 'Austin',
+      event_status: 'ended'
+    };
+  `, context);
+
+  const headline = vm.runInContext('getCurrentOrderingHeadline()', context);
+
+  assert.equal(headline.eyebrow, 'Test Session Ended');
+  assert.equal(headline.title, 'Last Weekend Market');
+  assert.match(headline.copy, /will not reopen when a later event starts/);
+  assert.equal(headline.buttonDisabled, true);
+});
+
+test('an invalid event token never falls back to another active event', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    window.location.search = '?event=unknown-phone-token';
+    customerEventState.orderingOpen = false;
+    customerEventState.unavailable = false;
+    customerEventState.availability = 'invalid_token';
+    customerEventState.activeEvent = null;
+  `, context);
+
+  const headline = vm.runInContext('getCurrentOrderingHeadline()', context);
+
+  assert.equal(headline.eyebrow, 'Event Not Available');
+  assert.equal(headline.title, 'This ordering link is not active.');
+  assert.match(headline.status, /will not reactivate this older link/);
+  assert.equal(headline.buttonDisabled, true);
+});
+
+test('staff event controls identify test-session links and expose the copy ordering link action', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    staffEventState.events = [{
+      event_id: 'event-test',
+      public_order_token: 'test-session-public-token',
+      event_name: 'Checkout Test Session',
+      event_type: 'test_session',
+      start_date: '2026-07-27',
+      end_date: '2026-07-27',
+      event_location: 'Austin',
+      event_status: 'scheduled'
+    }];
+    renderStaffEventControls();
+  `, context);
+
+  const controlsHtml = vm.runInContext('document.querySelector("[data-staff-event-controls]").innerHTML', context);
+
+  assert.match(String(controlsHtml), /Checkout Test Session/);
+  assert.match(String(controlsHtml), /TEST/);
+  assert.match(String(controlsHtml), /Copy Ordering Link/);
+  assert.match(String(controlsHtml), /\?event=test-session-public-token/);
+  assert.match(String(controlsHtml), /Ending this event disables this exact link\./);
 });
 
 test('shared server order detail assign tray button opens the tray picker after re-rendering', async () => {
