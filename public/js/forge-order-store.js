@@ -969,6 +969,28 @@
       });
     }
 
+    async function previewShippingExport(eventId) {
+      const normalizedEventId = asTrimmedString(eventId);
+      if (!normalizedEventId) {
+        throw new Error('A valid event is required.');
+      }
+
+      const records = await listOrders();
+      return buildLocalShippingExportPreview(records, normalizedEventId);
+    }
+
+    async function generateShippingExportCsv(eventId) {
+      const preview = await previewShippingExport(eventId);
+      if (!preview.has_exportable_rows) {
+        throw new Error('No shipping orders with complete addresses are available for that event.');
+      }
+
+      return {
+        filename: preview.csv_filename,
+        csv: buildLocalShippingExportCsv(preview.included_orders)
+      };
+    }
+
     async function completePackingVerification(forgeOrderUuid, verifiedItemIds, packingNote) {
       const orderUuid = asTrimmedString(forgeOrderUuid);
       if (!orderUuid) {
@@ -1128,6 +1150,8 @@
       updateInternalNote,
       cancelOrder,
       deleteTestOrder,
+      previewShippingExport,
+      generateShippingExportCsv,
       completePackingVerification
     };
   }
@@ -1563,6 +1587,23 @@
           deletedOrderUuid: orderUuid,
           deletedOrderNumber: normalizedOrder.forge_order_number || null,
           releasedTrayNumber: trayNumber || null
+        };
+      },
+      async previewShippingExport(eventId) {
+        return buildLocalShippingExportPreview(
+          [...records.values()].map((record) => normalizeOrderRecordForRead(record)).sort(compareOrdersNewestFirst),
+          asTrimmedString(eventId)
+        );
+      },
+      async generateShippingExportCsv(eventId) {
+        const preview = await this.previewShippingExport(eventId);
+        if (!preview.has_exportable_rows) {
+          throw new Error('No shipping orders with complete addresses are available for that event.');
+        }
+
+        return {
+          filename: preview.csv_filename,
+          csv: buildLocalShippingExportCsv(preview.included_orders)
         };
       },
       async completePackingVerification(forgeOrderUuid, verifiedItemIds, packingNote) {
@@ -2320,6 +2361,207 @@
     return getNormalizedOrderItems(record).filter((item) => normalizeItemProductionStatus(item.production_status) !== ITEM_PRODUCTION_STATUSES.cancelled);
   }
 
+  function buildLocalShippingExportPreview(records, eventId) {
+    const normalizedRecords = Array.isArray(records) ? records : [];
+    const matchingRecords = normalizedRecords.filter((record) => {
+      const snapshot = record && record.payload && record.payload.event && typeof record.payload.event === 'object'
+        ? record.payload.event
+        : null;
+      return asTrimmedString(snapshot && snapshot.event_id) === eventId;
+    });
+    const event = deriveLocalShippingExportEvent(matchingRecords, eventId);
+    const includedOrders = [];
+    const excludedOrders = [];
+    let shippingOrderCount = 0;
+
+    matchingRecords.forEach((record) => {
+      const normalized = normalizeLocalShippingExportRecord(record, event);
+      if (!normalized) {
+        return;
+      }
+      if (normalized.isShippingOrder) {
+        shippingOrderCount += 1;
+      }
+      if (normalized.included) {
+        includedOrders.push(normalized.record);
+        return;
+      }
+      if (normalized.isShippingOrder) {
+        excludedOrders.push(normalized.record);
+      }
+    });
+
+    return {
+      event,
+      included_count: includedOrders.length,
+      excluded_count: excludedOrders.length,
+      shipping_order_count: shippingOrderCount,
+      has_exportable_rows: includedOrders.length > 0,
+      csv_filename: buildLocalShippingExportFilename(event),
+      included_orders: includedOrders,
+      excluded_orders: excludedOrders
+    };
+  }
+
+  function normalizeLocalShippingExportRecord(record, event) {
+    if (!record || typeof record !== 'object') {
+      return null;
+    }
+
+    const payload = record.payload && typeof record.payload === 'object' ? record.payload : {};
+    const eventSnapshot = payload.event && typeof payload.event === 'object' ? payload.event : {};
+    const fulfillment = payload.fulfillment && typeof payload.fulfillment === 'object' ? payload.fulfillment : {};
+    const shippingAddress = fulfillment.shipping_address && typeof fulfillment.shipping_address === 'object' ? fulfillment.shipping_address : {};
+    const customer = payload.customer && typeof payload.customer === 'object' ? payload.customer : {};
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    const fulfillmentMethod = asTrimmedString(fulfillment.method).toLowerCase();
+    const isCancelled = normalizeProductionStatus(record.production_status) === PRODUCTION_STATUSES.cancelled;
+    const eventType = asTrimmedString(eventSnapshot.event_type || event.event_type);
+    const isShippingOrder = fulfillmentMethod === 'shipping' && !isCancelled && eventType !== 'test_session';
+    const missingFields = determineLocalShippingExportMissingFields(customer, shippingAddress);
+    const itemCount = items.reduce((total, item) => total + normalizePositiveQuantity(item && item.quantity), 0);
+
+    const exportRecord = {
+      forge_order_uuid: asTrimmedString(record.forge_order_uuid),
+      forge_order_number: Number.isInteger(record.forge_order_number) ? record.forge_order_number : null,
+      order_reference: getLocalShippingExportOrderReference(record),
+      customer_name: asTrimmedString(customer.full_name),
+      address_line_1: asTrimmedString(shippingAddress.address_1),
+      address_line_2: asTrimmedString(shippingAddress.address_2),
+      city: asTrimmedString(shippingAddress.city),
+      state: asTrimmedString(shippingAddress.state),
+      postal_code: asTrimmedString(shippingAddress.postal_code),
+      country: asTrimmedString(shippingAddress.country),
+      email: asTrimmedString(customer.email),
+      phone: asTrimmedString(customer.phone),
+      item_count: itemCount,
+      event_name: asTrimmedString(event.event_name),
+      submitted_at: asTrimmedString(record.submitted_at || record.local_saved_at),
+      missing_fields: missingFields
+    };
+
+    return {
+      included: isShippingOrder && missingFields.length === 0,
+      isShippingOrder,
+      record: exportRecord
+    };
+  }
+
+  function deriveLocalShippingExportEvent(records, eventId) {
+    const firstRecord = Array.isArray(records) && records.length > 0 ? records[0] : null;
+    const snapshot = firstRecord && firstRecord.payload && firstRecord.payload.event && typeof firstRecord.payload.event === 'object'
+      ? firstRecord.payload.event
+      : {};
+
+    return {
+      event_id: eventId,
+      public_order_token: asTrimmedString(snapshot.public_order_token) || null,
+      event_name: asTrimmedString(snapshot.event_name) || 'Event',
+      event_type: asTrimmedString(snapshot.event_type) || 'live_event',
+      start_date: asTrimmedString(snapshot.event_start_date),
+      end_date: asTrimmedString(snapshot.event_end_date),
+      event_location: asTrimmedString(snapshot.event_location) || null,
+      event_status: asTrimmedString(snapshot.event_status) || ''
+    };
+  }
+
+  function determineLocalShippingExportMissingFields(customer, shippingAddress) {
+    const missing = [];
+    if (!asTrimmedString(customer && customer.full_name)) {
+      missing.push('customer_name');
+    }
+    ['address_1', 'city', 'state', 'postal_code', 'country'].forEach((field) => {
+      if (!asTrimmedString(shippingAddress && shippingAddress[field])) {
+        missing.push(field);
+      }
+    });
+    return missing;
+  }
+
+  function buildLocalShippingExportCsv(records) {
+    const lines = [[
+      'Forge Order Number',
+      'Customer Name',
+      'Address Line 1',
+      'Address Line 2',
+      'City',
+      'State',
+      'Postal Code',
+      'Country',
+      'Email',
+      'Phone',
+      'Item Count',
+      'Event Name',
+      'Submitted At'
+    ]];
+
+    records.forEach((record) => {
+      lines.push([
+        Number.isInteger(record.forge_order_number) ? String(record.forge_order_number) : '',
+        neutralizeLocalShippingCsvCell(asTrimmedString(record.customer_name)),
+        neutralizeLocalShippingCsvCell(asTrimmedString(record.address_line_1)),
+        neutralizeLocalShippingCsvCell(asTrimmedString(record.address_line_2)),
+        neutralizeLocalShippingCsvCell(asTrimmedString(record.city)),
+        neutralizeLocalShippingCsvCell(asTrimmedString(record.state)),
+        neutralizeLocalShippingCsvCell(asTrimmedString(record.postal_code)),
+        neutralizeLocalShippingCsvCell(asTrimmedString(record.country)),
+        neutralizeLocalShippingCsvCell(asTrimmedString(record.email)),
+        neutralizeLocalShippingCsvCell(asTrimmedString(record.phone)),
+        String(Number.isInteger(record.item_count) ? record.item_count : 0),
+        neutralizeLocalShippingCsvCell(asTrimmedString(record.event_name)),
+        neutralizeLocalShippingCsvCell(asTrimmedString(record.submitted_at))
+      ]);
+    });
+
+    return lines.map((row) => row.map(escapeCsvField).join(',')).join('\r\n');
+  }
+
+  function buildLocalShippingExportFilename(event) {
+    const slugSource = asTrimmedString(event && event.event_name).toLowerCase();
+    const slug = (slugSource.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'event');
+    return `forge-shipping-export-${slug}-${asTrimmedString(event && event.start_date) || 'local'}.csv`;
+  }
+
+  function getLocalShippingExportOrderReference(record) {
+    if (Number.isInteger(record && record.forge_order_number)) {
+      return `Order ${record.forge_order_number}`;
+    }
+    const orderUuid = asTrimmedString(record && record.forge_order_uuid);
+    return `Order ${orderUuid.slice(0, 8).toUpperCase()}`;
+  }
+
+  function normalizePositiveQuantity(value) {
+    return Number.isInteger(value) && value > 0 ? value : 1;
+  }
+
+  function escapeCsvField(value) {
+    const stringValue = value == null ? '' : String(value);
+    if (!/[",\r\n]/.test(stringValue)) {
+      return stringValue;
+    }
+    return `"${stringValue.replace(/"/g, '""')}"`;
+  }
+
+  function neutralizeLocalShippingCsvCell(value) {
+    const stringValue = value == null ? '' : String(value);
+    if (stringValue === '') {
+      return '';
+    }
+
+    const normalized = stringValue.replace(/\r\n?/g, '\n');
+    const trimmedLeadingWhitespace = normalized.replace(/^\s+/, '');
+    if (trimmedLeadingWhitespace === '') {
+      return normalized;
+    }
+
+    const firstCharacter = trimmedLeadingWhitespace.charAt(0);
+    if (firstCharacter === '=' || firstCharacter === '+' || firstCharacter === '-' || firstCharacter === '@') {
+      return `'${normalized}`;
+    }
+
+    return normalized;
+  }
+
   function validateOrderPackingEligibility(record) {
     if (!record) {
       return { ok: false, error: 'That saved order could not be found.' };
@@ -2574,6 +2816,8 @@
     updateInternalNote: (...args) => defaultOrderStore.updateInternalNote(...args),
     cancelOrder: (...args) => defaultOrderStore.cancelOrder(...args),
     deleteTestOrder: (...args) => defaultOrderStore.deleteTestOrder(...args),
+    previewShippingExport: (...args) => defaultOrderStore.previewShippingExport(...args),
+    generateShippingExportCsv: (...args) => defaultOrderStore.generateShippingExportCsv(...args),
     completePackingVerification: (...args) => defaultOrderStore.completePackingVerification(...args)
   };
 }));

@@ -501,6 +501,98 @@ test('applyLegacyTestCleanup sends POST JSON with the preview signature count an
   });
 });
 
+test('previewShippingExport sends GET with same-origin credentials and returns the selected event preview safely', async () => {
+  const requests = [];
+  const client = staffApiClientModule.createForgeStaffApiClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return createJsonResponse(200, {
+        application: 'Forge',
+        api_version: '1',
+        status: 'ok',
+        data: {
+          preview: {
+            event: {
+              event_id: 'event-live-1',
+              event_name: 'Austin Market',
+              event_type: 'live_event',
+              start_date: '2026-07-27',
+              end_date: '2026-07-27',
+              event_status: 'active'
+            },
+            included_count: 1,
+            excluded_count: 1,
+            shipping_order_count: 2,
+            has_exportable_rows: true,
+            csv_filename: 'forge-shipping-export-austin-market-2026-07-27.csv',
+            included_orders: [
+              {
+                forge_order_uuid: 'ship-1',
+                forge_order_number: 1101,
+                order_reference: 'Order 1101',
+                customer_name: 'Shipping Customer',
+                address_line_1: '123 Main Street',
+                address_line_2: '',
+                city: 'Austin',
+                state: 'TX',
+                postal_code: '78701',
+                country: 'United States',
+                email: 'ship@example.com',
+                phone: '555-111-2222',
+                item_count: 1,
+                event_name: 'Austin Market',
+                submitted_at: '2026-07-27T16:00:00Z',
+                missing_fields: []
+              }
+            ],
+            excluded_orders: [
+              {
+                forge_order_uuid: 'ship-2',
+                forge_order_number: 1102,
+                order_reference: 'Order 1102',
+                customer_name: 'Missing Postal',
+                address_line_1: '500 Pine Street',
+                address_line_2: '',
+                city: 'Austin',
+                state: 'TX',
+                postal_code: '',
+                country: 'United States',
+                email: 'missing@example.com',
+                phone: '555-333-4444',
+                item_count: 1,
+                event_name: 'Austin Market',
+                submitted_at: '2026-07-27T16:05:00Z',
+                missing_fields: ['postal_code']
+              }
+            ]
+          }
+        }
+      });
+    }
+  });
+
+  const result = await client.previewShippingExport('event-live-1');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.preview.includedCount, 1);
+  assert.equal(result.preview.excludedOrders[0].missing_fields[0], 'postal_code');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, '/api/v1/staff/shipping-export-preview.php?event_id=event-live-1');
+  assert.equal(requests[0].options.method, 'GET');
+  assert.equal(requests[0].options.credentials, 'same-origin');
+  assert.equal(requests[0].options.cache, 'no-store');
+});
+
+test('getShippingExportDownloadUrl validates the event id and returns the staff download endpoint safely', async () => {
+  const client = staffApiClientModule.createForgeStaffApiClient();
+
+  assert.equal(
+    client.getShippingExportDownloadUrl('event-live-1'),
+    '/api/v1/staff/shipping-export-download.php?event_id=event-live-1'
+  );
+  assert.throws(() => client.getShippingExportDownloadUrl(''), /valid event/i);
+});
+
 test('cancelOrder sends POST JSON and returns the cancelled order with released tray details safely', async () => {
   const requests = [];
   const client = staffApiClientModule.createForgeStaffApiClient({

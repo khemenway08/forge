@@ -1821,6 +1821,277 @@ $runner->run('failed Test Session deletion rolls back safely without removing th
     assertSame(null, $historyRow['release_reason'] ?? null);
 });
 
+$runner->run('shipping export preview includes only selected-event live shipping orders with complete addresses and reports missing fields safely', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    seedStaffOrderRepositoryTestEvent($pdo, [
+        'event_id' => 'event-live-shipping',
+        'event_name' => 'Austin Market',
+        'event_type' => 'live_event',
+        'start_date' => '2026-07-27',
+        'end_date' => '2026-07-27',
+        'event_status' => 'active',
+    ]);
+
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174601',
+        'forge_order_number' => 1101,
+        'submitted_at' => '2026-07-27 16:00:00.000000',
+        'payload' => createValidPayload([
+            'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174601',
+            'forge_order_number' => 1101,
+            'customer' => [
+                'full_name' => 'Shipping Customer',
+                'email' => 'ship@example.com',
+                'phone' => '555-111-2222',
+            ],
+            'fulfillment' => [
+                'method' => 'shipping',
+                'shipping_address' => [
+                    'address_1' => '123 Main Street',
+                    'address_2' => '',
+                    'city' => 'Austin',
+                    'state' => 'TX',
+                    'postal_code' => '78701',
+                    'country' => 'United States',
+                ],
+            ],
+            'event' => [
+                'event_id' => 'event-live-shipping',
+                'event_name' => 'Austin Market',
+                'event_type' => 'live_event',
+                'event_start_date' => '2026-07-27',
+                'event_end_date' => '2026-07-27',
+                'event_location' => 'Austin',
+            ],
+        ]),
+    ]);
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174602',
+        'forge_order_number' => 1102,
+        'submitted_at' => '2026-07-27 16:05:00.000000',
+        'payload' => createValidPayload([
+            'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174602',
+            'forge_order_number' => 1102,
+            'customer' => [
+                'full_name' => 'Missing Postal',
+                'email' => 'missing@example.com',
+                'phone' => '555-333-4444',
+            ],
+            'fulfillment' => [
+                'method' => 'shipping',
+                'shipping_address' => [
+                    'address_1' => '500 Pine Street',
+                    'address_2' => '',
+                    'city' => 'Austin',
+                    'state' => 'TX',
+                    'postal_code' => '',
+                    'country' => 'United States',
+                ],
+            ],
+            'event' => [
+                'event_id' => 'event-live-shipping',
+                'event_name' => 'Austin Market',
+                'event_type' => 'live_event',
+                'event_start_date' => '2026-07-27',
+                'event_end_date' => '2026-07-27',
+                'event_location' => 'Austin',
+            ],
+        ]),
+    ]);
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174603',
+        'forge_order_number' => 1103,
+        'payload' => createValidPayload([
+            'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174603',
+            'forge_order_number' => 1103,
+            'fulfillment' => [
+                'method' => 'pickup',
+                'shipping_address' => null,
+            ],
+            'event' => [
+                'event_id' => 'event-live-shipping',
+                'event_name' => 'Austin Market',
+                'event_type' => 'live_event',
+                'event_start_date' => '2026-07-27',
+                'event_end_date' => '2026-07-27',
+                'event_location' => 'Austin',
+            ],
+        ]),
+    ]);
+
+    $repository = new \Forge\Server\PdoStaffOrderRepository($pdo, [
+        'FORGE_TRAY_NUMBERS' => '1,2,3',
+    ]);
+
+    $preview = $repository->previewShippingExportForEvent('event-live-shipping');
+    $download = $repository->generateShippingExportCsvForEvent('event-live-shipping');
+
+    assertSame('Austin Market', $preview['event']['event_name']);
+    assertSame(1, $preview['included_count']);
+    assertSame(1, $preview['excluded_count']);
+    assertSame(2, $preview['shipping_order_count']);
+    assertSame('Order 1101', $preview['included_orders'][0]['order_reference']);
+    assertSame(['postal_code'], $preview['excluded_orders'][0]['missing_fields']);
+    assertSame(1, substr_count($download['csv'], 'Shipping Customer'));
+    assertSame(0, substr_count($download['csv'], 'Missing Postal'));
+    assertTrue(strpos($download['filename'], 'forge-shipping-export-austin-market-2026-07-27.csv') !== false);
+});
+
+$runner->run('shipping export csv keeps approved columns order neutralizes formulas and excludes private production fields safely', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    seedStaffOrderRepositoryTestEvent($pdo, [
+        'event_id' => 'event-safe-csv',
+        'event_name' => 'Safe CSV Market',
+        'event_type' => 'live_event',
+        'start_date' => '2026-07-27',
+        'end_date' => '2026-07-27',
+        'event_status' => 'active',
+    ]);
+
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174611',
+        'forge_order_number' => 1111,
+        'internal_note' => 'private note',
+        'current_tray_number' => 3,
+        'production_status' => 'tray_assigned',
+        'payload' => createValidPayload([
+            'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174611',
+            'forge_order_number' => 1111,
+            'customer' => [
+                'full_name' => '=Formula Name',
+                'email' => '+ship@example.com',
+                'phone' => '@555-111-2222',
+            ],
+            'fulfillment' => [
+                'method' => 'shipping',
+                'shipping_address' => [
+                    'address_1' => '123 Main Street',
+                    'address_2' => "Apt 2B,\nNorth Hall",
+                    'city' => 'Austin',
+                    'state' => 'TX',
+                    'postal_code' => '78701',
+                    'country' => 'United States',
+                ],
+            ],
+            'event' => [
+                'event_id' => 'event-safe-csv',
+                'event_name' => 'Safe CSV Market',
+                'event_type' => 'live_event',
+                'event_start_date' => '2026-07-27',
+                'event_end_date' => '2026-07-27',
+                'event_location' => 'Austin',
+            ],
+            'pricing' => [
+                'estimated_total_cents' => 2600,
+            ],
+            'items' => [
+                [
+                    'line_id' => 'line-safe-1',
+                    'line_number' => 1,
+                    'quantity' => 1,
+                    'product_definition_id' => 'tree_ornament',
+                    'product_display_name' => 'Tree Ornament',
+                    'product_category' => 'ornament',
+                    'product_definition_version' => '1.0',
+                    'pricing' => [
+                        'mode' => 'fixed',
+                        'final_unit_price_cents' => 2600,
+                    ],
+                    'configuration_snapshot' => [
+                        'familyName' => 'Hemenway',
+                    ],
+                    'personalization_order' => [
+                        ['position' => 1, 'type' => 'person', 'name' => 'Kyle'],
+                    ],
+                    'structured_attributes' => [],
+                    'open_flags' => [],
+                    'customer_note' => 'hello',
+                    'production_note' => 'hidden',
+                ],
+            ],
+        ]),
+    ]);
+
+    $repository = new \Forge\Server\PdoStaffOrderRepository($pdo, [
+        'FORGE_TRAY_NUMBERS' => '1,2,3',
+    ]);
+
+    $download = $repository->generateShippingExportCsvForEvent('event-safe-csv');
+    $lines = preg_split("/\r\n|\n|\r/", trim($download['csv']));
+    assertTrue(is_array($lines));
+    assertTrue(strpos($lines[0], 'Forge Order Number') !== false);
+    assertTrue(strpos($lines[0], 'Customer Name') !== false);
+    assertTrue(strpos($lines[0], 'Submitted At') !== false);
+    assertTrue(strpos($download['csv'], "'=Formula Name") !== false);
+    assertTrue(strpos($download['csv'], "'+ship@example.com") !== false);
+    assertTrue(strpos($download['csv'], "'@555-111-2222") !== false);
+    assertTrue(strpos($download['csv'], "\"Apt 2B,\nNorth Hall\"") !== false);
+    assertTrue(strpos($download['csv'], 'private note') === false);
+    assertTrue(strpos($download['csv'], '2600') === false);
+    assertTrue(strpos($download['csv'], 'tray_assigned') === false);
+    assertTrue(strpos($download['csv'], 'current_tray_number') === false);
+    assertTrue(strpos($download['csv'], 'Kyle') === false);
+});
+
+$runner->run('shipping export excludes deleted test-order tombstones safely', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    seedStaffOrderRepositoryTestEvent($pdo, [
+        'event_id' => 'event-tombstone-safe',
+        'event_name' => 'Tombstone Market',
+        'event_type' => 'live_event',
+        'start_date' => '2026-07-27',
+        'end_date' => '2026-07-27',
+        'event_status' => 'active',
+    ]);
+
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174612',
+        'forge_order_number' => 1112,
+        'payload' => createValidPayload([
+            'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174612',
+            'forge_order_number' => 1112,
+            'event' => [
+                'event_id' => 'event-tombstone-safe',
+                'event_name' => 'Tombstone Market',
+                'event_type' => 'test_session',
+                'event_start_date' => '2026-07-27',
+                'event_end_date' => '2026-07-27',
+                'event_location' => 'Austin',
+            ],
+        ]),
+    ]);
+
+    $repository = new \Forge\Server\PdoStaffOrderRepository($pdo, [
+        'FORGE_TRAY_NUMBERS' => '1,2,3',
+    ]);
+    $repository->deleteTestOrder('123e4567-e89b-42d3-a456-426614174612', 'DELETE TEST ORDER');
+
+    $preview = $repository->previewShippingExportForEvent('event-tombstone-safe');
+    assertSame(0, $preview['included_count']);
+    assertSame(0, $preview['excluded_count']);
+    assertSame(0, $preview['shipping_order_count']);
+});
+
+$runner->run('shipping export endpoint pair stays staff-only no-store and separate from public order access', static function (): void {
+    $previewEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/shipping-export-preview.php');
+    $downloadEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/shipping-export-download.php');
+    $repositorySource = file_get_contents(dirname(__DIR__) . '/lib/staff-order-repository.php');
+    $publicOrdersEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/orders.php');
+
+    assertTrue(is_string($previewEndpointSource));
+    assertTrue(is_string($downloadEndpointSource));
+    assertTrue(is_string($repositorySource));
+    assertTrue(is_string($publicOrdersEndpointSource));
+    assertTrue(strpos($previewEndpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($downloadEndpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($previewEndpointSource, 'previewShippingExportForEvent') !== false);
+    assertTrue(strpos($downloadEndpointSource, 'generateShippingExportCsvForEvent') !== false);
+    assertTrue(strpos($downloadEndpointSource, 'Content-Type: text/csv; charset=utf-8') !== false);
+    assertTrue(strpos($downloadEndpointSource, 'Cache-Control: no-store') !== false);
+    assertTrue(strpos($repositorySource, 'No shipping orders with complete addresses are available for that event.') !== false);
+    assertTrue(strpos($publicOrdersEndpointSource, 'shipping-export') === false);
+});
+
 $runner->run('configured tray numbers are deduplicated and sorted numerically', static function (): void {
     $trayNumbers = \Forge\Server\parseConfiguredTrayNumbers('12, 2, 7 2 4');
 
@@ -3718,6 +3989,18 @@ function createStaffOrderRepositoryTestPdo(bool $includeCleanupTombstones = true
             PRIMARY KEY (forge_order_uuid, line_id)
         )'
     );
+    $pdo->exec(
+        'CREATE TABLE forge_events (
+            event_id TEXT PRIMARY KEY,
+            public_order_token TEXT DEFAULT NULL,
+            event_name TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL,
+            event_location TEXT DEFAULT NULL,
+            event_status TEXT NOT NULL
+        )'
+    );
 
     if ($includeCleanupTombstones) {
         $pdo->exec(
@@ -3729,6 +4012,41 @@ function createStaffOrderRepositoryTestPdo(bool $includeCleanupTombstones = true
     }
 
     return $pdo;
+}
+
+function seedStaffOrderRepositoryTestEvent(PDO $pdo, array $options = []): void
+{
+    $insertEvent = $pdo->prepare(
+        'INSERT INTO forge_events (
+            event_id,
+            public_order_token,
+            event_name,
+            event_type,
+            start_date,
+            end_date,
+            event_location,
+            event_status
+         ) VALUES (
+            :event_id,
+            :public_order_token,
+            :event_name,
+            :event_type,
+            :start_date,
+            :end_date,
+            :event_location,
+            :event_status
+         )'
+    );
+    $insertEvent->execute([
+        ':event_id' => (string) ($options['event_id'] ?? 'event-test'),
+        ':public_order_token' => (string) ($options['public_order_token'] ?? 'token-test'),
+        ':event_name' => (string) ($options['event_name'] ?? 'Event'),
+        ':event_type' => (string) ($options['event_type'] ?? 'live_event'),
+        ':start_date' => (string) ($options['start_date'] ?? '2026-07-27'),
+        ':end_date' => (string) ($options['end_date'] ?? '2026-07-27'),
+        ':event_location' => $options['event_location'] ?? 'Austin',
+        ':event_status' => (string) ($options['event_status'] ?? 'scheduled'),
+    ]);
 }
 
 function seedStaffOrderRepositoryTestOrder(PDO $pdo, array $options = []): void

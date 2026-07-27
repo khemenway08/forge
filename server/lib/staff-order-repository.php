@@ -59,6 +59,10 @@ final class LegacyTestCleanupConflictException extends \RuntimeException
 {
 }
 
+final class ShippingExportEventNotFoundException extends \RuntimeException
+{
+}
+
 final class PdoStaffOrderRepository
 {
     private const INTERNAL_NOTE_MAX_LENGTH = 4000;
@@ -69,6 +73,13 @@ final class PdoStaffOrderRepository
     public const CANCELLED_RELEASE_REASON = 'cancelled';
     public const DELETE_TEST_ORDER_RELEASE_REASON = 'deleted_test_order';
     public const TEST_ORDER_DELETE_CONFIRMATION_TEXT = 'DELETE TEST ORDER';
+    public const SHIPPING_EXPORT_REQUIRED_ADDRESS_FIELDS = [
+        'address_1',
+        'city',
+        'state',
+        'postal_code',
+        'country',
+    ];
     private const ORDER_STATUS_SUBMITTED = 'submitted';
     private const ORDER_STATUS_TRAY_ASSIGNED = 'tray_assigned';
     private const ORDER_STATUS_IN_PRODUCTION = 'in_production';
@@ -1122,6 +1133,53 @@ final class PdoStaffOrderRepository
         }
     }
 
+    /**
+     * @return array{
+     *   event: array<string, mixed>,
+     *   included_count: int,
+     *   excluded_count: int,
+     *   shipping_order_count: int,
+     *   has_exportable_rows: bool,
+     *   csv_filename: string,
+     *   included_orders: array<int, array<string, mixed>>,
+     *   excluded_orders: array<int, array<string, mixed>>
+     * }
+     */
+    public function previewShippingExportForEvent(string $eventId): array
+    {
+        $event = $this->loadShippingExportEvent($eventId);
+        $rows = $this->loadShippingExportRows($event['event_id']);
+        $preview = buildShippingExportPreview($event, $rows);
+
+        return [
+            'event' => $preview['event'],
+            'included_count' => count($preview['included_orders']),
+            'excluded_count' => count($preview['excluded_orders']),
+            'shipping_order_count' => $preview['shipping_order_count'],
+            'has_exportable_rows' => count($preview['included_orders']) > 0,
+            'csv_filename' => $preview['csv_filename'],
+            'included_orders' => $preview['included_orders'],
+            'excluded_orders' => $preview['excluded_orders'],
+        ];
+    }
+
+    /**
+     * @return array{filename: string, csv: string}
+     */
+    public function generateShippingExportCsvForEvent(string $eventId): array
+    {
+        $preview = $this->previewShippingExportForEvent($eventId);
+        $includedOrders = is_array($preview['included_orders'] ?? null) ? $preview['included_orders'] : [];
+        if ($includedOrders === []) {
+            throw new \InvalidArgumentException('No shipping orders with complete addresses are available for that event.');
+        }
+
+        return [
+            'filename' => (string) $preview['csv_filename'],
+            'csv' => buildShippingExportCsv($includedOrders),
+        ];
+    }
+
     private function ensureConfiguredTrays(): void
     {
         try {
@@ -1478,6 +1536,85 @@ final class PdoStaffOrderRepository
     }
 
     /**
+     * @return array<string, mixed>
+     */
+    private function loadShippingExportEvent(string $eventId): array
+    {
+        $normalizedEventId = trim($eventId);
+        if ($normalizedEventId === '') {
+            throw new ShippingExportEventNotFoundException('That event could not be found.');
+        }
+
+        try {
+            $statement = $this->pdo->prepare(
+                'SELECT
+                    event_id,
+                    public_order_token,
+                    event_name,
+                    event_type,
+                    start_date,
+                    end_date,
+                    event_location,
+                    event_status
+                 FROM forge_events
+                 WHERE event_id = :event_id
+                 LIMIT 1'
+            );
+            $statement->execute([
+                ':event_id' => $normalizedEventId,
+            ]);
+            $record = $statement->fetch();
+        } catch (PDOException $exception) {
+            throw new StorageUnavailableException('Shipping export is currently unavailable.', 0, $exception);
+        }
+
+        if (!is_array($record)) {
+            throw new ShippingExportEventNotFoundException('That event could not be found.');
+        }
+
+        return [
+            'event_id' => trim((string) ($record['event_id'] ?? '')),
+            'public_order_token' => normalizeNullableString($record['public_order_token'] ?? null),
+            'event_name' => trim((string) ($record['event_name'] ?? '')),
+            'event_type' => trim((string) ($record['event_type'] ?? '')),
+            'start_date' => trim((string) ($record['start_date'] ?? '')),
+            'end_date' => trim((string) ($record['end_date'] ?? '')),
+            'event_location' => normalizeNullableString($record['event_location'] ?? null),
+            'event_status' => trim((string) ($record['event_status'] ?? '')),
+        ];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function loadShippingExportRows(string $eventId): array
+    {
+        try {
+            $statement = $this->pdo->prepare(
+                'SELECT
+                    forge_order_uuid,
+                    forge_order_number,
+                    submitted_at,
+                    event_id,
+                    payload_json,
+                    production_status,
+                    cancelled_at
+                 FROM forge_orders
+                 WHERE event_id = :event_id
+                 ORDER BY submitted_at ASC, forge_order_uuid ASC'
+            );
+            $statement->execute([
+                ':event_id' => $eventId,
+            ]);
+            $rows = $statement->fetchAll();
+        } catch (PDOException $exception) {
+            throw new StorageUnavailableException('Shipping export is currently unavailable.', 0, $exception);
+        }
+
+        return is_array($rows) ? $rows : [];
+    }
+
+    /**
      * @param array<int, string> $orderUuids
      */
     private function executeUuidBatchMutation(string $sqlTemplate, array $orderUuids): void
@@ -1763,6 +1900,248 @@ function normalizeInternalOrderNoteForStorage($value, int $maxLength): ?string
 
     if ($noteLength > $maxLength) {
         throw new InternalOrderNoteTooLongException(sprintf('Internal notes must be %d characters or fewer.', $maxLength));
+    }
+
+    return $normalized;
+}
+
+/**
+ * @param array<string, mixed> $event
+ * @param array<int, array<string, mixed>> $rows
+ * @return array{
+ *   event: array<string, mixed>,
+ *   shipping_order_count: int,
+ *   csv_filename: string,
+ *   included_orders: array<int, array<string, mixed>>,
+ *   excluded_orders: array<int, array<string, mixed>>
+ * }
+ */
+function buildShippingExportPreview(array $event, array $rows): array
+{
+    $included = [];
+    $excluded = [];
+    $shippingOrderCount = 0;
+
+    foreach ($rows as $row) {
+        $normalized = normalizeShippingExportOrderRow($row, $event);
+        if ($normalized === null) {
+            continue;
+        }
+
+        if ($normalized['is_shipping_order']) {
+            $shippingOrderCount += 1;
+        }
+
+        if ($normalized['included']) {
+            $included[] = $normalized['record'];
+            continue;
+        }
+
+        if ($normalized['is_shipping_order']) {
+            $excluded[] = $normalized['record'];
+        }
+    }
+
+    return [
+        'event' => $event,
+        'shipping_order_count' => $shippingOrderCount,
+        'csv_filename' => buildShippingExportFilename($event),
+        'included_orders' => $included,
+        'excluded_orders' => $excluded,
+    ];
+}
+
+/**
+ * @param array<string, mixed> $row
+ * @param array<string, mixed> $event
+ * @return array{
+ *   included: bool,
+ *   is_shipping_order: bool,
+ *   record: array<string, mixed>
+ * }|null
+ */
+function normalizeShippingExportOrderRow(array $row, array $event): ?array
+{
+    $payloadJson = is_string($row['payload_json'] ?? null) ? $row['payload_json'] : '';
+    if ($payloadJson === '') {
+        return null;
+    }
+
+    try {
+        $payload = json_decode($payloadJson, true, 512, JSON_THROW_ON_ERROR);
+    } catch (JsonException $exception) {
+        return null;
+    }
+
+    if (!is_array($payload)) {
+        return null;
+    }
+
+    $eventSnapshot = is_array($payload['event'] ?? null) ? $payload['event'] : [];
+    $fulfillment = is_array($payload['fulfillment'] ?? null) ? $payload['fulfillment'] : [];
+    $shippingAddress = is_array($fulfillment['shipping_address'] ?? null) ? $fulfillment['shipping_address'] : [];
+    $customer = is_array($payload['customer'] ?? null) ? $payload['customer'] : [];
+    $items = is_array($payload['items'] ?? null) ? $payload['items'] : [];
+
+    $fulfillmentMethod = strtolower(trim((string) ($fulfillment['method'] ?? '')));
+    $eventType = trim((string) ($eventSnapshot['event_type'] ?? ($event['event_type'] ?? '')));
+    $isCancelled = normalizeNullableDatabaseDateTime($row['cancelled_at'] ?? null) !== null
+        || trim((string) ($row['production_status'] ?? '')) === 'cancelled';
+    $isShippingOrder = $fulfillmentMethod === 'shipping' && !$isCancelled && $eventType !== 'test_session';
+
+    $orderNumber = normalizeNullableOrderNumber($row['forge_order_number'] ?? ($payload['forge_order_number'] ?? null));
+    $orderReference = $orderNumber !== null
+        ? sprintf('Order %d', $orderNumber)
+        : sprintf('Order %s', strtoupper(substr(trim((string) ($row['forge_order_uuid'] ?? '')), 0, 8)));
+    $missingFields = determineShippingExportMissingFields($customer, $shippingAddress);
+    $customerName = trim((string) ($customer['full_name'] ?? ''));
+    $itemCount = array_reduce($items, static function (int $count, $item): int {
+        if (!is_array($item)) {
+            return $count;
+        }
+        $quantity = normalizeStaffQuantity($item['quantity'] ?? 1);
+        return $count + $quantity;
+    }, 0);
+
+    $record = [
+        'forge_order_uuid' => trim((string) ($row['forge_order_uuid'] ?? '')),
+        'forge_order_number' => $orderNumber,
+        'order_reference' => $orderReference,
+        'customer_name' => $customerName,
+        'address_line_1' => trim((string) ($shippingAddress['address_1'] ?? '')),
+        'address_line_2' => trim((string) ($shippingAddress['address_2'] ?? '')),
+        'city' => trim((string) ($shippingAddress['city'] ?? '')),
+        'state' => trim((string) ($shippingAddress['state'] ?? '')),
+        'postal_code' => trim((string) ($shippingAddress['postal_code'] ?? '')),
+        'country' => trim((string) ($shippingAddress['country'] ?? '')),
+        'email' => trim((string) ($customer['email'] ?? '')),
+        'phone' => trim((string) ($customer['phone'] ?? '')),
+        'item_count' => $itemCount,
+        'event_name' => trim((string) ($event['event_name'] ?? ($eventSnapshot['event_name'] ?? ''))),
+        'submitted_at' => OrderPayload::databaseDateTimeToIso8601((string) ($row['submitted_at'] ?? '')),
+        'missing_fields' => $missingFields,
+    ];
+
+    return [
+        'included' => $isShippingOrder && $missingFields === [],
+        'is_shipping_order' => $isShippingOrder,
+        'record' => $record,
+    ];
+}
+
+/**
+ * @param array<string, mixed> $customer
+ * @param array<string, mixed> $shippingAddress
+ * @return array<int, string>
+ */
+function determineShippingExportMissingFields(array $customer, array $shippingAddress): array
+{
+    $missing = [];
+    $customerName = trim((string) ($customer['full_name'] ?? ''));
+    if ($customerName === '') {
+        $missing[] = 'customer_name';
+    }
+
+    foreach (PdoStaffOrderRepository::SHIPPING_EXPORT_REQUIRED_ADDRESS_FIELDS as $field) {
+        $value = trim((string) ($shippingAddress[$field] ?? ''));
+        if ($value === '') {
+            $missing[] = $field;
+        }
+    }
+
+    return $missing;
+}
+
+/**
+ * @param array<int, array<string, mixed>> $includedOrders
+ */
+function buildShippingExportCsv(array $includedOrders): string
+{
+    $stream = fopen('php://temp', 'r+');
+    if ($stream === false) {
+        throw new \RuntimeException('Shipping export could not be prepared.');
+    }
+
+    fputcsv($stream, [
+        'Forge Order Number',
+        'Customer Name',
+        'Address Line 1',
+        'Address Line 2',
+        'City',
+        'State',
+        'Postal Code',
+        'Country',
+        'Email',
+        'Phone',
+        'Item Count',
+        'Event Name',
+        'Submitted At',
+    ]);
+
+    foreach ($includedOrders as $order) {
+        fputcsv($stream, [
+            normalizeNullableOrderNumber($order['forge_order_number'] ?? null) ?? '',
+            neutralizeShippingCsvCell((string) ($order['customer_name'] ?? '')),
+            neutralizeShippingCsvCell((string) ($order['address_line_1'] ?? '')),
+            neutralizeShippingCsvCell((string) ($order['address_line_2'] ?? '')),
+            neutralizeShippingCsvCell((string) ($order['city'] ?? '')),
+            neutralizeShippingCsvCell((string) ($order['state'] ?? '')),
+            neutralizeShippingCsvCell((string) ($order['postal_code'] ?? '')),
+            neutralizeShippingCsvCell((string) ($order['country'] ?? '')),
+            neutralizeShippingCsvCell((string) ($order['email'] ?? '')),
+            neutralizeShippingCsvCell((string) ($order['phone'] ?? '')),
+            (int) ($order['item_count'] ?? 0),
+            neutralizeShippingCsvCell((string) ($order['event_name'] ?? '')),
+            neutralizeShippingCsvCell((string) ($order['submitted_at'] ?? '')),
+        ]);
+    }
+
+    rewind($stream);
+    $csv = stream_get_contents($stream);
+    fclose($stream);
+
+    if (!is_string($csv)) {
+        throw new \RuntimeException('Shipping export could not be prepared.');
+    }
+
+    return $csv;
+}
+
+/**
+ * @param array<string, mixed> $event
+ */
+function buildShippingExportFilename(array $event): string
+{
+    $eventName = trim((string) ($event['event_name'] ?? 'event'));
+    $slug = strtolower($eventName);
+    $slug = preg_replace('/[^a-z0-9]+/', '-', $slug) ?? 'event';
+    $slug = trim($slug, '-');
+    if ($slug === '') {
+        $slug = 'event';
+    }
+
+    return sprintf(
+        'forge-shipping-export-%s-%s.csv',
+        $slug,
+        trim((string) ($event['start_date'] ?? gmdate('Y-m-d')))
+    );
+}
+
+function neutralizeShippingCsvCell(string $value): string
+{
+    $normalized = str_replace(["\r\n", "\r"], "\n", $value);
+    if ($normalized === '') {
+        return '';
+    }
+
+    $trimmedLeadingWhitespace = ltrim($normalized);
+    if ($trimmedLeadingWhitespace === '') {
+        return $normalized;
+    }
+
+    $firstCharacter = substr($trimmedLeadingWhitespace, 0, 1);
+    if (in_array($firstCharacter, ['=', '+', '-', '@'], true)) {
+        return "'" . $normalized;
     }
 
     return $normalized;

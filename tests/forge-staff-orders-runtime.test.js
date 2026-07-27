@@ -870,6 +870,64 @@ test('hosted legacy cleanup apply returns the deleted count and released tray nu
   assert.deepEqual(result.deletedOrderUuids, ['legacy-order-1', 'legacy-order-2']);
 });
 
+test('hosted shipping export preview returns the selected event summary and address review safely', async () => {
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'https:', hostname: 'forge.example.com' },
+    staffApiClient: {
+      async previewShippingExport(eventId) {
+        assert.equal(eventId, 'event-live-1');
+        return {
+          ok: true,
+          authenticated: true,
+          preview: {
+            event: {
+              event_id: 'event-live-1',
+              event_name: 'Austin Market',
+              event_type: 'live_event',
+              start_date: '2026-07-27',
+              end_date: '2026-07-27',
+              event_status: 'active'
+            },
+            includedCount: 1,
+            excludedCount: 1,
+            shippingOrderCount: 2,
+            hasExportableRows: true,
+            csvFilename: 'forge-shipping-export-austin-market-2026-07-27.csv',
+            includedOrders: [{ forge_order_uuid: 'ship-1', order_reference: 'Order 1101' }],
+            excludedOrders: [{ forge_order_uuid: 'ship-2', missing_fields: ['postal_code'] }]
+          }
+        };
+      }
+    }
+  });
+
+  const result = await runtime.previewShippingExport('event-live-1');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.readOnly, true);
+  assert.equal(result.preview.includedCount, 1);
+  assert.equal(result.preview.excludedOrders[0].missing_fields[0], 'postal_code');
+});
+
+test('hosted shipping export download returns the authenticated CSV endpoint without fetching data into runtime memory', async () => {
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'https:', hostname: 'forge.example.com' },
+    staffApiClient: {
+      getShippingExportDownloadUrl(eventId) {
+        assert.equal(eventId, 'event-live-1');
+        return `/api/v1/staff/shipping-export-download.php?event_id=${eventId}`;
+      }
+    }
+  });
+
+  const result = await runtime.buildShippingExportDownload('event-live-1');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.readOnly, true);
+  assert.equal(result.downloadUrl, '/api/v1/staff/shipping-export-download.php?event_id=event-live-1');
+  assert.equal(result.csvText, null);
+});
+
 test('terminal or later production statuses remain preserved and never reopen tray assignment in hosted mode', async () => {
   const records = staffOrdersRuntime.adaptServerOrdersForQueue([
     {
@@ -1034,4 +1092,53 @@ test('localhost legacy cleanup stays unsupported and never calls the hosted clea
     readOnly: false
   });
   assert.deepEqual(calls, []);
+});
+
+test('localhost shipping export preview and csv stay on the local order-store path without hosted requests', async () => {
+  const calls = [];
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'http:', hostname: 'localhost' },
+    localOrderStore: {
+      async previewShippingExport(eventId) {
+        calls.push(['previewShippingExport', eventId]);
+        return {
+          event: { event_id: eventId, event_name: 'Austin Market' },
+          included_count: 1,
+          excluded_count: 0,
+          shipping_order_count: 1,
+          has_exportable_rows: true,
+          csv_filename: 'forge-shipping-export-austin-market-2026-07-27.csv',
+          included_orders: [{ forge_order_uuid: 'ship-1' }],
+          excluded_orders: []
+        };
+      },
+      async generateShippingExportCsv(eventId) {
+        calls.push(['generateShippingExportCsv', eventId]);
+        return {
+          filename: 'forge-shipping-export-austin-market-2026-07-27.csv',
+          csv: 'Forge Order Number,Customer Name\r\n1101,Shipping Customer'
+        };
+      }
+    },
+    staffApiClient: {
+      async previewShippingExport() {
+        calls.push(['hostedPreviewShippingExport']);
+        throw new Error('hosted client should not be called');
+      }
+    }
+  });
+
+  const preview = await runtime.previewShippingExport('event-live-1');
+  const download = await runtime.buildShippingExportDownload('event-live-1');
+
+  assert.equal(preview.ok, true);
+  assert.equal(preview.readOnly, false);
+  assert.equal(preview.preview.included_count, 1);
+  assert.equal(download.ok, true);
+  assert.equal(download.readOnly, false);
+  assert.match(download.csvText, /Shipping Customer/);
+  assert.deepEqual(calls, [
+    ['previewShippingExport', 'event-live-1'],
+    ['generateShippingExportCsv', 'event-live-1']
+  ]);
 });

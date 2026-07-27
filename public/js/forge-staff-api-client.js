@@ -22,6 +22,8 @@
   const CANCEL_ORDER_ENDPOINT = 'cancel-order.php';
   const DELETE_TEST_ORDER_ENDPOINT = 'delete-test-order.php';
   const LEGACY_TEST_CLEANUP_ENDPOINT = 'legacy-test-cleanup.php';
+  const SHIPPING_EXPORT_PREVIEW_ENDPOINT = 'shipping-export-preview.php';
+  const SHIPPING_EXPORT_DOWNLOAD_ENDPOINT = 'shipping-export-download.php';
   const TRAYS_ENDPOINT = 'trays.php';
   const ASSIGN_TRAY_ENDPOINT = 'assign-tray.php';
   const COMPLETE_ITEM_ENDPOINT = 'complete-item.php';
@@ -41,6 +43,7 @@
     order_not_cancellable: 'That order cannot be cancelled right now.',
     test_order_delete_not_allowed: 'Only Test Session orders can be permanently deleted.',
     cleanup_conflict: 'Legacy test cleanup changed. Run a new preview before deleting anything.',
+    shipping_export_empty: 'No shipping orders with complete addresses are available for that event.',
     no_trays_configured: 'No production trays are configured.',
     order_not_found: 'That order could not be found.',
     tray_not_found: 'That production tray could not be found.',
@@ -599,6 +602,47 @@
       }
     }
 
+    async function previewShippingExport(eventId) {
+      const normalizedEventId = asTrimmedString(eventId);
+      if (!normalizedEventId) {
+        throw new ForgeStaffApiError('invalid_request', 'A valid event is required.');
+      }
+
+      try {
+        const response = await performJsonRequest(fetchImpl, `${baseUrl}/${SHIPPING_EXPORT_PREVIEW_ENDPOINT}?event_id=${encodeURIComponent(normalizedEventId)}`, timeoutMs, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json'
+          },
+          credentials: 'same-origin',
+          cache: 'no-store'
+        });
+        const payload = await parseJsonResponse(response);
+        if (response.status === 401) {
+          return {
+            ok: false,
+            authenticated: false,
+            unauthenticated: true
+          };
+        }
+        if (!response.ok) {
+          throw buildServerError(response.status, payload);
+        }
+        return normalizeShippingExportPreviewPayload(payload);
+      } catch (error) {
+        throw normalizeClientError(error);
+      }
+    }
+
+    function getShippingExportDownloadUrl(eventId) {
+      const normalizedEventId = asTrimmedString(eventId);
+      if (!normalizedEventId) {
+        throw new ForgeStaffApiError('invalid_request', 'A valid event is required.');
+      }
+
+      return `${baseUrl}/${SHIPPING_EXPORT_DOWNLOAD_ENDPOINT}?event_id=${encodeURIComponent(normalizedEventId)}`;
+    }
+
     async function submitEventMutation(url, payload) {
       let requestBody = '';
       try {
@@ -690,7 +734,9 @@
       updateInternalNote,
       previewLegacyTestCleanup,
       applyLegacyTestCleanup,
-      deleteTestOrder
+      deleteTestOrder,
+      previewShippingExport,
+      getShippingExportDownloadUrl
     };
   }
 
@@ -1032,6 +1078,86 @@
       submitted_at: asTrimmedString(record && record.submitted_at),
       event_label: normalizeNullableString(record && record.event_label),
       tray_number: record && record.tray_number != null ? normalizeTrayNumber(record.tray_number) : null
+    };
+  }
+
+  function normalizeShippingExportPreviewPayload(payload) {
+    const application = asTrimmedString(payload && payload.application);
+    const apiVersion = asTrimmedString(payload && payload.api_version);
+    const status = asTrimmedString(payload && payload.status);
+    const data = payload && typeof payload === 'object' ? payload.data : null;
+    const preview = data && typeof data === 'object' ? data.preview : null;
+
+    if (application !== 'Forge' || apiVersion !== '1' || status !== 'ok' || !preview || typeof preview !== 'object') {
+      throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+    }
+
+    return {
+      ok: true,
+      authenticated: true,
+      preview: normalizeShippingExportPreview(preview)
+    };
+  }
+
+  function normalizeShippingExportPreview(preview) {
+    const event = preview && typeof preview === 'object' ? preview.event : null;
+    const includedOrders = preview && typeof preview === 'object' ? preview.included_orders : null;
+    const excludedOrders = preview && typeof preview === 'object' ? preview.excluded_orders : null;
+    const includedCount = preview && Number.isInteger(preview.included_count) ? preview.included_count : null;
+    const excludedCount = preview && Number.isInteger(preview.excluded_count) ? preview.excluded_count : null;
+    const shippingOrderCount = preview && Number.isInteger(preview.shipping_order_count) ? preview.shipping_order_count : null;
+    const hasExportableRows = preview && typeof preview.has_exportable_rows === 'boolean' ? preview.has_exportable_rows : null;
+    const csvFilename = asTrimmedString(preview && preview.csv_filename);
+
+    if (
+      !event
+      || typeof event !== 'object'
+      || !Array.isArray(includedOrders)
+      || !Array.isArray(excludedOrders)
+      || includedCount === null
+      || excludedCount === null
+      || shippingOrderCount === null
+      || hasExportableRows === null
+      || !csvFilename
+    ) {
+      throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+    }
+
+    return {
+      event: normalizeEventRecord(event),
+      includedCount,
+      excludedCount,
+      shippingOrderCount,
+      hasExportableRows,
+      csvFilename,
+      includedOrders: includedOrders.map((record) => normalizeShippingExportOrderRecord(record)),
+      excludedOrders: excludedOrders.map((record) => normalizeShippingExportOrderRecord(record))
+    };
+  }
+
+  function normalizeShippingExportOrderRecord(record) {
+    const itemCount = normalizeOptionalNonNegativeInteger(record && record.item_count, 'A valid shipping export item count is required.');
+    const missingFields = Array.isArray(record && record.missing_fields)
+      ? record.missing_fields.map((value) => asTrimmedString(value)).filter(Boolean)
+      : [];
+
+    return {
+      forge_order_uuid: asTrimmedString(record && record.forge_order_uuid),
+      forge_order_number: normalizeOptionalNonNegativeInteger(record && record.forge_order_number, 'A valid shipping export order number is required.'),
+      order_reference: asTrimmedString(record && record.order_reference),
+      customer_name: asTrimmedString(record && record.customer_name),
+      address_line_1: asTrimmedString(record && record.address_line_1),
+      address_line_2: asTrimmedString(record && record.address_line_2),
+      city: asTrimmedString(record && record.city),
+      state: asTrimmedString(record && record.state),
+      postal_code: asTrimmedString(record && record.postal_code),
+      country: asTrimmedString(record && record.country),
+      email: asTrimmedString(record && record.email),
+      phone: asTrimmedString(record && record.phone),
+      item_count: itemCount === undefined ? 0 : itemCount,
+      event_name: asTrimmedString(record && record.event_name),
+      submitted_at: asTrimmedString(record && record.submitted_at),
+      missing_fields: missingFields
     };
   }
 

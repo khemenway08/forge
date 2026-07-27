@@ -408,6 +408,67 @@
       };
     }
 
+    async function previewShippingExport(eventId) {
+      if (environment.dataSource === STAFF_DATA_SOURCES.local) {
+        assertLocalOrderStore(localOrderStore, 'previewShippingExport');
+        const preview = await localOrderStore.previewShippingExport(eventId);
+        return {
+          ok: true,
+          authenticated: true,
+          dataSource: STAFF_DATA_SOURCES.local,
+          readOnly: false,
+          preview: preview || null
+        };
+      }
+
+      assertStaffApiClient(staffApiClient, 'previewShippingExport');
+      const result = await staffApiClient.previewShippingExport(eventId);
+      if (!result || (!result.ok && result.unauthenticated) || result.authenticated === false) {
+        return {
+          ok: false,
+          authenticated: false,
+          unauthenticated: true,
+          dataSource: STAFF_DATA_SOURCES.server,
+          readOnly: true
+        };
+      }
+
+      return {
+        ok: true,
+        authenticated: true,
+        dataSource: STAFF_DATA_SOURCES.server,
+        readOnly: true,
+        preview: result.preview || null
+      };
+    }
+
+    async function buildShippingExportDownload(eventId) {
+      if (environment.dataSource === STAFF_DATA_SOURCES.local) {
+        assertLocalOrderStore(localOrderStore, 'generateShippingExportCsv');
+        const result = await localOrderStore.generateShippingExportCsv(eventId);
+        return {
+          ok: true,
+          authenticated: true,
+          dataSource: STAFF_DATA_SOURCES.local,
+          readOnly: false,
+          filename: normalizeNullableString(result && result.filename),
+          csvText: normalizeNullableString(result && result.csv),
+          downloadUrl: null
+        };
+      }
+
+      assertStaffApiClient(staffApiClient, 'getShippingExportDownloadUrl');
+      return {
+        ok: true,
+        authenticated: true,
+        dataSource: STAFF_DATA_SOURCES.server,
+        readOnly: true,
+        filename: null,
+        csvText: null,
+        downloadUrl: staffApiClient.getShippingExportDownloadUrl(eventId)
+      };
+    }
+
     async function deleteTestOrder(forgeOrderUuid, confirmationText) {
       if (environment.dataSource === STAFF_DATA_SOURCES.local) {
         assertLocalOrderStore(localOrderStore, 'deleteTestOrder');
@@ -459,6 +520,8 @@
       updateInternalNote,
       previewLegacyTestCleanup,
       applyLegacyTestCleanup,
+      previewShippingExport,
+      buildShippingExportDownload,
       deleteTestOrder
     };
   }

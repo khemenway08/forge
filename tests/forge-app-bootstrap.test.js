@@ -1541,6 +1541,82 @@ test('staff event controls identify test-session links and expose the copy order
   assert.match(String(controlsHtml), /Ending this event disables this exact link\./);
 });
 
+test('staff event controls render the shipping export preview workspace for the selected event', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    staffOrdersState.authenticated = true;
+    staffOrdersState.records = [{
+      forge_order_uuid: 'ship-1',
+      forge_order_number: 1101,
+      submitted_at: '2026-07-27T16:00:00Z',
+      payload: {
+        customer: { full_name: 'Shipping Customer', email: 'ship@example.com' },
+        fulfillment: {
+          method: 'shipping',
+          shipping_address: {
+            address_1: '123 Main Street',
+            address_2: '',
+            city: 'Austin',
+            state: 'TX',
+            postal_code: '78701',
+            country: 'United States'
+          }
+        },
+        event: {
+          event_id: 'event-live-1',
+          event_name: 'Austin Market',
+          event_type: 'live_event',
+          event_start_date: '2026-07-27',
+          event_end_date: '2026-07-27',
+          event_location: 'Austin'
+        },
+        items: [{ line_id: 'line-1', quantity: 1, product_display_name: 'Tree Ornament' }]
+      }
+    }];
+    staffOrdersState.shippingExportSelectedEventId = 'event-live-1';
+    staffOrdersState.shippingExportPreview = {
+      event: {
+        event_id: 'event-live-1',
+        event_name: 'Austin Market',
+        event_type: 'live_event',
+        start_date: '2026-07-27',
+        end_date: '2026-07-27',
+        event_status: 'active'
+      },
+      includedCount: 1,
+      excludedCount: 0,
+      shippingOrderCount: 1,
+      hasExportableRows: true,
+      csvFilename: 'forge-shipping-export-austin-market-2026-07-27.csv',
+      includedOrders: [{
+        forge_order_uuid: 'ship-1',
+        order_reference: 'Order 1101',
+        customer_name: 'Shipping Customer',
+        address_line_1: '123 Main Street',
+        address_line_2: '',
+        city: 'Austin',
+        state: 'TX',
+        postal_code: '78701',
+        country: 'United States',
+        item_count: 1,
+        submitted_at: '2026-07-27T16:00:00Z',
+        missing_fields: []
+      }],
+      excludedOrders: []
+    };
+    renderStaffEventControls();
+  `, context);
+
+  const controlsHtml = vm.runInContext('document.querySelector("[data-staff-event-controls]").innerHTML', context);
+
+  assert.match(String(controlsHtml), /Event Shipping CSV/);
+  assert.match(String(controlsHtml), /Preview Shipping Export/);
+  assert.match(String(controlsHtml), /Download CSV/);
+  assert.match(String(controlsHtml), /Order 1101/);
+  assert.match(String(controlsHtml), /123 Main Street/);
+});
+
 test('shared server order detail assign tray button opens the tray picker after re-rendering', async () => {
   const { context, detailDialog, trayDialog, getAssignTrayButton, getTrayLoadCount } = loadForgeHostedStaffAppForTrayDetail();
 
@@ -1663,6 +1739,55 @@ test('shared server order detail renders the internal notes section and note bad
   assert.match(String(detailDialog.innerHTML || ''), /Customer confirmed spelling\./);
   assert.match(String(detailDialog.innerHTML || ''), /Paid cash at show\./);
   assert.match(String(detailDialog.innerHTML || ''), />NOTE</);
+});
+
+test('shared server shipping orders show the copy shipping address action in order detail', async () => {
+  const { context, detailDialog, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
+
+  setSharedRecord({
+    payload: {
+      customer: { full_name: 'Kyle Hemenway', email: 'kyle@example.com', phone: '555-111-2222' },
+      fulfillment: {
+        method: 'shipping',
+        shipping_address: {
+          address_1: '123 Main Street',
+          address_2: '',
+          city: 'Austin',
+          state: 'TX',
+          postal_code: '78701',
+          country: 'United States'
+        }
+      },
+      items: [{ line_id: 'shared-tree-line', quantity: 1, completed_quantity: 0, production_status: 'pending' }],
+      event: { event_id: 'event-live-1', event_name: 'Austin Market', event_type: 'live_event' },
+      forge_order_number: 1001
+    }
+  });
+
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+
+  assert.match(String(detailDialog.innerHTML || ''), /Copy Shipping Address/);
+  assert.match(String(detailDialog.innerHTML || ''), /123 Main Street/);
+});
+
+test('shared server pickup orders do not show the copy shipping address action in order detail', async () => {
+  const { context, detailDialog, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
+
+  setSharedRecord({
+    payload: {
+      customer: { full_name: 'Pickup Customer', email: 'pickup@example.com', phone: '555-111-2222' },
+      fulfillment: { method: 'pickup', shipping_address: null },
+      items: [{ line_id: 'shared-tree-line', quantity: 1, completed_quantity: 0, production_status: 'pending' }],
+      event: { event_id: 'event-live-1', event_name: 'Austin Market', event_type: 'live_event' },
+      forge_order_number: 1001
+    }
+  });
+
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+
+  assert.doesNotMatch(String(detailDialog.innerHTML || ''), /Copy Shipping Address/);
 });
 
 test('shared server order detail renders cancel-order confirmation with the stored order context', async () => {

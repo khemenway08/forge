@@ -135,6 +135,13 @@ const staffOrdersState = {
   error: '',
   notice: '',
   noticeTone: 'success',
+  shippingExportSelectedEventId: '',
+  shippingExportLoading: false,
+  shippingExportDownloading: false,
+  shippingExportError: '',
+  shippingExportNotice: '',
+  shippingExportNoticeTone: 'success',
+  shippingExportPreview: null,
   legacyCleanupLoading: false,
   legacyCleanupApplying: false,
   legacyCleanupError: '',
@@ -2448,6 +2455,13 @@ function clearStaffOrderData() {
   staffOrdersState.errorCanRetry = false;
   staffOrdersState.notice = '';
   staffOrdersState.noticeTone = 'success';
+  staffOrdersState.shippingExportSelectedEventId = '';
+  staffOrdersState.shippingExportLoading = false;
+  staffOrdersState.shippingExportDownloading = false;
+  staffOrdersState.shippingExportError = '';
+  staffOrdersState.shippingExportNotice = '';
+  staffOrdersState.shippingExportNoticeTone = 'success';
+  staffOrdersState.shippingExportPreview = null;
   staffOrdersState.legacyCleanupLoading = false;
   staffOrdersState.legacyCleanupApplying = false;
   staffOrdersState.legacyCleanupError = '';
@@ -5193,6 +5207,11 @@ function ensureStaffOrderDetailUi() {
       return;
     }
 
+    if (action === 'staff-copy-shipping-address' && orderUuid) {
+      copyStaffShippingAddress(orderUuid);
+      return;
+    }
+
     if (action === 'staff-confirm-cancel-order' && orderUuid && !staffOrdersState.detailDestructiveSaving) {
       submitStaffOrderCancellation(orderUuid);
       return;
@@ -6433,6 +6452,200 @@ function canManageLegacyTestCleanup() {
   );
 }
 
+function canManageShippingExport() {
+  return Boolean(
+    staffRuntime
+    && typeof staffRuntime.previewShippingExport === 'function'
+    && typeof staffRuntime.buildShippingExportDownload === 'function'
+    && staffOrdersState.authenticated
+  );
+}
+
+function getShippingExportEventOptions() {
+  if (Array.isArray(staffEventState.events) && staffEventState.events.length) {
+    return staffEventState.events.slice().map((event) => ({
+      event_id: event.event_id,
+      event_name: event.event_name,
+      event_type: event.event_type,
+      start_date: event.start_date,
+      end_date: event.end_date,
+      event_status: event.event_status
+    }));
+  }
+
+  const optionsById = new Map();
+  getCurrentStaffQueueRecords().forEach((record) => {
+    const snapshot = getOrderEventSnapshot(record);
+    const eventId = snapshot?.event_id || '';
+    if (!eventId || optionsById.has(eventId)) {
+      return;
+    }
+    optionsById.set(eventId, {
+      event_id: eventId,
+      event_name: snapshot.event_name || 'Event',
+      event_type: snapshot.event_type || 'live_event',
+      start_date: snapshot.event_start_date || '',
+      end_date: snapshot.event_end_date || '',
+      event_status: snapshot.event_status || ''
+    });
+  });
+
+  return [...optionsById.values()].sort((left, right) => String(left.event_name || '').localeCompare(String(right.event_name || '')));
+}
+
+function ensureShippingExportSelection() {
+  const options = getShippingExportEventOptions();
+  const selectedId = staffOrdersState.shippingExportSelectedEventId;
+  if (selectedId && options.some((option) => option.event_id === selectedId)) {
+    return options;
+  }
+
+  const preferred = options.find((option) => option.event_status === 'active') || options[0] || null;
+  staffOrdersState.shippingExportSelectedEventId = preferred?.event_id || '';
+  return options;
+}
+
+function formatShippingExportAddress(record) {
+  return [
+    record?.address_line_1 || '',
+    record?.address_line_2 || '',
+    [record?.city || '', record?.state || '', record?.postal_code || ''].filter(Boolean).join(', '),
+    record?.country || ''
+  ].filter(Boolean).join(' • ');
+}
+
+function getShippingExportMissingFieldLabel(fieldName) {
+  const labels = {
+    customer_name: 'Customer Name',
+    address_1: 'Address Line 1',
+    city: 'City',
+    state: 'State',
+    postal_code: 'Postal Code',
+    country: 'Country'
+  };
+  return labels[fieldName] || fieldName;
+}
+
+function buildShippingExportPreviewListMarkup(records, emptyHeading, emptyCopy, showMissingFields) {
+  if (!Array.isArray(records) || records.length === 0) {
+    return `
+      <div class="staff-empty-state">
+        <h3>${escapeHtml(emptyHeading)}</h3>
+        <p>${escapeHtml(emptyCopy)}</p>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="staff-orders-list">
+      ${records.map((record) => `
+        <article class="staff-order-card">
+          <div class="staff-order-card-header">
+            <div class="staff-order-card-title">
+              <div class="staff-order-ref">${escapeHtml(record.order_reference || 'Order')}</div>
+              <p>${escapeHtml(record.customer_name || 'Unknown customer')}</p>
+            </div>
+            <div class="staff-order-card-badges">
+              <span class="staff-status-badge staff-status-badge--synced">${escapeHtml(`${record.item_count || 0} item${record.item_count === 1 ? '' : 's'}`)}</span>
+            </div>
+          </div>
+          <div class="staff-order-card-meta staff-order-card-meta--primary">
+            <div><span>Submitted</span><strong>${escapeHtml(formatReadableDateTime(record.submitted_at || ''))}</strong></div>
+            <div><span>Address</span><strong>${escapeHtml(formatShippingExportAddress(record) || 'Missing address details')}</strong></div>
+          </div>
+          ${showMissingFields ? `
+            <div class="staff-order-card-meta staff-order-card-meta--secondary">
+              <div><span>Missing</span><strong>${escapeHtml((Array.isArray(record.missing_fields) ? record.missing_fields : []).map(getShippingExportMissingFieldLabel).join(', ') || 'None')}</strong></div>
+            </div>
+          ` : ''}
+        </article>
+      `).join('')}
+    </div>
+  `;
+}
+
+function buildShippingExportControlsMarkup() {
+  const available = canManageShippingExport();
+  const options = ensureShippingExportSelection();
+  const selectedEventId = staffOrdersState.shippingExportSelectedEventId;
+  const preview = staffOrdersState.shippingExportPreview;
+  const disablePreview = !available || !selectedEventId || staffOrdersState.shippingExportLoading || staffOrdersState.shippingExportDownloading;
+  const disableDownload = !available
+    || !preview
+    || !preview.hasExportableRows
+    || staffOrdersState.shippingExportLoading
+    || staffOrdersState.shippingExportDownloading;
+
+  return `
+    <section class="staff-panel-surface">
+      <div class="staff-section-heading">
+        <div>
+          <p class="eyebrow staff-orders-eyebrow">Shipping Export</p>
+          <h2>Event Shipping CSV</h2>
+          <p>Preview the shipping-ready orders for one event, review any missing addresses, then download the CSV for labels outside Forge.</p>
+        </div>
+        <div class="staff-order-card-actions">
+          <button class="secondary-button" type="button" data-action="staff-preview-shipping-export"${disablePreview ? ' disabled' : ''}>${staffOrdersState.shippingExportLoading ? 'Loading Preview...' : 'Preview Shipping Export'}</button>
+          <button class="primary-button" type="button" data-action="staff-download-shipping-export"${disableDownload ? ' disabled' : ''}>${staffOrdersState.shippingExportDownloading ? 'Preparing Download...' : 'Download CSV'}</button>
+        </div>
+      </div>
+      ${buildStaffNoticeMarkup(staffOrdersState.shippingExportError, 'error')}
+      ${buildStaffNoticeMarkup(staffOrdersState.shippingExportNotice, staffOrdersState.shippingExportNoticeTone)}
+      ${!available ? '<p class="staff-orders-status">Shipping export becomes available after the staff workspace loads.</p>' : ''}
+      <div class="staff-orders-filters">
+        <div class="staff-filter-field">
+          <label for="staff-shipping-export-event">Event</label>
+          <select id="staff-shipping-export-event" data-staff-shipping-export-event ${available ? '' : 'disabled'}>
+            <option value="">Select an event</option>
+            ${options.map((event) => `
+              <option value="${escapeHtml(event.event_id)}"${event.event_id === selectedEventId ? ' selected' : ''}>
+                ${escapeHtml(`${event.event_name}${event.event_type === 'test_session' ? ' · Test Session' : ''}${event.start_date ? ` · ${event.start_date}` : ''}`)}
+              </option>
+            `).join('')}
+          </select>
+        </div>
+      </div>
+      ${preview ? `
+        <div class="staff-order-card-meta staff-order-card-meta--primary">
+          <div><span>Exportable Orders</span><strong>${escapeHtml(String(preview.includedCount || 0))}</strong></div>
+          <div><span>Missing Address Info</span><strong>${escapeHtml(String(preview.excludedCount || 0))}</strong></div>
+          <div><span>Shipping Orders Reviewed</span><strong>${escapeHtml(String(preview.shippingOrderCount || 0))}</strong></div>
+        </div>
+        <div class="staff-batch-sections">
+          <section class="staff-batch-section">
+            <div class="staff-section-heading">
+              <div>
+                <p class="eyebrow staff-orders-eyebrow">Export</p>
+                <h3>Orders Ready for CSV</h3>
+              </div>
+            </div>
+            ${buildShippingExportPreviewListMarkup(
+              preview.includedOrders,
+              'No exportable shipping orders yet',
+              'This event currently has no shippable orders with complete addresses.',
+              false
+            )}
+          </section>
+          <section class="staff-batch-section">
+            <div class="staff-section-heading">
+              <div>
+                <p class="eyebrow staff-orders-eyebrow">Address Review</p>
+                <h3>Orders Missing Address Details</h3>
+              </div>
+            </div>
+            ${buildShippingExportPreviewListMarkup(
+              preview.excludedOrders,
+              'No missing-address orders found',
+              'Every shipping order for this event has enough address information for export.',
+              true
+            )}
+          </section>
+        </div>
+      ` : ''}
+    </section>
+  `;
+}
+
 function buildLegacyCleanupPreviewListMarkup(records, emptyHeading, emptyCopy) {
   if (!Array.isArray(records) || records.length === 0) {
     return `
@@ -6632,6 +6845,7 @@ function renderStaffEventControls() {
         `).join('')}
       </div>
     ` : ''}
+    ${buildShippingExportControlsMarkup()}
     ${buildLegacyCleanupControlsMarkup()}
   `;
 }
@@ -6779,6 +6993,141 @@ async function copyStaffOrderingLink(publicOrderToken) {
   staffEventState.notice = 'Ordering link ready to copy.';
   staffEventState.error = '';
   renderStaffEventControls();
+}
+
+async function previewStaffShippingExport() {
+  if (!canManageShippingExport() || staffOrdersState.shippingExportLoading || staffOrdersState.shippingExportDownloading) {
+    return;
+  }
+
+  const eventId = staffOrdersState.shippingExportSelectedEventId;
+  if (!eventId) {
+    staffOrdersState.shippingExportError = 'Choose an event before loading a shipping export preview.';
+    renderStaffEventControls();
+    return;
+  }
+
+  staffOrdersState.shippingExportLoading = true;
+  staffOrdersState.shippingExportError = '';
+  staffOrdersState.shippingExportNotice = '';
+  renderStaffEventControls();
+
+  try {
+    const result = await staffRuntime.previewShippingExport(eventId);
+    if (!result.ok && result.unauthenticated) {
+      showUnauthenticatedStaffAccess();
+      return;
+    }
+
+    staffOrdersState.shippingExportPreview = result.preview || null;
+    staffOrdersState.shippingExportNotice = result.preview?.hasExportableRows
+      ? `Preview loaded for ${result.preview.includedCount} shipping order${result.preview.includedCount === 1 ? '' : 's'}.`
+      : 'Preview loaded. No exportable shipping orders are ready for this event yet.';
+    staffOrdersState.shippingExportNoticeTone = 'success';
+  } catch (error) {
+    console.error('Forge shipping export preview failed', error);
+    staffOrdersState.shippingExportPreview = null;
+    staffOrdersState.shippingExportError = error?.message || 'Shipping export preview is currently unavailable.';
+  } finally {
+    staffOrdersState.shippingExportLoading = false;
+    renderStaffEventControls();
+  }
+}
+
+async function downloadStaffShippingExport() {
+  if (!canManageShippingExport() || staffOrdersState.shippingExportLoading || staffOrdersState.shippingExportDownloading) {
+    return;
+  }
+
+  const eventId = staffOrdersState.shippingExportSelectedEventId;
+  if (!eventId) {
+    staffOrdersState.shippingExportError = 'Choose an event before downloading a shipping export.';
+    renderStaffEventControls();
+    return;
+  }
+
+  staffOrdersState.shippingExportDownloading = true;
+  staffOrdersState.shippingExportError = '';
+  staffOrdersState.shippingExportNotice = '';
+  renderStaffEventControls();
+
+  try {
+    const download = await staffRuntime.buildShippingExportDownload(eventId);
+    if (!download.ok && download.unauthenticated) {
+      showUnauthenticatedStaffAccess();
+      return;
+    }
+
+    if (download.downloadUrl) {
+      window.open(download.downloadUrl, '_blank', 'noopener');
+    } else if (download.csvText) {
+      const blob = new Blob([download.csvText], { type: 'text/csv;charset=utf-8' });
+      const blobUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = blobUrl;
+      anchor.download = download.filename || 'forge-shipping-export.csv';
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    } else {
+      throw new Error('Shipping export download could not be prepared.');
+    }
+
+    staffOrdersState.shippingExportNotice = `Shipping CSV ready: ${download.filename || staffOrdersState.shippingExportPreview?.csvFilename || 'forge-shipping-export.csv'}.`;
+    staffOrdersState.shippingExportNoticeTone = 'success';
+  } catch (error) {
+    console.error('Forge shipping export download failed', error);
+    staffOrdersState.shippingExportError = error?.message || 'Shipping export download is currently unavailable.';
+  } finally {
+    staffOrdersState.shippingExportDownloading = false;
+    renderStaffEventControls();
+  }
+}
+
+function buildShippingAddressClipboardText(record) {
+  const payload = record?.payload || {};
+  const customer = payload.customer || {};
+  const address = payload.fulfillment?.shipping_address || null;
+  if (!address) {
+    return '';
+  }
+
+  return [
+    customer.full_name || '',
+    address.address_1 || '',
+    address.address_2 || '',
+    [address.city || '', address.state || '', address.postal_code || ''].filter(Boolean).join(', '),
+    address.country || '',
+    customer.phone ? `Phone: ${customer.phone}` : '',
+    customer.email ? `Email: ${customer.email}` : ''
+  ].filter(Boolean).join('\n');
+}
+
+async function copyStaffShippingAddress(forgeOrderUuid) {
+  const record = getCurrentStaffQueueRecords().find((candidate) => candidate?.forge_order_uuid === forgeOrderUuid)
+    || staffOrdersState.detailRecord;
+  const addressText = buildShippingAddressClipboardText(record);
+  if (!addressText) {
+    staffOrdersState.detailError = 'This order does not have a shipping address to copy.';
+    renderStaffOrderDetail();
+    return;
+  }
+
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(addressText);
+      staffOrdersState.detailInternalNoteStatus = 'Shipping address copied.';
+      staffOrdersState.detailInternalNoteStatusTone = 'success';
+      renderStaffOrderDetail();
+      return;
+    }
+  } catch (error) {
+    console.error('Forge shipping address copy failed', error);
+  }
+
+  window.prompt('Copy this shipping address:', addressText);
+  staffOrdersState.detailInternalNoteStatus = 'Shipping address ready to copy.';
+  staffOrdersState.detailInternalNoteStatusTone = 'success';
+  renderStaffOrderDetail();
 }
 
 async function previewLegacyTestCleanup() {
@@ -6966,6 +7315,7 @@ async function loadStaffOrdersQueue() {
     staffOrdersState.loading = false;
     renderStaffOrdersQueue();
     renderReadyToPackQueue();
+    renderStaffEventControls();
   }
 }
 
@@ -7236,6 +7586,9 @@ function renderStaffOrderDetail() {
         <div class="staff-order-detail-row">
           <span>Shipping Address</span>
           <strong>${escapeHtml([shippingAddress.address_1, shippingAddress.address_2, [shippingAddress.city, shippingAddress.state, shippingAddress.postal_code].filter(Boolean).join(', '), shippingAddress.country].filter(Boolean).join(' • '))}</strong>
+        </div>
+        <div class="staff-order-card-actions">
+          <button class="secondary-button" type="button" data-action="staff-copy-shipping-address" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Copy Shipping Address</button>
         </div>
       ` : '<p>Local pickup order.</p>'}
     </section>
@@ -9883,6 +10236,14 @@ if (treeForm) {
   document.querySelector('[data-screen="staff-orders"]')?.addEventListener('change', (event) => {
     const target = event.target;
     if (target instanceof HTMLSelectElement) {
+      if (target.matches('[data-staff-shipping-export-event]')) {
+        staffOrdersState.shippingExportSelectedEventId = String(target.value || '');
+        staffOrdersState.shippingExportError = '';
+        staffOrdersState.shippingExportNotice = '';
+        staffOrdersState.shippingExportPreview = null;
+        renderStaffEventControls();
+        return;
+      }
       const filterKey = target.dataset.staffFilter;
       if (filterKey) {
         staffOrdersState.filters[filterKey] = String(target.value || 'all').trim().toLowerCase();
@@ -9912,6 +10273,16 @@ if (treeForm) {
     if (action === 'staff-refresh-events') {
       staffEventState.notice = '';
       loadStaffEvents();
+      return;
+    }
+
+    if (action === 'staff-preview-shipping-export') {
+      previewStaffShippingExport();
+      return;
+    }
+
+    if (action === 'staff-download-shipping-export') {
+      downloadStaffShippingExport();
       return;
     }
 

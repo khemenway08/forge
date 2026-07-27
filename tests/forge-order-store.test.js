@@ -1713,3 +1713,281 @@ test('quantity-two lines must be fully complete before packing and checked line 
   assert.equal(result.order.completed_item_count, 2);
   assert.equal(result.order.total_item_count, 2);
 });
+
+test('local shipping export preview filters one event and reports missing address fields without including pickup or test-session rows', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore({
+    initialOrders: [
+      orderStoreModule.normalizeLocalOrderRecord({
+        forge_order_uuid: 'ship-1',
+        forge_order_number: 1101,
+        submitted_at: '2026-07-27T16:00:00.000Z',
+        production_status: orderStoreModule.PRODUCTION_STATUSES.submitted,
+        payload: {
+          forge_order_uuid: 'ship-1',
+          forge_order_number: 1101,
+          customer: { full_name: 'Shipping Customer', email: 'ship@example.com', phone: '555-111-2222' },
+          fulfillment: {
+            method: 'shipping',
+            shipping_address: {
+              address_1: '123 Main Street',
+              address_2: '',
+              city: 'Austin',
+              state: 'TX',
+              postal_code: '78701',
+              country: 'United States'
+            }
+          },
+          event: {
+            event_id: 'event-live-1',
+            event_name: 'Austin Market',
+            event_type: 'live_event',
+            event_start_date: '2026-07-27',
+            event_end_date: '2026-07-27',
+            event_location: 'Austin'
+          },
+          items: [{ line_id: 'line-1', quantity: 2, product_display_name: 'Tree Ornament' }]
+        }
+      }),
+      orderStoreModule.normalizeLocalOrderRecord({
+        forge_order_uuid: 'ship-2',
+        forge_order_number: 1102,
+        submitted_at: '2026-07-27T16:05:00.000Z',
+        production_status: orderStoreModule.PRODUCTION_STATUSES.submitted,
+        payload: {
+          forge_order_uuid: 'ship-2',
+          forge_order_number: 1102,
+          customer: { full_name: 'Missing Postal', email: 'missing@example.com', phone: '555-333-4444' },
+          fulfillment: {
+            method: 'shipping',
+            shipping_address: {
+              address_1: '500 Pine Street',
+              address_2: '',
+              city: 'Austin',
+              state: 'TX',
+              postal_code: '',
+              country: 'United States'
+            }
+          },
+          event: {
+            event_id: 'event-live-1',
+            event_name: 'Austin Market',
+            event_type: 'live_event',
+            event_start_date: '2026-07-27',
+            event_end_date: '2026-07-27',
+            event_location: 'Austin'
+          },
+          items: [{ line_id: 'line-2', quantity: 1, product_display_name: 'Reindeer Ornament' }]
+        }
+      }),
+      orderStoreModule.normalizeLocalOrderRecord({
+        forge_order_uuid: 'pickup-1',
+        forge_order_number: 1103,
+        submitted_at: '2026-07-27T16:10:00.000Z',
+        production_status: orderStoreModule.PRODUCTION_STATUSES.submitted,
+        payload: {
+          forge_order_uuid: 'pickup-1',
+          forge_order_number: 1103,
+          customer: { full_name: 'Pickup Customer' },
+          fulfillment: { method: 'pickup', shipping_address: null },
+          event: {
+            event_id: 'event-live-1',
+            event_name: 'Austin Market',
+            event_type: 'live_event'
+          },
+          items: [{ line_id: 'line-3', quantity: 1, product_display_name: 'Tree Ornament' }]
+        }
+      }),
+      orderStoreModule.normalizeLocalOrderRecord({
+        forge_order_uuid: 'test-1',
+        forge_order_number: 1104,
+        submitted_at: '2026-07-27T16:15:00.000Z',
+        production_status: orderStoreModule.PRODUCTION_STATUSES.submitted,
+        payload: {
+          forge_order_uuid: 'test-1',
+          forge_order_number: 1104,
+          customer: { full_name: 'Test Session Customer' },
+          fulfillment: {
+            method: 'shipping',
+            shipping_address: {
+              address_1: '9 Demo Way',
+              address_2: '',
+              city: 'Austin',
+              state: 'TX',
+              postal_code: '78702',
+              country: 'United States'
+            }
+          },
+          event: {
+            event_id: 'event-live-1',
+            event_name: 'Austin Market',
+            event_type: 'test_session'
+          },
+          items: [{ line_id: 'line-4', quantity: 1, product_display_name: 'Tree Ornament' }]
+        }
+      }),
+      orderStoreModule.normalizeLocalOrderRecord({
+        forge_order_uuid: 'cancelled-1',
+        forge_order_number: 1105,
+        submitted_at: '2026-07-27T16:20:00.000Z',
+        production_status: orderStoreModule.PRODUCTION_STATUSES.cancelled,
+        payload: {
+          forge_order_uuid: 'cancelled-1',
+          forge_order_number: 1105,
+          customer: { full_name: 'Cancelled Customer' },
+          fulfillment: {
+            method: 'shipping',
+            shipping_address: {
+              address_1: '44 Closed Street',
+              address_2: '',
+              city: 'Austin',
+              state: 'TX',
+              postal_code: '78703',
+              country: 'United States'
+            }
+          },
+          event: {
+            event_id: 'event-live-1',
+            event_name: 'Austin Market',
+            event_type: 'live_event'
+          },
+          items: [{ line_id: 'line-5', quantity: 1, product_display_name: 'Tree Ornament' }]
+        }
+      })
+    ]
+  });
+
+  const preview = await store.previewShippingExport('event-live-1');
+
+  assert.equal(preview.included_count, 1);
+  assert.equal(preview.excluded_count, 1);
+  assert.equal(preview.shipping_order_count, 2);
+  assert.equal(preview.included_orders[0].order_reference, 'Order 1101');
+  assert.deepEqual(preview.excluded_orders[0].missing_fields, ['postal_code']);
+});
+
+test('local shipping export csv includes only complete shipping rows for the selected event', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore({
+    initialOrders: [
+      orderStoreModule.normalizeLocalOrderRecord({
+        forge_order_uuid: 'ship-1',
+        forge_order_number: 1101,
+        submitted_at: '2026-07-27T16:00:00.000Z',
+        production_status: orderStoreModule.PRODUCTION_STATUSES.submitted,
+        payload: {
+          forge_order_uuid: 'ship-1',
+          forge_order_number: 1101,
+          customer: { full_name: 'Shipping Customer', email: 'ship@example.com' },
+          fulfillment: {
+            method: 'shipping',
+            shipping_address: {
+              address_1: '123 Main Street',
+              address_2: '',
+              city: 'Austin',
+              state: 'TX',
+              postal_code: '78701',
+              country: 'United States'
+            }
+          },
+          event: {
+            event_id: 'event-live-1',
+            event_name: 'Austin Market',
+            event_type: 'live_event',
+            event_start_date: '2026-07-27'
+          },
+          items: [{ line_id: 'line-1', quantity: 1, product_display_name: 'Tree Ornament' }]
+        }
+      })
+    ]
+  });
+
+  const result = await store.generateShippingExportCsv('event-live-1');
+
+  assert.match(result.filename, /^forge-shipping-export-austin-market-2026-07-27\.csv$/);
+  assert.match(result.csv, /Forge Order Number,Customer Name,Address Line 1/);
+  assert.match(result.csv, /1101,Shipping Customer,123 Main Street/);
+});
+
+test('local shipping export csv neutralizes spreadsheet formulas preserves csv escaping and excludes deleted tombstoned orders', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore({
+    initialOrders: [
+      orderStoreModule.normalizeLocalOrderRecord({
+        forge_order_uuid: 'ship-safe-1',
+        forge_order_number: 1111,
+        submitted_at: '2026-07-27T16:00:00.000Z',
+        production_status: orderStoreModule.PRODUCTION_STATUSES.submitted,
+        internal_note: 'private note',
+        current_tray_number: 3,
+        payload: {
+          forge_order_uuid: 'ship-safe-1',
+          forge_order_number: 1111,
+          customer: { full_name: '=Formula Name', email: '+ship@example.com', phone: '@555-111-2222' },
+          fulfillment: {
+            method: 'shipping',
+            shipping_address: {
+              address_1: '123 Main Street',
+              address_2: 'Apt 2B,\nNorth Hall',
+              city: 'Austin',
+              state: 'TX',
+              postal_code: '78701',
+              country: 'United States'
+            }
+          },
+          event: {
+            event_id: 'event-live-1',
+            event_name: 'Austin Market',
+            event_type: 'live_event',
+            event_start_date: '2026-07-27'
+          },
+          pricing: { estimated_total_cents: 2600 },
+          items: [{
+            line_id: 'line-safe-1',
+            quantity: 1,
+            product_display_name: 'Tree Ornament',
+            personalization_order: [{ position: 1, name: 'Kyle' }]
+          }]
+        }
+      }),
+      orderStoreModule.normalizeLocalOrderRecord({
+        forge_order_uuid: 'ship-safe-2',
+        forge_order_number: 1112,
+        submitted_at: '2026-07-27T16:05:00.000Z',
+        production_status: orderStoreModule.PRODUCTION_STATUSES.submitted,
+        payload: {
+          forge_order_uuid: 'ship-safe-2',
+          forge_order_number: 1112,
+          customer: { full_name: 'Deleted Test Customer' },
+          fulfillment: {
+            method: 'shipping',
+            shipping_address: {
+              address_1: '500 Pine Street',
+              address_2: '',
+              city: 'Austin',
+              state: 'TX',
+              postal_code: '78702',
+              country: 'United States'
+            }
+          },
+          event: {
+            event_id: 'event-live-1',
+            event_name: 'Austin Market',
+            event_type: 'test_session'
+          },
+          items: [{ line_id: 'line-safe-2', quantity: 1, product_display_name: 'Tree Ornament' }]
+        }
+      })
+    ]
+  });
+
+  await store.deleteTestOrder('ship-safe-2', 'DELETE TEST ORDER');
+  const result = await store.generateShippingExportCsv('event-live-1');
+
+  assert.match(result.csv, /Forge Order Number,Customer Name,Address Line 1,Address Line 2,City,State,Postal Code,Country,Email,Phone,Item Count,Event Name,Submitted At/);
+  assert.match(result.csv, /'=Formula Name/);
+  assert.match(result.csv, /'\+ship@example\.com/);
+  assert.match(result.csv, /'@555-111-2222/);
+  assert.match(result.csv, /"Apt 2B,\nNorth Hall"/);
+  assert.doesNotMatch(result.csv, /private note/);
+  assert.doesNotMatch(result.csv, /2600/);
+  assert.doesNotMatch(result.csv, /Kyle/);
+  assert.doesNotMatch(result.csv, /Deleted Test Customer/);
+});
