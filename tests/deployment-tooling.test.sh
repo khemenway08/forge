@@ -24,8 +24,15 @@ assert_file_contains() {
 TMPDIR_TEST="$(mktemp -d "${TMPDIR:-/tmp}/forge-deploy-test.XXXXXX")"
 trap 'rm -rf "${TMPDIR_TEST}"' EXIT
 
+DIRTY_REPO_PARENT="${TMPDIR_TEST}/Forge Dirty Repo"
+DIRTY_REPO_PATH="${DIRTY_REPO_PARENT}/forge clone"
+mkdir -p "${DIRTY_REPO_PARENT}"
+
+git clone --quiet --no-hardlinks "${REPO_ROOT}" "${DIRTY_REPO_PATH}"
+printf 'temporary dirty file\n' > "${DIRTY_REPO_PATH}/dirty-test-file.txt"
+
 OUTPUT="$(
-  ./scripts/build-deployment-package.sh 2>&1 || true
+  cd "${DIRTY_REPO_PATH}" && ./scripts/build-deployment-package.sh 2>&1 || true
 )"
 assert_contains "${OUTPUT}" "Working tree must be clean"
 
