@@ -304,6 +304,72 @@
       };
     }
 
+    async function previewLegacyTestCleanup() {
+      if (environment.dataSource === STAFF_DATA_SOURCES.local) {
+        return {
+          ok: false,
+          authenticated: true,
+          unsupported: true,
+          dataSource: STAFF_DATA_SOURCES.local,
+          readOnly: false
+        };
+      }
+
+      assertStaffApiClient(staffApiClient, 'previewLegacyTestCleanup');
+      const result = await staffApiClient.previewLegacyTestCleanup();
+      if (!result || (!result.ok && result.unauthenticated) || result.authenticated === false) {
+        return {
+          ok: false,
+          authenticated: false,
+          unauthenticated: true,
+          dataSource: STAFF_DATA_SOURCES.server,
+          readOnly: true
+        };
+      }
+
+      return {
+        ok: true,
+        authenticated: true,
+        dataSource: STAFF_DATA_SOURCES.server,
+        readOnly: true,
+        preview: result.preview || null
+      };
+    }
+
+    async function applyLegacyTestCleanup(previewSignature, expectedCount, confirmationText) {
+      if (environment.dataSource === STAFF_DATA_SOURCES.local) {
+        return {
+          ok: false,
+          authenticated: true,
+          unsupported: true,
+          dataSource: STAFF_DATA_SOURCES.local,
+          readOnly: false
+        };
+      }
+
+      assertStaffApiClient(staffApiClient, 'applyLegacyTestCleanup');
+      const result = await staffApiClient.applyLegacyTestCleanup(previewSignature, expectedCount, confirmationText);
+      if (!result || (!result.ok && result.unauthenticated) || result.authenticated === false) {
+        return {
+          ok: false,
+          authenticated: false,
+          unauthenticated: true,
+          dataSource: STAFF_DATA_SOURCES.server,
+          readOnly: true
+        };
+      }
+
+      return {
+        ok: true,
+        authenticated: true,
+        dataSource: STAFF_DATA_SOURCES.server,
+        readOnly: true,
+        deletedCount: Number.isInteger(result.deletedCount) ? result.deletedCount : 0,
+        releasedTrayNumbers: Array.isArray(result.releasedTrayNumbers) ? result.releasedTrayNumbers.slice() : [],
+        deletedOrderUuids: Array.isArray(result.deletedOrderUuids) ? result.deletedOrderUuids.slice() : []
+      };
+    }
+
     return {
       environment,
       checkAccess,
@@ -313,7 +379,9 @@
       loadTrays,
       assignTrayToOrder,
       completeItemQuantity,
-      updateInternalNote
+      updateInternalNote,
+      previewLegacyTestCleanup,
+      applyLegacyTestCleanup
     };
   }
 

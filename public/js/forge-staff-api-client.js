@@ -19,6 +19,7 @@
   const START_EVENT_ENDPOINT = 'start-event.php';
   const END_EVENT_ENDPOINT = 'end-event.php';
   const INTERNAL_NOTE_ENDPOINT = 'internal-note.php';
+  const LEGACY_TEST_CLEANUP_ENDPOINT = 'legacy-test-cleanup.php';
   const TRAYS_ENDPOINT = 'trays.php';
   const ASSIGN_TRAY_ENDPOINT = 'assign-tray.php';
   const COMPLETE_ITEM_ENDPOINT = 'complete-item.php';
@@ -35,6 +36,7 @@
     event_not_found: 'That event could not be found.',
     event_conflict: 'That event could not be updated right now.',
     internal_note_too_long: 'Internal notes are too long.',
+    cleanup_conflict: 'Legacy test cleanup changed. Run a new preview before deleting anything.',
     no_trays_configured: 'No production trays are configured.',
     order_not_found: 'That order could not be found.',
     tray_not_found: 'That production tray could not be found.',
@@ -477,6 +479,87 @@
       }
     }
 
+    async function previewLegacyTestCleanup() {
+      try {
+        const response = await performJsonRequest(fetchImpl, `${baseUrl}/${LEGACY_TEST_CLEANUP_ENDPOINT}`, timeoutMs, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json'
+          },
+          credentials: 'same-origin',
+          cache: 'no-store'
+        });
+        const payload = await parseJsonResponse(response);
+        if (response.status === 401) {
+          return {
+            ok: false,
+            authenticated: false,
+            unauthenticated: true
+          };
+        }
+        if (!response.ok) {
+          throw buildServerError(response.status, payload);
+        }
+        return normalizeLegacyCleanupPreviewPayload(payload);
+      } catch (error) {
+        throw normalizeClientError(error);
+      }
+    }
+
+    async function applyLegacyTestCleanup(previewSignature, expectedCount, confirmationText) {
+      const normalizedPreviewSignature = asTrimmedString(previewSignature);
+      const normalizedExpectedCount = normalizeOptionalNonNegativeInteger(expectedCount, 'A valid cleanup preview count is required.');
+      const normalizedConfirmationText = asTrimmedString(confirmationText);
+
+      if (!normalizedPreviewSignature) {
+        throw new ForgeStaffApiError('invalid_request', 'A valid cleanup preview signature is required.');
+      }
+      if (normalizedExpectedCount === undefined) {
+        throw new ForgeStaffApiError('invalid_request', 'A valid cleanup preview count is required.');
+      }
+      if (!normalizedConfirmationText) {
+        throw new ForgeStaffApiError('invalid_request', 'The exact cleanup confirmation text is required.');
+      }
+
+      let requestBody = '';
+      try {
+        requestBody = JSON.stringify({
+          preview_signature: normalizedPreviewSignature,
+          expected_count: normalizedExpectedCount,
+          confirmation_text: normalizedConfirmationText
+        });
+      } catch (error) {
+        throw new ForgeStaffApiError('invalid_request', 'Legacy test cleanup could not be prepared.', { cause: error });
+      }
+
+      try {
+        const response = await performJsonRequest(fetchImpl, `${baseUrl}/${LEGACY_TEST_CLEANUP_ENDPOINT}`, timeoutMs, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json'
+          },
+          credentials: 'same-origin',
+          cache: 'no-store',
+          body: requestBody
+        });
+        const payload = await parseJsonResponse(response);
+        if (response.status === 401) {
+          return {
+            ok: false,
+            authenticated: false,
+            unauthenticated: true
+          };
+        }
+        if (!response.ok) {
+          throw buildServerError(response.status, payload);
+        }
+        return normalizeLegacyCleanupApplyPayload(payload);
+      } catch (error) {
+        throw normalizeClientError(error);
+      }
+    }
+
     async function submitEventMutation(url, payload) {
       let requestBody = '';
       try {
@@ -528,7 +611,9 @@
       listTrays,
       assignTray,
       completeItemQuantity,
-      updateInternalNote
+      updateInternalNote,
+      previewLegacyTestCleanup,
+      applyLegacyTestCleanup
     };
   }
 
@@ -742,6 +827,94 @@
       authenticated: true,
       internalNote: normalizeNullableString(data.internal_note),
       order: data.order && typeof data.order === 'object' ? data.order : null
+    };
+  }
+
+  function normalizeLegacyCleanupPreviewPayload(payload) {
+    const application = asTrimmedString(payload && payload.application);
+    const apiVersion = asTrimmedString(payload && payload.api_version);
+    const status = asTrimmedString(payload && payload.status);
+    const data = payload && typeof payload === 'object' ? payload.data : null;
+    const preview = data && typeof data === 'object' ? data.preview : null;
+
+    if (application !== 'Forge' || apiVersion !== '1' || status !== 'ok' || !preview || typeof preview !== 'object') {
+      throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+    }
+
+    return {
+      ok: true,
+      authenticated: true,
+      preview: normalizeLegacyCleanupPreview(preview)
+    };
+  }
+
+  function normalizeLegacyCleanupApplyPayload(payload) {
+    const application = asTrimmedString(payload && payload.application);
+    const apiVersion = asTrimmedString(payload && payload.api_version);
+    const status = asTrimmedString(payload && payload.status);
+    const data = payload && typeof payload === 'object' ? payload.data : null;
+    const deletedCount = data && typeof data === 'object' ? data.deleted_count : undefined;
+    const releasedTrayNumbers = data && typeof data === 'object' ? data.released_tray_numbers : null;
+    const deletedOrderUuids = data && typeof data === 'object' ? data.deleted_order_uuids : null;
+
+    if (
+      application !== 'Forge'
+      || apiVersion !== '1'
+      || status !== 'ok'
+      || !Number.isInteger(deletedCount)
+      || !Array.isArray(releasedTrayNumbers)
+      || !Array.isArray(deletedOrderUuids)
+    ) {
+      throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+    }
+
+    return {
+      ok: true,
+      authenticated: true,
+      deletedCount,
+      releasedTrayNumbers: releasedTrayNumbers.map((value) => normalizeTrayNumber(value)),
+      deletedOrderUuids: deletedOrderUuids.map((value) => asTrimmedString(value)).filter(Boolean)
+    };
+  }
+
+  function normalizeLegacyCleanupPreview(preview) {
+    const eligibleCount = preview && Number.isInteger(preview.eligible_count) ? preview.eligible_count : null;
+    const confirmationText = asTrimmedString(preview && preview.confirmation_text);
+    const previewSignature = asTrimmedString(preview && preview.preview_signature);
+    const eligibleOrders = preview && typeof preview === 'object' ? preview.eligible_orders : null;
+    const protectedOrders = preview && typeof preview === 'object' ? preview.protected_orders : null;
+
+    if (
+      eligibleCount === null
+      || !confirmationText
+      || !previewSignature
+      || !Array.isArray(eligibleOrders)
+      || !Array.isArray(protectedOrders)
+    ) {
+      throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+    }
+
+    return {
+      cutoffTimezone: asTrimmedString(preview.cutoff_timezone),
+      cutoffLocal: asTrimmedString(preview.cutoff_local),
+      cutoffUtc: asTrimmedString(preview.cutoff_utc),
+      eligibleCount,
+      confirmationText,
+      previewSignature,
+      eligibleOrders: eligibleOrders.map((record) => normalizeLegacyCleanupPreviewRecord(record)),
+      protectedOrders: protectedOrders.map((record) => normalizeLegacyCleanupPreviewRecord(record))
+    };
+  }
+
+  function normalizeLegacyCleanupPreviewRecord(record) {
+    return {
+      forge_order_uuid: asTrimmedString(record && record.forge_order_uuid),
+      forge_order_number: normalizeOptionalNonNegativeInteger(record && record.forge_order_number, 'A valid cleanup preview order number is required.'),
+      order_reference: asTrimmedString(record && record.order_reference),
+      customer_name: asTrimmedString(record && record.customer_name),
+      submitted_at: asTrimmedString(record && record.submitted_at),
+      event_label: normalizeNullableString(record && record.event_label),
+      tray_number: record && record.tray_number != null ? normalizeTrayNumber(record.tray_number) : null
     };
   }
 

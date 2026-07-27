@@ -404,6 +404,128 @@ test('updateInternalNote sends POST JSON and same-origin credentials with the pr
   });
 });
 
+test('previewLegacyTestCleanup sends GET and returns the dry-run cleanup preview safely', async () => {
+  const requests = [];
+  const client = staffApiClientModule.createForgeStaffApiClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return createJsonResponse(200, {
+        application: 'Forge',
+        api_version: '1',
+        status: 'ok',
+        data: {
+          preview: {
+            cutoff_timezone: 'America/Chicago',
+            cutoff_local: '2026-07-25T00:00:00-05:00',
+            cutoff_utc: '2026-07-25T05:00:00+00:00',
+            eligible_count: 2,
+            confirmation_text: 'DELETE 2 ORDERS BEFORE JULY 25',
+            preview_signature: 'preview-signature-1',
+            eligible_orders: [
+              {
+                forge_order_uuid: 'order-legacy-1',
+                forge_order_number: 1001,
+                order_reference: 'Order 1001',
+                customer_name: 'Test Customer One',
+                submitted_at: '2026-07-24T18:00:00+00:00',
+                event_label: 'Checkout Test Session',
+                tray_number: 4
+              }
+            ],
+            protected_orders: [
+              {
+                forge_order_uuid: 'order-live-1',
+                forge_order_number: 1042,
+                order_reference: 'Order 1042',
+                customer_name: 'Live Customer',
+                submitted_at: '2026-07-25T16:00:00+00:00',
+                event_label: 'Austin Market',
+                tray_number: null
+              }
+            ]
+          }
+        }
+      });
+    }
+  });
+
+  const result = await client.previewLegacyTestCleanup();
+
+  assert.equal(result.ok, true);
+  assert.equal(result.preview.eligibleCount, 2);
+  assert.equal(result.preview.confirmationText, 'DELETE 2 ORDERS BEFORE JULY 25');
+  assert.equal(result.preview.eligibleOrders[0].tray_number, 4);
+  assert.equal(result.preview.protectedOrders[0].order_reference, 'Order 1042');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, '/api/v1/staff/legacy-test-cleanup.php');
+  assert.equal(requests[0].options.method, 'GET');
+  assert.equal(requests[0].options.credentials, 'same-origin');
+});
+
+test('applyLegacyTestCleanup sends POST JSON with the preview signature count and exact confirmation text', async () => {
+  const requests = [];
+  const client = staffApiClientModule.createForgeStaffApiClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return createJsonResponse(200, {
+        application: 'Forge',
+        api_version: '1',
+        status: 'ok',
+        data: {
+          deleted_count: 2,
+          released_tray_numbers: [4, 8],
+          deleted_order_uuids: ['order-legacy-1', 'order-legacy-2']
+        }
+      });
+    }
+  });
+
+  const result = await client.applyLegacyTestCleanup(
+    'preview-signature-1',
+    2,
+    'DELETE 2 ORDERS BEFORE JULY 25'
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.deletedCount, 2);
+  assert.deepEqual(result.releasedTrayNumbers, [4, 8]);
+  assert.deepEqual(result.deletedOrderUuids, ['order-legacy-1', 'order-legacy-2']);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, '/api/v1/staff/legacy-test-cleanup.php');
+  assert.equal(requests[0].options.method, 'POST');
+  assert.equal(requests[0].options.credentials, 'same-origin');
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    preview_signature: 'preview-signature-1',
+    expected_count: 2,
+    confirmation_text: 'DELETE 2 ORDERS BEFORE JULY 25'
+  });
+});
+
+test('cleanup apply validates required arguments before sending requests', async () => {
+  let requestCount = 0;
+  const client = staffApiClientModule.createForgeStaffApiClient({
+    fetchImpl: async () => {
+      requestCount += 1;
+      throw new Error('fetch should not be called');
+    }
+  });
+
+  await assert.rejects(
+    () => client.applyLegacyTestCleanup('', 2, 'DELETE 2 ORDERS BEFORE JULY 25'),
+    /preview signature/i
+  );
+  await assert.rejects(
+    () => client.applyLegacyTestCleanup('preview-signature-1', -1, 'DELETE 2 ORDERS BEFORE JULY 25'),
+    /preview count/i
+  );
+  await assert.rejects(
+    () => client.applyLegacyTestCleanup('preview-signature-1', 2, ''),
+    /confirmation text/i
+  );
+
+  assert.equal(requestCount, 0);
+});
+
 test('401 responses are handled safely as unauthenticated results', async () => {
   const client = staffApiClientModule.createForgeStaffApiClient({
     fetchImpl: async (url) => {
@@ -438,6 +560,8 @@ test('401 responses are handled safely as unauthenticated results', async () => 
   const assignResult = await client.assignTray('order-1', 1);
   const completionResult = await client.completeItemQuantity('order-1', 'line-1', 0, 1);
   const noteResult = await client.updateInternalNote('order-1', 'Private note');
+  const cleanupPreviewResult = await client.previewLegacyTestCleanup();
+  const cleanupApplyResult = await client.applyLegacyTestCleanup('preview-signature-1', 1, 'DELETE 1 ORDERS BEFORE JULY 25');
 
   assert.deepEqual(sessionResult, { ok: false, authenticated: false, unauthenticated: true });
   assert.deepEqual(loginResult, { ok: false, authenticated: false, unauthenticated: true });
@@ -447,6 +571,8 @@ test('401 responses are handled safely as unauthenticated results', async () => 
   assert.deepEqual(assignResult, { ok: false, authenticated: false, unauthenticated: true });
   assert.deepEqual(completionResult, { ok: false, authenticated: false, unauthenticated: true });
   assert.deepEqual(noteResult, { ok: false, authenticated: false, unauthenticated: true });
+  assert.deepEqual(cleanupPreviewResult, { ok: false, authenticated: false, unauthenticated: true });
+  assert.deepEqual(cleanupApplyResult, { ok: false, authenticated: false, unauthenticated: true });
 });
 
 test('malformed or non-JSON responses produce a safe generic client error', async () => {

@@ -1520,6 +1520,60 @@ $runner->run('excessively long internal order notes are rejected safely', static
     );
 });
 
+$runner->run('legacy cleanup cutoff uses America Chicago midnight and excludes July 25 orders safely', static function (): void {
+    assertSame('2026-07-25 05:00:00.000000', \Forge\Server\legacyTestCleanupCutoffDatabase());
+    assertSame('2026-07-25T00:00:00-05:00', \Forge\Server\legacyTestCleanupCutoffLocalIso8601());
+    assertSame('DELETE 2 ORDERS BEFORE JULY 25', \Forge\Server\buildLegacyTestCleanupConfirmationText(2));
+});
+
+$runner->run('legacy cleanup preview rows expose only the operational preview fields safely', static function (): void {
+    $payload = createValidPayload();
+    $payload['forge_order_number'] = 1042;
+    $payload['customer']['full_name'] = 'Historical Test Customer';
+    $payload['event'] = [
+        'event_id' => 'event-test',
+        'event_name' => 'Checkout Test Session',
+    ];
+
+    $normalized = \Forge\Server\normalizeLegacyTestCleanupPreviewRow([
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174450',
+        'forge_order_number' => 1042,
+        'submitted_at' => '2026-07-24 23:59:59.000000',
+        'updated_at' => '2026-07-24 23:59:59.000000',
+        'event_id' => 'event-test',
+        'current_tray_number' => 5,
+        'payload_json' => json_encode($payload, JSON_THROW_ON_ERROR),
+    ]);
+
+    assertSame('Order 1042', $normalized['order_reference']);
+    assertSame('Historical Test Customer', $normalized['customer_name']);
+    assertSame('Checkout Test Session', $normalized['event_label']);
+    assertSame(5, $normalized['tray_number']);
+    assertTrue(!array_key_exists('payload_json', $normalized));
+});
+
+$runner->run('legacy cleanup preview signatures change when the eligible record snapshot changes', static function (): void {
+    $baseline = [[
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174451',
+        'submitted_at' => '2026-07-24 20:00:00.000000',
+        'updated_at' => '2026-07-24 20:05:00.000000',
+        'current_tray_number' => 4,
+        'event_id' => 'event-a',
+    ]];
+    $changed = [[
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174451',
+        'submitted_at' => '2026-07-24 20:00:00.000000',
+        'updated_at' => '2026-07-24 20:06:00.000000',
+        'current_tray_number' => 4,
+        'event_id' => 'event-a',
+    ]];
+
+    assertTrue(
+        \Forge\Server\buildLegacyTestCleanupPreviewSignature($baseline)
+        !== \Forge\Server\buildLegacyTestCleanupPreviewSignature($changed)
+    );
+});
+
 $runner->run('configured tray numbers are deduplicated and sorted numerically', static function (): void {
     $trayNumbers = \Forge\Server\parseConfiguredTrayNumbers('12, 2, 7 2 4');
 
@@ -3069,6 +3123,28 @@ $runner->run('internal note migration and endpoint stay staff-only and public en
     assertTrue(strpos($staffOrdersEndpointSource, 'internal_note') === false);
     assertTrue(strpos($publicOrdersEndpointSource, 'internal_note') === false);
     assertTrue(strpos($publicEventStatusEndpointSource, 'internal_note') === false);
+});
+
+$runner->run('legacy cleanup migration endpoint and tombstones stay staff-only and cutoff-safe', static function (): void {
+    $migrationSource = file_get_contents(dirname(__DIR__) . '/migrations/012_add_legacy_cleanup_tombstones.sql');
+    $endpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/legacy-test-cleanup.php');
+    $repositorySource = file_get_contents(dirname(__DIR__) . '/lib/staff-order-repository.php');
+    $orderRepositorySource = file_get_contents(dirname(__DIR__) . '/lib/order-repository.php');
+
+    assertTrue(is_string($migrationSource));
+    assertTrue(is_string($endpointSource));
+    assertTrue(is_string($repositorySource));
+    assertTrue(is_string($orderRepositorySource));
+    assertTrue(strpos($migrationSource, 'CREATE TABLE IF NOT EXISTS forge_order_cleanup_tombstones') !== false);
+    assertTrue(strpos($endpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($endpointSource, 'previewLegacyTestCleanup') !== false);
+    assertTrue(strpos($endpointSource, 'applyLegacyTestCleanup') !== false);
+    assertTrue(strpos($repositorySource, 'America/Chicago') !== false);
+    assertTrue(strpos($repositorySource, 'DELETE %d ORDERS BEFORE JULY 25') !== false);
+    assertTrue(strpos($repositorySource, '$comparison = $eligible ? \'<\' : \'>=\';') !== false);
+    assertTrue(strpos($repositorySource, ':cutoff_submitted_at') !== false);
+    assertTrue(strpos($orderRepositorySource, 'forge_order_cleanup_tombstones') !== false);
+    assertTrue(strpos($orderRepositorySource, 'hasCleanupTombstone') !== false);
 });
 
 $runner->run('invalid stored staff order payload fails safely', static function (): void {

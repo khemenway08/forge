@@ -57,6 +57,10 @@ final class PdoOrderRepository implements OrderRepositoryInterface
             ':payload_sha256' => $payloadSha256,
         ];
 
+        if ($this->hasCleanupTombstone($metadata['forge_order_uuid'])) {
+            throw new OrderConflictException('The immutable Forge order UUID was previously removed by cleanup.');
+        }
+
         try {
             $this->pdo->beginTransaction();
             $forgeOrderNumber = $this->reserveNextForgeOrderNumber($receivedAtDatabase);
@@ -125,6 +129,26 @@ final class PdoOrderRepository implements OrderRepositoryInterface
 
             throw new OrderConflictException('The immutable Forge order UUID is already stored with a different payload.', 0, $exception);
         }
+    }
+
+    private function hasCleanupTombstone(string $forgeOrderUuid): bool
+    {
+        try {
+            $statement = $this->pdo->prepare(
+                'SELECT forge_order_uuid
+                 FROM forge_order_cleanup_tombstones
+                 WHERE forge_order_uuid = :forge_order_uuid
+                 LIMIT 1'
+            );
+            $statement->execute([
+                ':forge_order_uuid' => $forgeOrderUuid,
+            ]);
+            $record = $statement->fetch();
+        } catch (PDOException $exception) {
+            throw new StorageUnavailableException('Forge order storage is currently unavailable.', 0, $exception);
+        }
+
+        return is_array($record);
     }
 
     private function loadStoredOrderMetadata(string $forgeOrderUuid): ?array

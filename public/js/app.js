@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260724-34';
+const FORGE_BUILD_VERSION = '20260727-35';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
 
@@ -135,6 +135,13 @@ const staffOrdersState = {
   error: '',
   notice: '',
   noticeTone: 'success',
+  legacyCleanupLoading: false,
+  legacyCleanupApplying: false,
+  legacyCleanupError: '',
+  legacyCleanupNotice: '',
+  legacyCleanupNoticeTone: 'success',
+  legacyCleanupPreview: null,
+  legacyCleanupConfirmationText: '',
   batchSummary: null,
   batchError: '',
   batchDialogOpen: false,
@@ -2437,6 +2444,13 @@ function clearStaffOrderData() {
   staffOrdersState.errorCanRetry = false;
   staffOrdersState.notice = '';
   staffOrdersState.noticeTone = 'success';
+  staffOrdersState.legacyCleanupLoading = false;
+  staffOrdersState.legacyCleanupApplying = false;
+  staffOrdersState.legacyCleanupError = '';
+  staffOrdersState.legacyCleanupNotice = '';
+  staffOrdersState.legacyCleanupNoticeTone = 'success';
+  staffOrdersState.legacyCleanupPreview = null;
+  staffOrdersState.legacyCleanupConfirmationText = '';
   staffOrdersState.batchSummary = null;
   staffOrdersState.batchError = '';
   staffOrdersState.searchTerm = '';
@@ -6223,6 +6237,131 @@ function getStaffEventStatusSummary() {
   };
 }
 
+function canManageLegacyTestCleanup() {
+  return Boolean(
+    staffRuntime
+    && typeof staffRuntime.previewLegacyTestCleanup === 'function'
+    && typeof staffRuntime.applyLegacyTestCleanup === 'function'
+    && staffOrdersState.authenticated
+    && staffOrdersState.dataSource === 'server'
+  );
+}
+
+function buildLegacyCleanupPreviewListMarkup(records, emptyHeading, emptyCopy) {
+  if (!Array.isArray(records) || records.length === 0) {
+    return `
+      <div class="staff-empty-state">
+        <h3>${escapeHtml(emptyHeading)}</h3>
+        <p>${escapeHtml(emptyCopy)}</p>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="staff-orders-list">
+      ${records.map((record) => `
+        <article class="staff-order-card">
+          <div class="staff-order-card-header">
+            <div class="staff-order-card-title">
+              <div class="staff-order-ref">${escapeHtml(record.order_reference || 'Order')}</div>
+              <p>${escapeHtml(record.customer_name || 'Unknown customer')}</p>
+            </div>
+            <div class="staff-order-card-badges">
+              ${record.tray_number != null ? `<span class="staff-status-badge staff-status-badge--production-tray-assigned">${escapeHtml(`TRAY ${record.tray_number}`)}</span>` : ''}
+            </div>
+          </div>
+          <div class="staff-order-card-meta staff-order-card-meta--primary">
+            <div><span>Submitted</span><strong>${escapeHtml(formatReadableDateTime(record.submitted_at || ''))}</strong></div>
+            <div><span>Event</span><strong>${escapeHtml(record.event_label || 'None')}</strong></div>
+          </div>
+        </article>
+      `).join('')}
+    </div>
+  `;
+}
+
+function buildLegacyCleanupControlsMarkup() {
+  const available = canManageLegacyTestCleanup();
+  const preview = staffOrdersState.legacyCleanupPreview;
+  const eligibleCount = Number.isInteger(preview?.eligibleCount) ? preview.eligibleCount : 0;
+  const expectedConfirmation = preview?.confirmationText || '';
+  const confirmationMatches = expectedConfirmation !== '' && staffOrdersState.legacyCleanupConfirmationText === expectedConfirmation;
+  const disablePreview = !available || staffOrdersState.legacyCleanupLoading || staffOrdersState.legacyCleanupApplying;
+  const disableApply = !available
+    || !preview
+    || eligibleCount <= 0
+    || !confirmationMatches
+    || staffOrdersState.legacyCleanupApplying
+    || staffOrdersState.legacyCleanupLoading;
+
+  return `
+    <section class="staff-panel-surface">
+      <div class="staff-section-heading">
+        <div>
+          <p class="eyebrow staff-orders-eyebrow">One-Time Cleanup</p>
+          <h2>Legacy Test Orders Before July 25</h2>
+          <p>Preview the confirmed historical test orders before deleting anything. July 25, 2026 orders stay protected.</p>
+        </div>
+        <div class="staff-order-card-actions">
+          <button class="secondary-button" type="button" data-action="staff-preview-legacy-cleanup"${disablePreview ? ' disabled' : ''}>${staffOrdersState.legacyCleanupLoading ? 'Loading Preview...' : 'Preview Legacy Cleanup'}</button>
+        </div>
+      </div>
+      ${buildStaffNoticeMarkup(staffOrdersState.legacyCleanupError, 'error')}
+      ${buildStaffNoticeMarkup(staffOrdersState.legacyCleanupNotice, staffOrdersState.legacyCleanupNoticeTone)}
+      ${!available ? '<p class="staff-orders-status">Legacy cleanup is available only from the authenticated hosted staff workspace.</p>' : ''}
+      ${preview ? `
+        <div class="staff-order-card-meta staff-order-card-meta--primary">
+          <div><span>Eligible Orders</span><strong>${escapeHtml(String(eligibleCount))}</strong></div>
+          <div><span>Cutoff</span><strong>${escapeHtml(preview.cutoffLocal || '')}</strong></div>
+        </div>
+        <div class="staff-batch-sections">
+          <section class="staff-batch-section">
+            <div class="staff-section-heading">
+              <div>
+                <p class="eyebrow staff-orders-eyebrow">Preview</p>
+                <h3>Orders Eligible for Deletion</h3>
+              </div>
+            </div>
+            ${buildLegacyCleanupPreviewListMarkup(
+              preview.eligibleOrders,
+              'No historical test orders match this cutoff',
+              'Nothing before July 25, 2026 is currently eligible.'
+            )}
+          </section>
+          <section class="staff-batch-section">
+            <div class="staff-section-heading">
+              <div>
+                <p class="eyebrow staff-orders-eyebrow">Protected Orders</p>
+                <h3>Earliest Orders On or After July 25</h3>
+              </div>
+            </div>
+            ${buildLegacyCleanupPreviewListMarkup(
+              preview.protectedOrders,
+              'No protected orders found',
+              'No orders were found on or after the protected July 25 cutoff.'
+            )}
+          </section>
+        </div>
+        <div class="staff-filter-field">
+          <label for="staff-legacy-cleanup-confirmation">Type Confirmation</label>
+          <input
+            id="staff-legacy-cleanup-confirmation"
+            type="text"
+            data-staff-legacy-cleanup-confirmation
+            value="${escapeHtml(staffOrdersState.legacyCleanupConfirmationText)}"
+            placeholder="${escapeHtml(expectedConfirmation)}"
+            ${staffOrdersState.legacyCleanupApplying ? 'disabled' : ''}
+          >
+        </div>
+        <p class="staff-orders-status">Required: <strong>${escapeHtml(expectedConfirmation)}</strong></p>
+        <div class="staff-order-card-actions">
+          <button class="primary-button" type="button" data-action="staff-apply-legacy-cleanup"${disableApply ? ' disabled' : ''}>${staffOrdersState.legacyCleanupApplying ? 'Deleting Historical Test Orders...' : 'Delete Previewed Orders'}</button>
+        </div>
+      ` : ''}
+    </section>
+  `;
+}
+
 function renderStaffEventControls() {
   if (!staffEventControls) {
     return;
@@ -6307,6 +6446,7 @@ function renderStaffEventControls() {
         `).join('')}
       </div>
     ` : ''}
+    ${buildLegacyCleanupControlsMarkup()}
   `;
 }
 
@@ -6453,6 +6593,82 @@ async function copyStaffOrderingLink(publicOrderToken) {
   staffEventState.notice = 'Ordering link ready to copy.';
   staffEventState.error = '';
   renderStaffEventControls();
+}
+
+async function previewLegacyTestCleanup() {
+  if (!canManageLegacyTestCleanup() || staffOrdersState.legacyCleanupLoading || staffOrdersState.legacyCleanupApplying) {
+    return;
+  }
+
+  staffOrdersState.legacyCleanupLoading = true;
+  staffOrdersState.legacyCleanupError = '';
+  staffOrdersState.legacyCleanupNotice = '';
+  renderStaffEventControls();
+
+  try {
+    const result = await staffRuntime.previewLegacyTestCleanup();
+    if (!result.ok && result.unauthenticated) {
+      showUnauthenticatedStaffAccess();
+      return;
+    }
+
+    staffOrdersState.legacyCleanupPreview = result.preview || null;
+    staffOrdersState.legacyCleanupConfirmationText = '';
+    staffOrdersState.legacyCleanupNotice = result.preview?.eligibleCount
+      ? `Preview loaded for ${result.preview.eligibleCount} historical test order${result.preview.eligibleCount === 1 ? '' : 's'}.`
+      : 'Preview loaded. No historical test orders are currently eligible.';
+    staffOrdersState.legacyCleanupNoticeTone = 'success';
+  } catch (error) {
+    console.error('Forge legacy test cleanup preview failed', error);
+    staffOrdersState.legacyCleanupPreview = null;
+    staffOrdersState.legacyCleanupError = error?.message || 'Legacy test cleanup preview is currently unavailable.';
+  } finally {
+    staffOrdersState.legacyCleanupLoading = false;
+    renderStaffEventControls();
+  }
+}
+
+async function applyLegacyTestCleanup() {
+  const preview = staffOrdersState.legacyCleanupPreview;
+  if (!canManageLegacyTestCleanup() || !preview || staffOrdersState.legacyCleanupApplying || staffOrdersState.legacyCleanupLoading) {
+    return;
+  }
+
+  staffOrdersState.legacyCleanupApplying = true;
+  staffOrdersState.legacyCleanupError = '';
+  staffOrdersState.legacyCleanupNotice = '';
+  renderStaffEventControls();
+
+  try {
+    const result = await staffRuntime.applyLegacyTestCleanup(
+      preview.previewSignature,
+      preview.eligibleCount,
+      staffOrdersState.legacyCleanupConfirmationText
+    );
+    if (!result.ok && result.unauthenticated) {
+      showUnauthenticatedStaffAccess();
+      return;
+    }
+
+    const releasedTrayCopy = Array.isArray(result.releasedTrayNumbers) && result.releasedTrayNumbers.length
+      ? ` Released trays: ${result.releasedTrayNumbers.join(', ')}.`
+      : '';
+    staffOrdersState.legacyCleanupPreview = null;
+    staffOrdersState.legacyCleanupConfirmationText = '';
+    staffOrdersState.legacyCleanupNotice = `Deleted ${result.deletedCount} historical test order${result.deletedCount === 1 ? '' : 's'}.${releasedTrayCopy}`;
+    staffOrdersState.legacyCleanupNoticeTone = 'success';
+    await loadStaffOrdersQueue();
+  } catch (error) {
+    console.error('Forge legacy test cleanup failed', error);
+    if (error?.code === 'cleanup_conflict') {
+      staffOrdersState.legacyCleanupPreview = null;
+      staffOrdersState.legacyCleanupConfirmationText = '';
+    }
+    staffOrdersState.legacyCleanupError = error?.message || 'Legacy test cleanup could not be completed.';
+  } finally {
+    staffOrdersState.legacyCleanupApplying = false;
+    renderStaffEventControls();
+  }
 }
 
 function buildStaffOrderCardMarkup(record, filters) {
@@ -9363,6 +9579,12 @@ if (treeForm) {
       renderStaffOrdersQueue();
       return;
     }
+    if (target.matches('[data-staff-legacy-cleanup-confirmation]')) {
+      staffOrdersState.legacyCleanupConfirmationText = target.value.slice(0, 200);
+      staffOrdersState.legacyCleanupError = '';
+      renderStaffEventControls();
+      return;
+    }
     const eventField = target.dataset.staffEventField;
     if (eventField) {
       staffEventState.form[eventField] = target.value;
@@ -9401,6 +9623,16 @@ if (treeForm) {
     if (action === 'staff-refresh-events') {
       staffEventState.notice = '';
       loadStaffEvents();
+      return;
+    }
+
+    if (action === 'staff-preview-legacy-cleanup') {
+      previewLegacyTestCleanup();
+      return;
+    }
+
+    if (action === 'staff-apply-legacy-cleanup') {
+      applyLegacyTestCleanup();
       return;
     }
 

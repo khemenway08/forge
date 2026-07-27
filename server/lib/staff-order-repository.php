@@ -47,9 +47,17 @@ final class InternalOrderNoteTooLongException extends \RuntimeException
 {
 }
 
+final class LegacyTestCleanupConflictException extends \RuntimeException
+{
+}
+
 final class PdoStaffOrderRepository
 {
     private const INTERNAL_NOTE_MAX_LENGTH = 4000;
+    public const LEGACY_TEST_CLEANUP_TIMEZONE = 'America/Chicago';
+    public const LEGACY_TEST_CLEANUP_CUTOFF_LOCAL = '2026-07-25 00:00:00';
+    public const LEGACY_TEST_CLEANUP_EXCLUDED_PREVIEW_LIMIT = 5;
+    public const LEGACY_TEST_CLEANUP_RELEASE_REASON = 'legacy_test_cleanup';
     private const ORDER_STATUS_SUBMITTED = 'submitted';
     private const ORDER_STATUS_TRAY_ASSIGNED = 'tray_assigned';
     private const ORDER_STATUS_IN_PRODUCTION = 'in_production';
@@ -672,6 +680,189 @@ final class PdoStaffOrderRepository
         }
     }
 
+    /**
+     * @return array{
+     *   cutoff_timezone: string,
+     *   cutoff_local: string,
+     *   cutoff_utc: string,
+     *   eligible_count: int,
+     *   confirmation_text: string,
+     *   preview_signature: string,
+     *   eligible_orders: array<int, array<string, mixed>>,
+     *   protected_orders: array<int, array<string, mixed>>
+     * }
+     */
+    public function previewLegacyTestCleanup(): array
+    {
+        $cutoffDatabase = legacyTestCleanupCutoffDatabase();
+
+        try {
+            $eligibleRows = $this->loadLegacyCleanupRows($cutoffDatabase, true, false);
+            $protectedRows = $this->loadLegacyCleanupRows($cutoffDatabase, false, false, self::LEGACY_TEST_CLEANUP_EXCLUDED_PREVIEW_LIMIT);
+        } catch (PDOException $exception) {
+            throw new StorageUnavailableException('Legacy test cleanup is currently unavailable.', 0, $exception);
+        }
+
+        $eligibleCount = count($eligibleRows);
+
+        return [
+            'cutoff_timezone' => self::LEGACY_TEST_CLEANUP_TIMEZONE,
+            'cutoff_local' => legacyTestCleanupCutoffLocalIso8601(),
+            'cutoff_utc' => OrderPayload::databaseDateTimeToIso8601($cutoffDatabase),
+            'eligible_count' => $eligibleCount,
+            'confirmation_text' => buildLegacyTestCleanupConfirmationText($eligibleCount),
+            'preview_signature' => buildLegacyTestCleanupPreviewSignature($eligibleRows),
+            'eligible_orders' => array_map('normalizeLegacyTestCleanupPreviewRow', $eligibleRows),
+            'protected_orders' => array_map('normalizeLegacyTestCleanupPreviewRow', $protectedRows),
+        ];
+    }
+
+    /**
+     * @return array{
+     *   deleted_count: int,
+     *   released_tray_numbers: array<int, int>,
+     *   deleted_order_uuids: array<int, string>
+     * }
+     */
+    public function applyLegacyTestCleanup(string $previewSignature, int $expectedCount, string $confirmationText): array
+    {
+        $normalizedSignature = trim($previewSignature);
+        $normalizedExpectedCount = max(0, $expectedCount);
+        $normalizedConfirmationText = trim($confirmationText);
+        $cutoffDatabase = legacyTestCleanupCutoffDatabase();
+
+        if ($normalizedSignature === '') {
+            throw new \InvalidArgumentException('A valid cleanup preview signature is required.');
+        }
+
+        $expectedConfirmationText = buildLegacyTestCleanupConfirmationText($normalizedExpectedCount);
+        if ($normalizedConfirmationText !== $expectedConfirmationText) {
+            throw new \InvalidArgumentException('Enter the exact cleanup confirmation text before deleting anything.');
+        }
+
+        try {
+            $this->pdo->beginTransaction();
+
+            $eligibleRows = $this->loadLegacyCleanupRows($cutoffDatabase, true, true);
+            $currentCount = count($eligibleRows);
+            $currentSignature = buildLegacyTestCleanupPreviewSignature($eligibleRows);
+
+            if ($currentCount !== $normalizedExpectedCount || !hash_equals($normalizedSignature, $currentSignature)) {
+                throw new LegacyTestCleanupConflictException('Eligible orders changed. Run a new preview before deleting anything.');
+            }
+
+            if ($currentCount === 0) {
+                throw new LegacyTestCleanupConflictException('No legacy test orders are currently eligible for cleanup.');
+            }
+
+            $timestamp = gmdate('Y-m-d H:i:s.u');
+            $deletedOrderUuids = [];
+            $releasedTrayNumbers = [];
+
+            foreach ($eligibleRows as $row) {
+                $orderUuid = trim((string) ($row['forge_order_uuid'] ?? ''));
+                if ($orderUuid === '') {
+                    throw new StorageUnavailableException('Legacy test cleanup could not be completed safely.');
+                }
+
+                $submittedAtDatabase = is_string($row['submitted_at'] ?? null) ? $row['submitted_at'] : '';
+                if ($submittedAtDatabase === '' || strcmp($submittedAtDatabase, $cutoffDatabase) >= 0) {
+                    throw new LegacyTestCleanupConflictException('Eligible orders changed. Run a new preview before deleting anything.');
+                }
+
+                $deletedOrderUuids[] = $orderUuid;
+                $trayNumber = normalizeNullableTrayNumber($row['current_tray_number'] ?? null);
+                if ($trayNumber !== null) {
+                    $releasedTrayNumbers[] = $trayNumber;
+                }
+            }
+
+            foreach ($deletedOrderUuids as $orderUuid) {
+                $statement = $this->pdo->prepare(
+                    'UPDATE forge_production_trays
+                     SET tray_status = :tray_status,
+                         current_order_uuid = NULL,
+                         assigned_at = NULL,
+                         updated_at = :updated_at
+                     WHERE current_order_uuid = :forge_order_uuid'
+                );
+                $statement->execute([
+                    ':tray_status' => self::TRAY_STATUS_AVAILABLE,
+                    ':updated_at' => $timestamp,
+                    ':forge_order_uuid' => $orderUuid,
+                ]);
+
+                $statement = $this->pdo->prepare(
+                    'UPDATE forge_tray_assignment_history
+                     SET released_at = :released_at,
+                         release_reason = :release_reason
+                     WHERE forge_order_uuid = :forge_order_uuid
+                       AND released_at IS NULL'
+                );
+                $statement->execute([
+                    ':released_at' => $timestamp,
+                    ':release_reason' => self::LEGACY_TEST_CLEANUP_RELEASE_REASON,
+                    ':forge_order_uuid' => $orderUuid,
+                ]);
+            }
+
+            $this->executeUuidBatchMutation(
+                'DELETE FROM forge_order_item_production WHERE forge_order_uuid IN (%s)',
+                $deletedOrderUuids
+            );
+            $this->executeUuidBatchMutation(
+                'DELETE FROM forge_tray_assignment_history WHERE forge_order_uuid IN (%s)',
+                $deletedOrderUuids
+            );
+
+            $insertTombstone = $this->pdo->prepare(
+                'INSERT INTO forge_order_cleanup_tombstones (
+                    forge_order_uuid,
+                    deleted_at
+                 ) VALUES (
+                    :forge_order_uuid,
+                    :deleted_at
+                 )'
+            );
+            foreach ($deletedOrderUuids as $orderUuid) {
+                $insertTombstone->execute([
+                    ':forge_order_uuid' => $orderUuid,
+                    ':deleted_at' => $timestamp,
+                ]);
+            }
+
+            $this->executeUuidBatchMutation(
+                'DELETE FROM forge_orders WHERE forge_order_uuid IN (%s)',
+                $deletedOrderUuids
+            );
+
+            $this->pdo->commit();
+
+            $releasedTrayNumbers = array_values(array_unique(array_map('intval', $releasedTrayNumbers)));
+            sort($releasedTrayNumbers, SORT_NUMERIC);
+
+            return [
+                'deleted_count' => count($deletedOrderUuids),
+                'released_tray_numbers' => $releasedTrayNumbers,
+                'deleted_order_uuids' => $deletedOrderUuids,
+            ];
+        } catch (
+            LegacyTestCleanupConflictException
+            | StorageUnavailableException
+            | \InvalidArgumentException $exception
+        ) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $exception;
+        } catch (PDOException $exception) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw new StorageUnavailableException('Legacy test cleanup is currently unavailable.', 0, $exception);
+        }
+    }
+
     private function ensureConfiguredTrays(): void
     {
         try {
@@ -992,6 +1183,62 @@ final class PdoStaffOrderRepository
 
         return $grouped;
     }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function loadLegacyCleanupRows(string $cutoffDatabase, bool $eligible, bool $forUpdate, ?int $limit = null): array
+    {
+        $comparison = $eligible ? '<' : '>=';
+        $orderDirection = 'submitted_at ASC, forge_order_uuid ASC';
+        $limitClause = $limit !== null ? ' LIMIT :limit' : '';
+        $forUpdateClause = $forUpdate ? ' FOR UPDATE' : '';
+
+        $statement = $this->pdo->prepare(
+            "SELECT
+                forge_order_uuid,
+                forge_order_number,
+                submitted_at,
+                updated_at,
+                event_id,
+                current_tray_number,
+                payload_json
+             FROM forge_orders
+             WHERE submitted_at {$comparison} :cutoff_submitted_at
+             ORDER BY {$orderDirection}{$limitClause}{$forUpdateClause}"
+        );
+        $statement->bindValue(':cutoff_submitted_at', $cutoffDatabase, PDO::PARAM_STR);
+        if ($limit !== null) {
+            $statement->bindValue(':limit', $limit, PDO::PARAM_INT);
+        }
+        $statement->execute();
+
+        $rows = $statement->fetchAll();
+        return is_array($rows) ? $rows : [];
+    }
+
+    /**
+     * @param array<int, string> $orderUuids
+     */
+    private function executeUuidBatchMutation(string $sqlTemplate, array $orderUuids): void
+    {
+        $normalizedOrderUuids = array_values(array_filter(array_map(static function ($value): string {
+            return is_string($value) ? trim($value) : '';
+        }, $orderUuids), static function (string $value): bool {
+            return $value !== '';
+        }));
+
+        if ($normalizedOrderUuids === []) {
+            return;
+        }
+
+        $placeholders = implode(', ', array_fill(0, count($normalizedOrderUuids), '?'));
+        $statement = $this->pdo->prepare(sprintf($sqlTemplate, $placeholders));
+        foreach ($normalizedOrderUuids as $index => $orderUuid) {
+            $statement->bindValue($index + 1, $orderUuid, PDO::PARAM_STR);
+        }
+        $statement->execute();
+    }
 }
 
 function normalizeStaffOrderLimit(int $limit): int
@@ -1139,6 +1386,94 @@ function normalizeStoredInternalOrderNote($value): ?string
 
     $normalized = str_replace(["\r\n", "\r"], "\n", $value);
     return trim($normalized) === '' ? null : $normalized;
+}
+
+function legacyTestCleanupCutoffDatabase(): string
+{
+    $cutoff = new \DateTimeImmutable(
+        PdoStaffOrderRepository::LEGACY_TEST_CLEANUP_CUTOFF_LOCAL,
+        new \DateTimeZone(PdoStaffOrderRepository::LEGACY_TEST_CLEANUP_TIMEZONE)
+    );
+
+    return $cutoff
+        ->setTimezone(new \DateTimeZone('UTC'))
+        ->format('Y-m-d H:i:s.u');
+}
+
+function legacyTestCleanupCutoffLocalIso8601(): string
+{
+    return (new \DateTimeImmutable(
+        PdoStaffOrderRepository::LEGACY_TEST_CLEANUP_CUTOFF_LOCAL,
+        new \DateTimeZone(PdoStaffOrderRepository::LEGACY_TEST_CLEANUP_TIMEZONE)
+    ))->format(\DateTimeInterface::ATOM);
+}
+
+function buildLegacyTestCleanupConfirmationText(int $eligibleCount): string
+{
+    return sprintf('DELETE %d ORDERS BEFORE JULY 25', max(0, $eligibleCount));
+}
+
+/**
+ * @param array<int, array<string, mixed>> $records
+ */
+function buildLegacyTestCleanupPreviewSignature(array $records): string
+{
+    $signatureRows = array_map(static function (array $record): array {
+        return [
+            'forge_order_uuid' => trim((string) ($record['forge_order_uuid'] ?? '')),
+            'submitted_at' => is_string($record['submitted_at'] ?? null) ? $record['submitted_at'] : '',
+            'updated_at' => is_string($record['updated_at'] ?? null) ? $record['updated_at'] : '',
+            'current_tray_number' => normalizeNullableTrayNumber($record['current_tray_number'] ?? null),
+            'event_id' => normalizeNullableString($record['event_id'] ?? null),
+        ];
+    }, $records);
+
+    try {
+        return hash('sha256', json_encode($signatureRows, JSON_THROW_ON_ERROR));
+    } catch (JsonException $exception) {
+        throw new \InvalidArgumentException('A valid cleanup preview signature could not be generated.', 0, $exception);
+    }
+}
+
+/**
+ * @param array<string, mixed> $record
+ * @return array<string, mixed>
+ */
+function normalizeLegacyTestCleanupPreviewRow(array $record): array
+{
+    $payloadJson = is_string($record['payload_json'] ?? null) ? $record['payload_json'] : '';
+    $payload = [];
+    if ($payloadJson !== '') {
+        try {
+            $decodedPayload = json_decode($payloadJson, true, 512, JSON_THROW_ON_ERROR);
+            if (is_array($decodedPayload)) {
+                $payload = $decodedPayload;
+            }
+        } catch (JsonException $exception) {
+            unset($exception);
+        }
+    }
+
+    $eventName = is_array($payload['event'] ?? null) && is_string($payload['event']['event_name'] ?? null)
+        ? trim((string) $payload['event']['event_name'])
+        : '';
+    $eventId = normalizeNullableString($record['event_id'] ?? ($payload['event']['event_id'] ?? null));
+    $orderNumber = normalizeNullableOrderNumber($record['forge_order_number'] ?? ($payload['forge_order_number'] ?? null));
+    $orderReference = $orderNumber !== null
+        ? sprintf('Order %d', $orderNumber)
+        : sprintf('Order %s', strtoupper(substr(trim((string) ($record['forge_order_uuid'] ?? '')), 0, 8)));
+
+    return [
+        'forge_order_uuid' => trim((string) ($record['forge_order_uuid'] ?? '')),
+        'forge_order_number' => $orderNumber,
+        'order_reference' => $orderReference,
+        'customer_name' => is_array($payload['customer'] ?? null)
+            ? trim((string) ($payload['customer']['full_name'] ?? ''))
+            : '',
+        'submitted_at' => OrderPayload::databaseDateTimeToIso8601((string) ($record['submitted_at'] ?? '')),
+        'event_label' => $eventName !== '' ? $eventName : $eventId,
+        'tray_number' => normalizeNullableTrayNumber($record['current_tray_number'] ?? null),
+    ];
 }
 
 /**

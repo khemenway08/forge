@@ -725,6 +725,66 @@ test('hosted internal note updates return the refreshed shared order safely', as
   assert.equal(result.order.current_tray_number, 6);
 });
 
+test('hosted legacy cleanup preview returns the protected and eligible order snapshot safely', async () => {
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'https:', hostname: 'forge.example.com' },
+    staffApiClient: {
+      async previewLegacyTestCleanup() {
+        return {
+          ok: true,
+          authenticated: true,
+          preview: {
+            cutoffTimezone: 'America/Chicago',
+            cutoffLocal: '2026-07-25T00:00:00-05:00',
+            cutoffUtc: '2026-07-25T05:00:00+00:00',
+            eligibleCount: 2,
+            confirmationText: 'DELETE 2 ORDERS BEFORE JULY 25',
+            previewSignature: 'preview-signature-1',
+            eligibleOrders: [{ forge_order_uuid: 'legacy-order-1', order_reference: 'Order 1001' }],
+            protectedOrders: [{ forge_order_uuid: 'live-order-1', order_reference: 'Order 1042' }]
+          }
+        };
+      }
+    }
+  });
+
+  const result = await runtime.previewLegacyTestCleanup();
+
+  assert.equal(result.ok, true);
+  assert.equal(result.readOnly, true);
+  assert.equal(result.preview.eligibleCount, 2);
+  assert.equal(result.preview.confirmationText, 'DELETE 2 ORDERS BEFORE JULY 25');
+  assert.deepEqual(result.preview.protectedOrders, [{ forge_order_uuid: 'live-order-1', order_reference: 'Order 1042' }]);
+});
+
+test('hosted legacy cleanup apply returns the deleted count and released tray numbers safely', async () => {
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'https:', hostname: 'forge.example.com' },
+    staffApiClient: {
+      async applyLegacyTestCleanup(previewSignature, expectedCount, confirmationText) {
+        assert.equal(previewSignature, 'preview-signature-1');
+        assert.equal(expectedCount, 2);
+        assert.equal(confirmationText, 'DELETE 2 ORDERS BEFORE JULY 25');
+        return {
+          ok: true,
+          authenticated: true,
+          deletedCount: 2,
+          releasedTrayNumbers: [4, 8],
+          deletedOrderUuids: ['legacy-order-1', 'legacy-order-2']
+        };
+      }
+    }
+  });
+
+  const result = await runtime.applyLegacyTestCleanup('preview-signature-1', 2, 'DELETE 2 ORDERS BEFORE JULY 25');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.readOnly, true);
+  assert.equal(result.deletedCount, 2);
+  assert.deepEqual(result.releasedTrayNumbers, [4, 8]);
+  assert.deepEqual(result.deletedOrderUuids, ['legacy-order-1', 'legacy-order-2']);
+});
+
 test('terminal or later production statuses remain preserved and never reopen tray assignment in hosted mode', async () => {
   const records = staffOrdersRuntime.adaptServerOrdersForQueue([
     {
@@ -853,4 +913,40 @@ test('localhost internal note updates stay on the local order-store path without
   assert.equal(result.readOnly, false);
   assert.equal(result.order.internal_note, 'Paid cash at show.');
   assert.deepEqual(calls, [['updateInternalNote', 'order-local', 'Paid cash at show.']]);
+});
+
+test('localhost legacy cleanup stays unsupported and never calls the hosted cleanup endpoints', async () => {
+  const calls = [];
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'http:', hostname: 'localhost' },
+    staffApiClient: {
+      async previewLegacyTestCleanup() {
+        calls.push('previewLegacyTestCleanup');
+        throw new Error('hosted cleanup preview should not be called');
+      },
+      async applyLegacyTestCleanup() {
+        calls.push('applyLegacyTestCleanup');
+        throw new Error('hosted cleanup apply should not be called');
+      }
+    }
+  });
+
+  const previewResult = await runtime.previewLegacyTestCleanup();
+  const applyResult = await runtime.applyLegacyTestCleanup('preview-signature-1', 2, 'DELETE 2 ORDERS BEFORE JULY 25');
+
+  assert.deepEqual(previewResult, {
+    ok: false,
+    authenticated: true,
+    unsupported: true,
+    dataSource: 'local',
+    readOnly: false
+  });
+  assert.deepEqual(applyResult, {
+    ok: false,
+    authenticated: true,
+    unsupported: true,
+    dataSource: 'local',
+    readOnly: false
+  });
+  assert.deepEqual(calls, []);
 });
