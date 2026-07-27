@@ -415,6 +415,7 @@ function loadForgeAppWithoutStaffModules() {
     'public/js/forge-api-client.js',
     'public/js/forge-order-store.js',
     'public/js/forge-order-server-sync.js',
+    'public/js/forge-sync-status.js',
     'public/js/forge-order-submission.js',
     'public/js/forge-event-state.js',
     'public/js/forge-local-orders-queue.js',
@@ -913,6 +914,7 @@ function loadForgeHostedStaffAppForTrayDetail() {
     'public/js/forge-api-client.js',
     'public/js/forge-order-store.js',
     'public/js/forge-order-server-sync.js',
+    'public/js/forge-sync-status.js',
     'public/js/forge-order-submission.js',
     'public/js/forge-event-state.js',
     'public/js/forge-local-orders-queue.js',
@@ -1250,6 +1252,7 @@ function loadForgeStaffDemoApp({
     'public/js/forge-api-client.js',
     'public/js/forge-order-store.js',
     'public/js/forge-order-server-sync.js',
+    'public/js/forge-sync-status.js',
     'public/js/forge-order-submission.js',
     'public/js/forge-event-state.js',
     'public/js/forge-local-orders-queue.js',
@@ -2008,6 +2011,10 @@ test('customer final review and thank-you screens never render private internal 
     orderStore.getOrder = async () => ({
       forge_order_uuid: '123e4567-e89b-42d3-a456-426614174099',
       forge_order_number: 1042,
+      server_upload_status: 'stored',
+      server_received_at: '2026-07-27T18:05:00.000Z',
+      server_payload_sha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      server_created: true,
       internal_note: 'Paid cash at show.',
       payload: {
         customer: {
@@ -2023,10 +2030,57 @@ test('customer final review and thank-you screens never render private internal 
 
   await context.renderThankYouScreen();
 
-  assert.equal(thankYouCopy.textContent, 'Kyle Hemenway has been safely saved on this device for the Hilltop Shop team.');
+  assert.equal(thankYouCopy.textContent, 'Kyle Hemenway was saved and synced with Forge.');
   assert.match(String(thankYouReference.innerHTML || ''), /Order Reference/);
   assert.doesNotMatch(String(thankYouCopy.textContent || ''), /Paid cash at show\./);
   assert.doesNotMatch(String(thankYouReference.innerHTML || ''), /Paid cash at show\./);
+});
+
+test('thank-you screen explains offline local save without claiming a server upload', async () => {
+  const { context, thankYouCopy } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    appState.lastSubmittedOrderUuid = 'offline-order-1';
+    orderStore.getOrder = async () => ({
+      forge_order_uuid: 'offline-order-1',
+      payload: {
+        customer: {
+          full_name: 'Meagan'
+        }
+      }
+    });
+  `, context);
+
+  await context.renderThankYouScreen();
+
+  assert.equal(thankYouCopy.textContent, 'Meagan was safely saved on this iPad and will upload when Forge reconnects.');
+});
+
+test('thank-you screen explains upload problems without exposing technical details', async () => {
+  const { context, thankYouCopy } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    appState.lastSubmittedOrderUuid = 'problem-order-1';
+    orderStore.getOrder = async () => ({
+      forge_order_uuid: 'problem-order-1',
+      server_upload_status: 'failed',
+      server_upload_attempt_count: 4,
+      last_server_upload_error: {
+        code: 'invalid_order',
+        message: 'The Forge order payload was rejected by the server.'
+      },
+      payload: {
+        customer: {
+          full_name: 'Meagan'
+        }
+      }
+    });
+  `, context);
+
+  await context.renderThankYouScreen();
+
+  assert.equal(thankYouCopy.textContent, 'Meagan was saved, but it needs staff attention before Forge can finish the upload.');
+  assert.doesNotMatch(String(thankYouCopy.textContent || ''), /invalid_order|stack|sql|WooCommerce/i);
 });
 
 test('localhost staff demo controls are available and hosted https keeps them unavailable', async () => {
@@ -2111,7 +2165,7 @@ test('staff orders remains the default protected destination and the catalog she
   assert.match(indexSource, />Shortlist<\/button>/);
   assert.match(
     indexSource,
-    /<script src="js\/forge-staff-api-client\.js\?v=20260727-35"><\/script>\s*<script src="js\/forge-staff-catalog-ordering\.js\?v=20260727-35"><\/script>\s*<script src="js\/forge-catalog-image-viewer\.js\?v=20260727-35"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260727-35"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260727-35"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260727-35"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260727-35"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260727-35"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260727-35"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260727-35"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260727-35"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260727-35"><\/script>/
+    /<script src="js\/forge-staff-api-client\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-catalog-ordering\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-catalog-image-viewer\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260727-36"><\/script>/
   );
   assert.doesNotMatch(indexSource, /data-category="staff-catalog"/);
 });

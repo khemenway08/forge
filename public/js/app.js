@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260727-35';
+const FORGE_BUILD_VERSION = '20260727-36';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
 
@@ -48,6 +48,9 @@ const paymentHandoffCancelPanel = document.querySelector('[data-payment-handoff-
 const paymentMethodChoiceButtons = [...document.querySelectorAll('[data-payment-method]')];
 const thankYouCopy = document.querySelector('[data-thank-you-copy]');
 const thankYouReference = document.querySelector('[data-thank-you-reference]');
+const customerSyncIndicator = document.querySelector('[data-customer-sync-indicator]');
+const customerSyncLabel = document.querySelector('[data-customer-sync-label]');
+const customerSyncCopy = document.querySelector('[data-customer-sync-copy]');
 const staffAuthForm = document.querySelector('[data-staff-auth-form]');
 const staffAuthPinInput = document.querySelector('[data-staff-pin-input]');
 const staffAuthStatus = document.querySelector('[data-staff-auth-status]');
@@ -93,6 +96,7 @@ const forgeOrderPayloadPreview = globalThis.ForgeOrderPayloadPreview;
 const forgeApiClient = globalThis.ForgeApiClient;
 const forgeOrderStore = globalThis.ForgeOrderStore;
 const forgeOrderServerSync = globalThis.ForgeOrderServerSync;
+const forgeSyncStatus = globalThis.ForgeSyncStatus;
 const forgeOrderSubmission = globalThis.ForgeOrderSubmission;
 const forgeEventState = globalThis.ForgeEventState;
 const forgeStaffApiClient = globalThis.ForgeStaffApiClient;
@@ -217,6 +221,9 @@ const staffEventState = {
     event_location: ''
   }
 };
+const syncStatusState = {
+  snapshot: null
+};
 
 if (!forgeProductCatalog) {
   throw new Error('Forge product catalog failed to load before app.js.');
@@ -236,6 +243,10 @@ if (!forgeApiClient) {
 
 if (!forgeOrderServerSync) {
   throw new Error('Forge order server sync helpers failed to load before app.js.');
+}
+
+if (!forgeSyncStatus) {
+  throw new Error('Forge sync status helpers failed to load before app.js.');
 }
 
 if (!forgeOrderSubmission) {
@@ -729,6 +740,7 @@ let lastStaffPackingFocusTarget = null;
 const payloadPreviewContextStore = forgeOrderPayloadPreview.createPayloadPreviewContextStore();
 const orderStore = forgeOrderStore.createOrderStore();
 const orderSyncApiClient = forgeApiClient.createForgeApiClient();
+const orderSyncStatusApiClient = forgeApiClient.createForgeApiClient({ timeoutMs: 3500 });
 const eventStateController = forgeEventState.createEventStateController({
   apiClient: orderSyncApiClient,
   storage: localStorage
@@ -753,6 +765,16 @@ const automaticOrderSync = forgeOrderServerSync.createAutomaticOrderSyncCoordina
   eventTarget: window,
   location: window.location
 });
+const syncStatusController = forgeSyncStatus.createSyncStatusController({
+  orderStore,
+  apiClient: orderSyncStatusApiClient,
+  syncCoordinator: automaticOrderSync,
+  eventTarget: window,
+  documentTarget: document,
+  navigatorLike: navigator,
+  setTimeoutFn: window.setTimeout.bind(window),
+  clearTimeoutFn: window.clearTimeout.bind(window)
+});
 const submissionContextManager = forgeOrderSubmission.createSubmissionContextManager({
   storage: localStorage
 });
@@ -766,7 +788,20 @@ const orderSubmissionService = forgeOrderSubmission.createOrderSubmissionService
     automaticOrderSync.requestSyncForOrder(record?.forge_order_uuid || '');
   }
 });
+syncStatusState.snapshot = syncStatusController.getSnapshot();
 automaticOrderSync.start();
+syncStatusController.start();
+syncStatusController.subscribe((nextSnapshot) => {
+  syncStatusState.snapshot = nextSnapshot;
+  renderCustomerSyncIndicator();
+  if (appState.currentScreen === 'thank-you' && appState.lastSubmittedOrderUuid) {
+    renderThankYouScreen().catch(() => {});
+  }
+  if (staffOrdersState.enabled) {
+    renderStaffOrdersQueue();
+    renderReadyToPackQueue();
+  }
+});
 staffOrdersState.dataSource = staffRuntime.environment.dataSource;
 staffOrdersState.readOnly = staffRuntime.environment.dataSource === 'server';
 staffOrdersState.authenticated = staffRuntime.environment.dataSource === 'local';
@@ -1496,6 +1531,7 @@ function showScreen(name) {
   document.body.classList.toggle('is-staff-screen', isStaffScreen);
   appShell?.classList.toggle('is-staff-screen', isStaffScreen);
   appState.currentScreen = name;
+  renderCustomerSyncIndicator();
   saveAppState();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -5647,30 +5683,58 @@ function getOrderCompletionSummary(record) {
   return `${counts.completedItemCount} of ${counts.totalItemCount} Complete`;
 }
 
+function getCurrentSyncSnapshot() {
+  return syncStatusState.snapshot || forgeSyncStatus.deriveSyncStatusSnapshot({
+    browserOnline: navigator.onLine !== false,
+    serverState: forgeSyncStatus.SERVER_STATES.checking,
+    isChecking: true,
+    pendingUploadCount: 0,
+    activeUploadCount: 0,
+    uploadProblemCount: 0,
+    lastSuccessfulSyncAt: null
+  });
+}
+
+function getRecordSyncDisplayState(record) {
+  const derivedState = forgeSyncStatus.deriveRecordSyncState(record);
+  if (derivedState.key === 'synced') {
+    return {
+      statusKey: 'synced',
+      label: 'Synced',
+      badgeClass: 'staff-status-badge--synced'
+    };
+  }
+  if (derivedState.key === 'problem') {
+    return {
+      statusKey: 'error',
+      label: 'Upload Problem',
+      badgeClass: 'staff-status-badge--sync-error'
+    };
+  }
+  if (derivedState.key === 'syncing') {
+    return {
+      statusKey: 'syncing',
+      label: 'Pending Upload',
+      badgeClass: 'staff-status-badge--sync-pending'
+    };
+  }
+  return {
+    statusKey: 'pending',
+    label: 'Pending Upload',
+    badgeClass: 'staff-status-badge--sync-pending'
+  };
+}
+
 function getStaffSyncStatus(record) {
-  return sanitizeText(record?.sync_status || 'pending').toLowerCase();
+  return getRecordSyncDisplayState(record).statusKey;
 }
 
 function getStaffSyncStatusLabel(record) {
-  const syncStatus = getStaffSyncStatus(record);
-  if (syncStatus === 'synced') {
-    return 'Synced';
-  }
-  if (syncStatus === 'error') {
-    return 'Sync Error';
-  }
-  return 'Sync Pending';
+  return getRecordSyncDisplayState(record).label;
 }
 
 function getStaffSyncStatusBadgeClass(record) {
-  const syncStatus = getStaffSyncStatus(record);
-  if (syncStatus === 'synced') {
-    return 'staff-status-badge--synced';
-  }
-  if (syncStatus === 'error') {
-    return 'staff-status-badge--sync-error';
-  }
-  return 'staff-status-badge--sync-pending';
+  return getRecordSyncDisplayState(record).badgeClass;
 }
 
 function shouldShowProminentSyncBadge(record) {
@@ -6185,6 +6249,7 @@ function renderStaffOrdersQueue() {
   }
   staffOrdersState.batchSummary = batchSummary;
 
+  const syncSnapshot = getCurrentSyncSnapshot();
   staffOrdersSummary.innerHTML = [
     { label: sourceConfig.totalSummaryLabel, value: summary.totalOrders },
     { label: sourceConfig.secondarySummaryLabel, value: sourceConfig.secondarySummaryValue || summary.pendingFutureSync },
@@ -6195,7 +6260,7 @@ function renderStaffOrdersQueue() {
       <span>${escapeHtml(card.label)}</span>
       <strong>${escapeHtml(String(card.value))}</strong>
     </article>
-  `).join('');
+  `).join('') + buildStaffSystemStatusCardMarkup(syncSnapshot);
 
   staffOrdersFilters.innerHTML = [
     { key: 'orderScope', label: 'Scope', options: availableFilters.orderScope },
@@ -6250,6 +6315,39 @@ function renderStaffOrdersQueue() {
           ${staffOrdersState.errorCanRetry ? '<button class="secondary-button" type="button" data-action="staff-refresh-orders">Retry</button>' : ''}
         </div>
       `}
+  `;
+}
+
+function buildStaffSystemStatusCardMarkup(snapshot) {
+  const canRetryUploads = !snapshot.isRetryingUploads
+    && !snapshot.isRecheckingConnection
+    && !snapshot.isChecking
+    && (snapshot.pendingUploadCount > 0 || snapshot.uploadProblemCount > 0);
+  const canRecheckConnection = !snapshot.isRetryingUploads && !snapshot.isRecheckingConnection;
+  const lastSuccessfulSyncCopy = snapshot.lastSuccessfulSyncAt
+    ? formatReadableDateTime(snapshot.lastSuccessfulSyncAt)
+    : 'Not yet';
+
+  return `
+    <article class="staff-summary-card staff-summary-card--wide">
+      <div class="staff-section-heading">
+        <div>
+          <p class="eyebrow staff-orders-eyebrow">Forge System Status</p>
+          <h2>${escapeHtml(snapshot.label)}</h2>
+          <p>${escapeHtml(snapshot.supportingText)}</p>
+        </div>
+        <div class="staff-order-card-actions">
+          <button class="secondary-button" type="button" data-action="staff-recheck-connection"${canRecheckConnection ? '' : ' disabled'}>${snapshot.isRecheckingConnection ? 'Checking...' : 'Recheck Connection'}</button>
+          <button class="primary-button" type="button" data-action="staff-retry-uploads"${canRetryUploads ? '' : ' disabled'}>${snapshot.isRetryingUploads ? 'Retrying...' : 'Retry Uploads'}</button>
+        </div>
+      </div>
+      <div class="staff-order-card-meta staff-order-card-meta--primary">
+        <div><span>Forge Server</span><strong>${escapeHtml(snapshot.serverLabel)}</strong></div>
+        <div><span>Pending Uploads</span><strong>${escapeHtml(String(snapshot.pendingUploadCount))}</strong></div>
+        <div><span>Upload Problems</span><strong>${escapeHtml(String(snapshot.uploadProblemCount))}</strong></div>
+        <div><span>Last Successful Sync</span><strong>${escapeHtml(lastSuccessfulSyncCopy)}</strong></div>
+      </div>
+    </article>
   `;
 }
 
@@ -8698,12 +8796,12 @@ async function openSavedOrdersInspector() {
   renderSavedOrdersDialog();
 
   try {
-    const [records, pendingCount] = await Promise.all([
-      orderStore.listOrders(),
-      orderStore.countOrdersBySyncStatus('pending')
-    ]);
+    const records = await orderStore.listOrders();
+    const syncSummary = forgeSyncStatus.summarizeOrderSyncRecords(records);
     savedOrderInspectorState.records = records;
-    savedOrderInspectorState.error = pendingCount > 0 ? `${pendingCount} saved order${pendingCount === 1 ? '' : 's'} pending future sync.` : '';
+    savedOrderInspectorState.error = syncSummary.pendingUploadCount > 0
+      ? `${syncSummary.pendingUploadCount} saved order${syncSummary.pendingUploadCount === 1 ? '' : 's'} pending upload.`
+      : '';
   } catch (error) {
     console.error('Forge saved-order inspector failed', error);
     savedOrderInspectorState.error = 'Saved local orders could not be loaded on this device.';
@@ -8752,54 +8850,88 @@ async function inspectSavedOrderRecord(forgeOrderUuid) {
   }
 }
 
+function shouldShowCustomerSyncIndicator() {
+  return !['staff-access', 'staff-orders', 'ready-to-pack', 'staff-catalog'].includes(appState.currentScreen);
+}
+
+function renderCustomerSyncIndicator() {
+  if (!customerSyncIndicator || !customerSyncLabel || !customerSyncCopy) {
+    return;
+  }
+
+  const snapshot = getCurrentSyncSnapshot();
+  const visible = shouldShowCustomerSyncIndicator();
+  customerSyncIndicator.hidden = !visible;
+  if (!visible) {
+    return;
+  }
+
+  customerSyncIndicator.dataset.syncStatus = snapshot.statusKey;
+  customerSyncLabel.textContent = snapshot.label;
+  customerSyncCopy.textContent = snapshot.supportingText;
+}
+
+function buildThankYouMessageForRecord(record, snapshot) {
+  const customerName = sanitizeText(record?.payload?.customer?.full_name || '');
+  const displayName = customerName || 'Your order';
+  const derivedState = forgeSyncStatus.deriveRecordSyncState(record);
+
+  if (derivedState.key === 'synced') {
+    return `${displayName} was saved and synced with Forge.`;
+  }
+  if (derivedState.key === 'problem') {
+    return `${displayName} was saved, but it needs staff attention before Forge can finish the upload.`;
+  }
+  if (snapshot.serverState === forgeSyncStatus.SERVER_STATES.connected) {
+    return `${displayName} was saved on this iPad and is still syncing with Forge.`;
+  }
+  return `${displayName} was safely saved on this iPad and will upload when Forge reconnects.`;
+}
+
 async function renderThankYouScreen() {
   if (!thankYouCopy || !thankYouReference) {
     return;
   }
 
+  const snapshot = getCurrentSyncSnapshot();
   const completionReceipt = completionReceiptManager.getReceipt();
   if (completionReceipt && completionReceipt.forgeOrderUuid) {
     appState.lastSubmittedOrderUuid = completionReceipt.forgeOrderUuid;
   }
 
-  if (completionReceipt) {
-    const customerName = completionReceipt.customerName || 'Your order';
-    thankYouCopy.textContent = `${customerName} has been safely saved on this device for the Hilltop Shop team.`;
-    thankYouReference.hidden = false;
-    thankYouReference.innerHTML = `
-      <span class="summary-label">Order Reference</span>
-      <strong>${escapeHtml(completionReceipt.shortOrderReference)}</strong>
-    `;
-    renderDebugOrderTools();
-    return;
-  }
-
   if (!appState.lastSubmittedOrderUuid) {
-    thankYouCopy.textContent = 'We safely saved your order on this device for the Hilltop Shop team.';
+    thankYouCopy.textContent = snapshot.serverState === forgeSyncStatus.SERVER_STATES.connected
+      ? 'Your order was saved and synced with Forge.'
+      : 'Your order was safely saved on this iPad and will upload when Forge reconnects.';
     thankYouReference.hidden = true;
     renderDebugOrderTools();
     return;
   }
 
   try {
-    const record = await orderStore.getOrder(appState.lastSubmittedOrderUuid);
+    const shouldWaitForSyncOutcome = snapshot.browserOnline
+      && snapshot.serverState !== forgeSyncStatus.SERVER_STATES.unavailable;
+    const settledRecord = shouldWaitForSyncOutcome
+      ? await syncStatusController.waitForOrderDisplayState(appState.lastSubmittedOrderUuid, { timeoutMs: 1500 })
+      : null;
+    const record = settledRecord || await orderStore.getOrder(appState.lastSubmittedOrderUuid);
     if (!record) {
-      thankYouCopy.textContent = 'Your order was saved earlier on this device.';
+      thankYouCopy.textContent = 'Your order was saved earlier on this iPad.';
       thankYouReference.hidden = true;
       renderDebugOrderTools();
       return;
     }
 
-    const customerName = record.payload?.customer?.full_name || 'your order';
-    thankYouCopy.textContent = `${customerName} has been safely saved on this device for the Hilltop Shop team.`;
+    const shortOrderReference = completionReceipt?.shortOrderReference || getOrderShortReference(record);
+    thankYouCopy.textContent = buildThankYouMessageForRecord(record, getCurrentSyncSnapshot());
     thankYouReference.hidden = false;
     thankYouReference.innerHTML = `
       <span class="summary-label">Order Reference</span>
-      <strong>${escapeHtml(getOrderShortReference(record))}</strong>
+      <strong>${escapeHtml(shortOrderReference)}</strong>
     `;
   } catch (error) {
     console.error('Forge thank-you screen failed to load the saved order', error);
-    thankYouCopy.textContent = 'Your order has been saved on this device.';
+    thankYouCopy.textContent = 'Your order was saved on this iPad.';
     thankYouReference.hidden = true;
   }
 
@@ -10267,6 +10399,38 @@ if (treeForm) {
     if (action === 'staff-refresh-orders') {
       staffOrdersState.notice = '';
       loadStaffOrdersQueue();
+      return;
+    }
+
+    if (action === 'staff-recheck-connection') {
+      syncStatusController.recheckConnection().then((snapshot) => {
+        staffOrdersState.notice = snapshot.serverState === forgeSyncStatus.SERVER_STATES.connected
+          ? 'Forge server connection refreshed.'
+          : 'Forge server is still unavailable.';
+        staffOrdersState.noticeTone = snapshot.serverState === forgeSyncStatus.SERVER_STATES.connected ? 'success' : 'muted';
+        renderStaffOrdersQueue();
+      }).catch(() => {
+        staffOrdersState.notice = 'Forge server could not be rechecked right now.';
+        staffOrdersState.noticeTone = 'error';
+        renderStaffOrdersQueue();
+      });
+      return;
+    }
+
+    if (action === 'staff-retry-uploads') {
+      syncStatusController.retryUploads().then((snapshot) => {
+        staffOrdersState.notice = snapshot.uploadProblemCount > 0
+          ? 'Some saved orders still need staff attention.'
+          : (snapshot.pendingUploadCount > 0
+            ? 'Saved uploads were retried and are still in progress.'
+            : 'Saved uploads were retried successfully.');
+        staffOrdersState.noticeTone = snapshot.uploadProblemCount > 0 ? 'muted' : 'success';
+        renderStaffOrdersQueue();
+      }).catch(() => {
+        staffOrdersState.notice = 'Saved uploads could not be retried right now.';
+        staffOrdersState.noticeTone = 'error';
+        renderStaffOrdersQueue();
+      });
       return;
     }
 

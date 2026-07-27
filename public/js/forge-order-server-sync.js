@@ -173,6 +173,11 @@
     let rerunRequested = false;
     let fullScanRequested = false;
     const pendingOrderUuids = new Set();
+    const activeOrderUuids = new Set();
+    const subscribers = new Set();
+    let lastRunCompletedAt = null;
+    let lastRunResults = [];
+    let lastProcessedCount = 0;
     const boundOnlineHandler = () => {
       requestPendingSync();
     };
@@ -195,6 +200,7 @@
       if (eventTarget && typeof eventTarget.addEventListener === 'function') {
         eventTarget.addEventListener('online', boundOnlineHandler);
       }
+      notify();
       return requestPendingSync();
     }
 
@@ -224,8 +230,10 @@
         return activeRun;
       }
 
+      notify();
       activeRun = runSyncLoop().finally(() => {
         activeRun = null;
+        notify();
       });
       return activeRun;
     }
@@ -243,13 +251,24 @@
 
         const results = [];
         for (const orderUuid of orderUuids) {
-          results.push(await syncService.syncOrderByUuid(orderUuid));
+          activeOrderUuids.add(orderUuid);
+          notify();
+          try {
+            results.push(await syncService.syncOrderByUuid(orderUuid));
+          } finally {
+            activeOrderUuids.delete(orderUuid);
+            notify();
+          }
         }
+        lastRunResults = results.slice();
+        lastProcessedCount = results.length;
+        lastRunCompletedAt = new Date().toISOString();
         lastResult = {
           ok: results.every((result) => result && result.ok !== false),
           processedCount: results.length,
           results
         };
+        notify();
       } while (rerunRequested || fullScanRequested || pendingOrderUuids.size > 0);
 
       return lastResult;
@@ -281,10 +300,43 @@
       return [...orderUuids];
     }
 
+    function getState() {
+      return {
+        enabled,
+        started,
+        isRunning: Boolean(activeRun),
+        activeOrderCount: activeOrderUuids.size,
+        pendingRequestCount: pendingOrderUuids.size + (fullScanRequested ? 1 : 0),
+        lastRunCompletedAt,
+        lastProcessedCount,
+        lastResults: lastRunResults.slice()
+      };
+    }
+
+    function subscribe(listener) {
+      if (typeof listener !== 'function') {
+        return () => {};
+      }
+      subscribers.add(listener);
+      listener(getState());
+      return () => {
+        subscribers.delete(listener);
+      };
+    }
+
+    function notify() {
+      const state = getState();
+      subscribers.forEach((listener) => {
+        listener(state);
+      });
+    }
+
     return {
+      getState,
       start,
       requestPendingSync,
-      requestSyncForOrder
+      requestSyncForOrder,
+      subscribe
     };
   }
 

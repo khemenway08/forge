@@ -1,12 +1,15 @@
 (function (root, factory) {
-  const api = factory();
+  const syncStatusModule = typeof module === 'object' && module.exports
+    ? require('./forge-sync-status.js')
+    : root.ForgeSyncStatus;
+  const api = factory(syncStatusModule);
   if (typeof module === 'object' && module.exports) {
     module.exports = api;
   }
   if (root) {
     root.ForgeLocalOrdersQueue = api;
   }
-}(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+}(typeof globalThis !== 'undefined' ? globalThis : this, function (syncStatusModule) {
   const FILTER_KEYS = [
     'orderScope',
     'product',
@@ -424,7 +427,7 @@
       structured.event_id
     ]));
     const currentTrayNumber = normalizeTrayNumber(record?.current_tray_number);
-    const syncStatus = normalizeStableValue(record?.sync_status);
+    const syncStatus = getRecordSyncStatusValue(record);
     const lineId = firstNonEmpty([item?.line_id, item?.order_item_id, `${record?.forge_order_uuid || 'order'}-line-${index + 1}`]);
 
     return {
@@ -753,7 +756,7 @@
 
     if (excluded !== 'syncStatus') {
       const syncStatusFilter = normalizeFilterValue(normalizedFilters.syncStatus);
-      if (syncStatusFilter !== 'all' && normalizeFilterValue(record && record.sync_status) !== syncStatusFilter) {
+      if (syncStatusFilter !== 'all' && getRecordSyncStatusValue(record) !== syncStatusFilter) {
         return false;
       }
     }
@@ -843,7 +846,8 @@
   }
 
   function recordHasPendingSync(record) {
-    return normalizeFilterValue(record && record.sync_status) === 'pending';
+    const syncStatus = getRecordSyncStatusValue(record);
+    return syncStatus === 'pending' || syncStatus === 'syncing';
   }
 
   function getNormalizedProductionItems(record) {
@@ -911,7 +915,7 @@
         : [{ value: 'unassigned', label: 'No Tray Assigned' }];
     }
     if (dimension === 'syncStatus') {
-      const syncStatus = normalizeFilterValue(record && record.sync_status);
+      const syncStatus = getRecordSyncStatusValue(record);
       return syncStatus === 'all' ? [] : [{ value: syncStatus, label: getSyncStatusLabel(syncStatus) }];
     }
     return [];
@@ -1115,10 +1119,31 @@
     if (normalized === 'synced') {
       return 'Synced';
     }
-    if (normalized === 'error') {
-      return 'Sync Error';
+    if (normalized === 'syncing') {
+      return 'Syncing';
     }
-    return 'Sync Pending';
+    if (normalized === 'error') {
+      return 'Upload Problem';
+    }
+    return 'Pending Upload';
+  }
+
+  function getRecordSyncStatusValue(record) {
+    if (syncStatusModule && typeof syncStatusModule.deriveRecordSyncState === 'function') {
+      const derivedState = syncStatusModule.deriveRecordSyncState(record);
+      if (derivedState.key === 'synced') {
+        return 'synced';
+      }
+      if (derivedState.key === 'problem') {
+        return 'error';
+      }
+      if (derivedState.key === 'syncing') {
+        return 'syncing';
+      }
+      return 'pending';
+    }
+
+    return normalizeFilterValue(record && record.sync_status);
   }
 
   function getOrnamentTypeLabel(value, productDisplayName, category) {

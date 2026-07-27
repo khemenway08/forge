@@ -8,12 +8,16 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>The Hilltop Shop Custom Orders</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="css/app.css?v=20260727-35">
+  <link rel="stylesheet" href="css/app.css?v=20260727-36">
 </head>
 <body>
   <div class="app-shell">
     <header class="customer-header">
       <img class="brand-logo" src="assets/brand/hilltop-logo.png" alt="The Hilltop Shop">
+      <div class="customer-sync-indicator" data-customer-sync-indicator aria-live="polite" hidden>
+        <span class="customer-sync-indicator-label" data-customer-sync-label>Checking</span>
+        <span class="customer-sync-indicator-copy" data-customer-sync-copy>Checking Forge connection and saved orders.</span>
+      </div>
       <div class="staff-controls">
         <button class="staff-entry" type="button" aria-label="Staff access" aria-expanded="false" data-action="staff">•••</button>
         <div class="staff-panel" data-staff-panel role="dialog" aria-labelledby="staff-panel-title" hidden>
@@ -759,27 +763,28 @@
     </div>
   </div>
 
-  <script src="js/forge-product-catalog.js?v=20260727-35"></script>
-  <script src="js/forge-order-payload-builder.js?v=20260727-35"></script>
-  <script src="js/forge-order-payload-preview.js?v=20260727-35"></script>
-  <script src="js/forge-api-client.js?v=20260727-35"></script>
-  <script src="js/forge-order-store.js?v=20260727-35"></script>
-  <script src="js/forge-order-server-sync.js?v=20260727-35"></script>
-  <script src="js/forge-order-submission.js?v=20260727-35"></script>
-  <script src="js/forge-event-state.js?v=20260727-35"></script>
-  <script src="js/forge-staff-api-client.js?v=20260727-35"></script>
-  <script src="js/forge-staff-catalog-ordering.js?v=20260727-35"></script>
-  <script src="js/forge-catalog-image-viewer.js?v=20260727-35"></script>
-  <script src="js/forge-staff-design-catalog-api.js?v=20260727-35"></script>
-  <script src="js/forge-staff-design-catalog.js?v=20260727-35"></script>
-  <script src="js/forge-staff-hat-catalog-api.js?v=20260727-35"></script>
-  <script src="js/forge-staff-hat-catalog.js?v=20260727-35"></script>
-  <script src="js/forge-staff-material-catalog-api.js?v=20260727-35"></script>
-  <script src="js/forge-staff-material-catalog.js?v=20260727-35"></script>
-  <script src="js/forge-staff-finished-hat-catalog-api.js?v=20260727-35"></script>
-  <script src="js/forge-staff-finished-hat-catalog.js?v=20260727-35"></script>
-  <script src="js/forge-staff-orders-runtime.js?v=20260727-35"></script>
-  <script src="js/forge-local-orders-queue.js?v=20260727-35"></script>
-  <script src="js/app.js?v=20260727-35"></script>
+  <script src="js/forge-product-catalog.js?v=20260727-36"></script>
+  <script src="js/forge-order-payload-builder.js?v=20260727-36"></script>
+  <script src="js/forge-order-payload-preview.js?v=20260727-36"></script>
+  <script src="js/forge-api-client.js?v=20260727-36"></script>
+  <script src="js/forge-order-store.js?v=20260727-36"></script>
+  <script src="js/forge-order-server-sync.js?v=20260727-36"></script>
+  <script src="js/forge-sync-status.js?v=20260727-36"></script>
+  <script src="js/forge-order-submission.js?v=20260727-36"></script>
+  <script src="js/forge-event-state.js?v=20260727-36"></script>
+  <script src="js/forge-staff-api-client.js?v=20260727-36"></script>
+  <script src="js/forge-staff-catalog-ordering.js?v=20260727-36"></script>
+  <script src="js/forge-catalog-image-viewer.js?v=20260727-36"></script>
+  <script src="js/forge-staff-design-catalog-api.js?v=20260727-36"></script>
+  <script src="js/forge-staff-design-catalog.js?v=20260727-36"></script>
+  <script src="js/forge-staff-hat-catalog-api.js?v=20260727-36"></script>
+  <script src="js/forge-staff-hat-catalog.js?v=20260727-36"></script>
+  <script src="js/forge-staff-material-catalog-api.js?v=20260727-36"></script>
+  <script src="js/forge-staff-material-catalog.js?v=20260727-36"></script>
+  <script src="js/forge-staff-finished-hat-catalog-api.js?v=20260727-36"></script>
+  <script src="js/forge-staff-finished-hat-catalog.js?v=20260727-36"></script>
+  <script src="js/forge-staff-orders-runtime.js?v=20260727-36"></script>
+  <script src="js/forge-local-orders-queue.js?v=20260727-36"></script>
+  <script src="js/app.js?v=20260727-36"></script>
 </body>
 </html>
