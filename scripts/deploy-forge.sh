@@ -126,12 +126,12 @@ deployment_print_key_value "Remote backup root" "${REMOTE_BACKUP_ROOT}"
 deployment_print_key_value "Health check URL" "${FORGE_DEPLOY_HEALTHCHECK_URL}"
 
 deployment_note
-deployment_note "Public upload command:"
-printf '  %q ' "${RSYNC_BASE[@]}" "$PUBLIC_STAGE" "${REMOTE_TARGET}:${FORGE_REMOTE_PUBLIC_ROOT}/"
-printf '\n'
-
 deployment_note "Private upload command:"
 printf '  %q ' "${RSYNC_BASE[@]}" "$PRIVATE_STAGE" "${REMOTE_TARGET}:${FORGE_REMOTE_PRIVATE_ROOT}/"
+printf '\n'
+
+deployment_note "Public upload command:"
+printf '  %q ' "${RSYNC_BASE[@]}" "$PUBLIC_STAGE" "${REMOTE_TARGET}:${FORGE_REMOTE_PUBLIC_ROOT}/"
 printf '\n'
 
 if [[ "${APPLY}" -ne 1 ]]; then
@@ -179,18 +179,33 @@ PRIVATE_FILES
 EOF
 
 deployment_note "Creating remote backup of files that may be replaced..."
-"${SSH_BASE[@]}" "${REMOTE_TARGET}" "${REMOTE_BACKUP_SCRIPT}"
-
-deployment_note "Uploading public runtime files..."
-"${RSYNC_BASE[@]}" "${PUBLIC_STAGE}" "${REMOTE_TARGET}:${FORGE_REMOTE_PUBLIC_ROOT}/"
+if ! "${SSH_BASE[@]}" "${REMOTE_TARGET}" "${REMOTE_BACKUP_SCRIPT}"; then
+  deployment_note "Remote backup failed. Private and public runtime files were not changed."
+  exit 1
+fi
 
 deployment_note "Uploading private server runtime files..."
-"${RSYNC_BASE[@]}" "${PRIVATE_STAGE}" "${REMOTE_TARGET}:${FORGE_REMOTE_PRIVATE_ROOT}/"
+if ! "${RSYNC_BASE[@]}" "${PRIVATE_STAGE}" "${REMOTE_TARGET}:${FORGE_REMOTE_PRIVATE_ROOT}/"; then
+  deployment_note "Private runtime upload failed. Public runtime was not changed."
+  deployment_note "Rollback backup remains available at: ${REMOTE_BACKUP_ROOT}"
+  exit 1
+fi
+
+deployment_note "Private server runtime upload completed successfully."
+
+deployment_note "Uploading public runtime files..."
+if ! "${RSYNC_BASE[@]}" "${PUBLIC_STAGE}" "${REMOTE_TARGET}:${FORGE_REMOTE_PUBLIC_ROOT}/"; then
+  deployment_note "Public runtime upload failed. Private runtime may already have changed."
+  deployment_note "Use the remote backup for rollback: ${REMOTE_BACKUP_ROOT}"
+  exit 1
+fi
+
+deployment_note "Public runtime upload completed successfully."
 
 deployment_note "Running non-destructive health check..."
 curl --fail --silent --show-error "${FORGE_DEPLOY_HEALTHCHECK_URL}" >/dev/null
 
-deployment_note "Deployment completed."
+deployment_note "Deployment completed successfully."
 deployment_note "Rollback instructions:"
 deployment_note "  1. Restore files from ${REMOTE_BACKUP_ROOT}/public back into ${FORGE_REMOTE_PUBLIC_ROOT}"
 deployment_note "  2. Restore files from ${REMOTE_BACKUP_ROOT}/private back into ${FORGE_REMOTE_PRIVATE_ROOT}"
