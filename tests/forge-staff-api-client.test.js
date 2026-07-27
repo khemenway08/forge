@@ -501,6 +501,89 @@ test('applyLegacyTestCleanup sends POST JSON with the preview signature count an
   });
 });
 
+test('cancelOrder sends POST JSON and returns the cancelled order with released tray details safely', async () => {
+  const requests = [];
+  const client = staffApiClientModule.createForgeStaffApiClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return createJsonResponse(200, {
+        application: 'Forge',
+        api_version: '1',
+        status: 'ok',
+        data: {
+          order: {
+            forge_order_uuid: 'order-12',
+            forge_order_number: 1042,
+            production_status: 'cancelled',
+            current_tray_number: null,
+            cancelled_at: '2026-07-20T10:09:00Z',
+            payload: { customer: { full_name: 'Kyle' }, items: [] }
+          },
+          tray: {
+            tray_number: 6,
+            tray_status: 'available',
+            current_order_uuid: null
+          },
+          assignment_history: {
+            tray_assignment_id: 'assignment-12',
+            tray_number: 6,
+            release_reason: 'cancelled'
+          }
+        }
+      });
+    }
+  });
+
+  const result = await client.cancelOrder('order-12');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.order.production_status, 'cancelled');
+  assert.equal(result.order.cancelled_at, '2026-07-20T10:09:00Z');
+  assert.equal(result.tray.tray_number, 6);
+  assert.equal(result.assignmentHistory.release_reason, 'cancelled');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, '/api/v1/staff/cancel-order.php');
+  assert.equal(requests[0].options.method, 'POST');
+  assert.equal(requests[0].options.credentials, 'same-origin');
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    forge_order_uuid: 'order-12'
+  });
+});
+
+test('deleteTestOrder sends POST JSON with the exact typed confirmation and returns deletion details safely', async () => {
+  const requests = [];
+  const client = staffApiClientModule.createForgeStaffApiClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return createJsonResponse(200, {
+        application: 'Forge',
+        api_version: '1',
+        status: 'ok',
+        data: {
+          deleted_order_uuid: 'order-test-1',
+          deleted_order_number: 1007,
+          released_tray_number: 8
+        }
+      });
+    }
+  });
+
+  const result = await client.deleteTestOrder('order-test-1', 'DELETE TEST ORDER');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.deletedOrderUuid, 'order-test-1');
+  assert.equal(result.deletedOrderNumber, 1007);
+  assert.equal(result.releasedTrayNumber, 8);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, '/api/v1/staff/delete-test-order.php');
+  assert.equal(requests[0].options.method, 'POST');
+  assert.equal(requests[0].options.credentials, 'same-origin');
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    forge_order_uuid: 'order-test-1',
+    confirmation_text: 'DELETE TEST ORDER'
+  });
+});
+
 test('cleanup apply validates required arguments before sending requests', async () => {
   let requestCount = 0;
   const client = staffApiClientModule.createForgeStaffApiClient({

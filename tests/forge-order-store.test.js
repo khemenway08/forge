@@ -99,7 +99,7 @@ test('older orders normalize to submitted production status with no assigned tra
   assert.ok(trays.every((tray) => tray.tray_status === orderStoreModule.TRAY_STATUSES.available));
 });
 
-test('new orders receive default server-upload fields and DATABASE_VERSION remains 3', async () => {
+test('new orders receive default server-upload fields and DATABASE_VERSION remains 4', async () => {
   const store = orderStoreModule.createInMemoryOrderStore();
 
   await store.saveNewOrder(createRecord({
@@ -114,7 +114,7 @@ test('new orders receive default server-upload fields and DATABASE_VERSION remai
 
   const order = await store.getOrder('server-upload-defaults-order');
 
-  assert.equal(orderStoreModule.DATABASE_VERSION, 3);
+  assert.equal(orderStoreModule.DATABASE_VERSION, 4);
   assert.equal(order.server_upload_status, orderStoreModule.SERVER_UPLOAD_STATUSES.pending);
   assert.equal(order.server_upload_attempt_count, 0);
   assert.equal(order.last_server_upload_attempt_at, null);
@@ -122,6 +122,111 @@ test('new orders receive default server-upload fields and DATABASE_VERSION remai
   assert.equal(order.server_received_at, null);
   assert.equal(order.server_payload_sha256, null);
   assert.equal(order.server_created, null);
+});
+
+test('cancelOrder preserves the stored order, clears the tray, closes assignment history, and retains private staff data', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore({
+    now: () => new Date('2026-07-21T15:00:00.000Z'),
+    initialOrders: [
+      createRecord({
+        forge_order_uuid: 'live-order-1',
+        forge_order_number: 1042,
+        production_status: orderStoreModule.PRODUCTION_STATUSES.trayAssigned,
+        current_tray_number: 7,
+        internal_note: 'Customer confirmed spelling.\nPaid cash at show.',
+        payload: {
+          forge_order_uuid: 'live-order-1',
+          customer: { full_name: 'Live Customer' },
+          event: {
+            event_id: 'event-live-1',
+            event_name: 'Austin Market',
+            event_type: 'live_event'
+          },
+          items: [{ line_id: 'line-1', quantity: 1, completed_quantity: 1, production_status: 'complete' }],
+          pricing: { estimated_total_cents: 4200 }
+        }
+      })
+    ],
+    initialTrays: [createAssignedTrayRecord({ tray_number: 7, current_order_uuid: 'live-order-1' })],
+    initialTrayAssignmentHistory: [createActiveAssignmentHistoryRecord({
+      tray_assignment_id: 'assignment-live-order-1',
+      tray_number: 7,
+      forge_order_uuid: 'live-order-1'
+    })]
+  });
+
+  const result = await store.cancelOrder('live-order-1');
+  const storedOrder = await store.getOrder('live-order-1');
+  const tray = await store.getTray(7);
+  const history = await store.listTrayAssignmentHistory();
+
+  assert.equal(result.order.production_status, orderStoreModule.PRODUCTION_STATUSES.cancelled);
+  assert.equal(result.order.current_tray_number, null);
+  assert.match(String(result.order.cancelled_at || ''), /^2026-07-21T15:00:00/);
+  assert.equal(storedOrder.internal_note, 'Customer confirmed spelling.\nPaid cash at show.');
+  assert.equal(storedOrder.payload.customer.full_name, 'Live Customer');
+  assert.equal(storedOrder.payload.event.event_name, 'Austin Market');
+  assert.equal(result.tray.tray_number, 7);
+  assert.equal(tray.tray_status, orderStoreModule.TRAY_STATUSES.available);
+  assert.equal(tray.current_order_uuid, null);
+  assert.equal(history[0].released_at, '2026-07-21T15:00:00.000Z');
+  assert.equal(history[0].release_reason, 'cancelled');
+});
+
+test('deleteTestOrder removes the saved test order, creates a tombstone, releases the tray, and blocks stale UUID re-save', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore({
+    now: () => new Date('2026-07-21T16:00:00.000Z'),
+    initialOrders: [
+      createRecord({
+        forge_order_uuid: 'test-order-1',
+        forge_order_number: 1007,
+        production_status: orderStoreModule.PRODUCTION_STATUSES.trayAssigned,
+        current_tray_number: 8,
+        payload: {
+          forge_order_uuid: 'test-order-1',
+          customer: { full_name: 'Test Customer' },
+          event: {
+            event_id: 'event-test-1',
+            event_name: 'Checkout Test Session',
+            event_type: 'test_session'
+          },
+          items: [{ line_id: 'line-1', quantity: 1, completed_quantity: 0, production_status: 'pending' }],
+          pricing: { estimated_total_cents: 0 }
+        }
+      })
+    ],
+    initialTrays: [createAssignedTrayRecord({ tray_number: 8, current_order_uuid: 'test-order-1' })],
+    initialTrayAssignmentHistory: [createActiveAssignmentHistoryRecord({
+      tray_assignment_id: 'assignment-test-order-1',
+      tray_number: 8,
+      forge_order_uuid: 'test-order-1'
+    })]
+  });
+
+  const result = await store.deleteTestOrder('test-order-1', 'DELETE TEST ORDER');
+  const deletedOrder = await store.getOrder('test-order-1');
+  const tray = await store.getTray(8);
+  const hasTombstone = await store.hasCleanupTombstone('test-order-1');
+
+  assert.equal(result.deletedOrderUuid, 'test-order-1');
+  assert.equal(result.deletedOrderNumber, 1007);
+  assert.equal(result.releasedTrayNumber, 8);
+  assert.equal(deletedOrder, null);
+  assert.equal(hasTombstone, true);
+  assert.equal(tray.tray_status, orderStoreModule.TRAY_STATUSES.available);
+  assert.equal(tray.current_order_uuid, null);
+  await assert.rejects(
+    () => store.saveNewOrder(createRecord({
+      forge_order_uuid: 'test-order-1',
+      payload: {
+        forge_order_uuid: 'test-order-1',
+        customer: { full_name: 'Resubmitted Test Customer' },
+        items: [{ quantity: 1 }],
+        pricing: { estimated_total_cents: 0 }
+      }
+    })),
+    /previously deleted and cannot be saved again/i
+  );
 });
 
 test('existing records without server-upload fields read as pending defaults without rewriting the stored source record', async () => {

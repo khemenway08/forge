@@ -1574,6 +1574,253 @@ $runner->run('legacy cleanup preview signatures change when the eligible record 
     );
 });
 
+$runner->run('staff cancellation stores cancelled state safely and releases any assigned tray while preserving order data', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174501',
+        'forge_order_number' => 1042,
+        'production_status' => 'tray_assigned',
+        'current_tray_number' => 5,
+        'internal_note' => "Customer confirmed spelling.\nPaid cash at show.",
+        'payload' => createValidPayload([
+            'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174501',
+            'forge_order_number' => 1042,
+            'event' => [
+                'event_id' => 'event-live-1',
+                'event_name' => 'Austin Market',
+                'event_type' => 'live_event',
+                'event_start_date' => '2026-07-24',
+                'event_end_date' => '2026-07-27',
+                'event_location' => 'Austin',
+                'public_order_token' => 'token-live-1',
+            ],
+        ]),
+    ]);
+
+    $repository = new \Forge\Server\PdoStaffOrderRepository($pdo, [
+        'FORGE_TRAY_NUMBERS' => '1,2,3,4,5,6',
+    ]);
+
+    $result = $repository->cancelOrder('123e4567-e89b-42d3-a456-426614174501');
+    $storedOrder = $repository->getOrder('123e4567-e89b-42d3-a456-426614174501');
+    $trayRow = $pdo->query('SELECT tray_status, current_order_uuid FROM forge_production_trays WHERE tray_number = 5')->fetch(PDO::FETCH_ASSOC);
+    $historyRow = $pdo->query("SELECT released_at, release_reason FROM forge_tray_assignment_history WHERE forge_order_uuid = '123e4567-e89b-42d3-a456-426614174501' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+
+    assertSame('cancelled', $result['order']['production_status']);
+    assertSame(null, $result['order']['current_tray_number']);
+    assertTrue(is_string($result['order']['cancelled_at'] ?? null));
+    assertSame("Customer confirmed spelling.\nPaid cash at show.", $storedOrder['internal_note']);
+    assertSame('Kyle Hemenway', $storedOrder['payload']['customer']['full_name']);
+    assertSame('Austin Market', $storedOrder['payload']['event']['event_name']);
+    assertSame(5, $result['tray']['tray_number']);
+    assertSame('available', $trayRow['tray_status'] ?? null);
+    assertSame('', (string) ($trayRow['current_order_uuid'] ?? ''));
+    assertTrue(is_string($historyRow['released_at'] ?? null));
+    assertSame('cancelled', $historyRow['release_reason'] ?? null);
+});
+
+$runner->run('cancelled orders cannot receive another tray or complete more items safely', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174502',
+        'forge_order_number' => 1043,
+        'production_status' => 'cancelled',
+        'current_tray_number' => null,
+        'cancelled_at' => '2026-07-24 19:05:00.000000',
+        'payload' => createValidPayload([
+            'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174502',
+            'forge_order_number' => 1043,
+            'event' => [
+                'event_id' => 'event-live-2',
+                'event_name' => 'Dallas Market',
+                'event_type' => 'live_event',
+                'event_start_date' => '2026-07-24',
+                'event_end_date' => '2026-07-27',
+                'event_location' => 'Dallas',
+                'public_order_token' => 'token-live-2',
+            ],
+        ]),
+    ]);
+
+    $repository = new \Forge\Server\PdoStaffOrderRepository($pdo, [
+        'FORGE_TRAY_NUMBERS' => '1,2,3,4,5,6',
+    ]);
+
+    assertThrows(
+        static function () use ($repository): void {
+            $repository->assignTrayToOrder('123e4567-e89b-42d3-a456-426614174502', 1);
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof \Forge\Server\ProductionOrderNotAssignableException);
+            assertSame('Only submitted orders can receive a tray.', $exception->getMessage());
+        }
+    );
+
+    assertThrows(
+        static function () use ($repository): void {
+            $repository->completeItemQuantity(
+                '123e4567-e89b-42d3-a456-426614174502',
+                '123e4567-e89b-42d3-a456-426614174000-line-1',
+                0,
+                1
+            );
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof \Forge\Server\ProductionOrderItemNotCompletableException);
+            assertSame('Assign a production tray before marking completed pieces.', $exception->getMessage());
+        }
+    );
+});
+
+$runner->run('staff Test Session deletion creates a minimal tombstone and rejects live or malformed event deletes safely', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174503',
+        'forge_order_number' => 1007,
+        'production_status' => 'tray_assigned',
+        'current_tray_number' => 8,
+        'payload' => createValidPayload([
+            'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174503',
+            'forge_order_number' => 1007,
+            'event' => [
+                'event_id' => 'event-test-1',
+                'event_name' => 'Checkout Test Session',
+                'event_type' => 'test_session',
+                'event_start_date' => '2026-07-27',
+                'event_end_date' => '2026-07-27',
+                'event_location' => 'Shop',
+                'public_order_token' => 'token-test-1',
+            ],
+        ]),
+    ]);
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174504',
+        'forge_order_number' => 1044,
+        'production_status' => 'submitted',
+        'current_tray_number' => null,
+        'payload' => createValidPayload([
+            'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174504',
+            'forge_order_number' => 1044,
+            'event' => [
+                'event_id' => 'event-live-3',
+                'event_name' => 'Austin Market',
+                'event_type' => 'live_event',
+                'event_start_date' => '2026-07-27',
+                'event_end_date' => '2026-07-27',
+                'event_location' => 'Austin',
+                'public_order_token' => 'token-live-3',
+            ],
+        ]),
+    ]);
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174505',
+        'forge_order_number' => 1045,
+        'production_status' => 'submitted',
+        'current_tray_number' => null,
+        'payload' => createValidPayload([
+            'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174505',
+            'forge_order_number' => 1045,
+            'event' => [
+                'event_id' => 'event-legacy-1',
+                'event_name' => 'Legacy Snapshot',
+            ],
+        ]),
+    ]);
+
+    $repository = new \Forge\Server\PdoStaffOrderRepository($pdo, [
+        'FORGE_TRAY_NUMBERS' => '1,2,3,4,5,6,7,8',
+    ]);
+
+    $deleted = $repository->deleteTestOrder('123e4567-e89b-42d3-a456-426614174503', 'DELETE TEST ORDER');
+    $tombstoneRow = $pdo->query("SELECT * FROM forge_order_cleanup_tombstones WHERE forge_order_uuid = '123e4567-e89b-42d3-a456-426614174503'")->fetch(PDO::FETCH_ASSOC);
+    $trayRow = $pdo->query('SELECT tray_status, current_order_uuid FROM forge_production_trays WHERE tray_number = 8')->fetch(PDO::FETCH_ASSOC);
+
+    assertSame('123e4567-e89b-42d3-a456-426614174503', $deleted['deleted_order_uuid']);
+    assertSame(1007, $deleted['deleted_order_number']);
+    assertSame(8, $deleted['released_tray_number']);
+    assertTrue($repository->getOrder('123e4567-e89b-42d3-a456-426614174503') === null);
+    assertSame('available', $trayRow['tray_status'] ?? null);
+    assertSame('', (string) ($trayRow['current_order_uuid'] ?? ''));
+    assertTrue(is_string($tombstoneRow['deleted_at'] ?? null));
+    assertTrue(!array_key_exists('customer_name', $tombstoneRow));
+
+    assertThrows(
+        static function () use ($repository): void {
+            $repository->deleteTestOrder('123e4567-e89b-42d3-a456-426614174504', 'DELETE TEST ORDER');
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof \Forge\Server\TestOrderDeletionNotAllowedException);
+            assertSame('Only Test Session orders can be permanently deleted.', $exception->getMessage());
+        }
+    );
+
+    assertThrows(
+        static function () use ($repository): void {
+            $repository->deleteTestOrder('123e4567-e89b-42d3-a456-426614174505', 'DELETE TEST ORDER');
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof \Forge\Server\TestOrderDeletionNotAllowedException);
+            assertSame('Only Test Session orders can be permanently deleted.', $exception->getMessage());
+        }
+    );
+
+    assertThrows(
+        static function () use ($repository): void {
+            $repository->deleteTestOrder('123e4567-e89b-42d3-a456-426614174504', 'DELETE TEST');
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof \InvalidArgumentException);
+            assertSame('Enter DELETE TEST ORDER before deleting this order.', $exception->getMessage());
+        }
+    );
+});
+
+$runner->run('failed Test Session deletion rolls back safely without removing the order or releasing the tray', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo(false);
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174506',
+        'forge_order_number' => 1008,
+        'production_status' => 'tray_assigned',
+        'current_tray_number' => 9,
+        'payload' => createValidPayload([
+            'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174506',
+            'forge_order_number' => 1008,
+            'event' => [
+                'event_id' => 'event-test-2',
+                'event_name' => 'Future Test Session',
+                'event_type' => 'test_session',
+                'event_start_date' => '2026-07-28',
+                'event_end_date' => '2026-07-28',
+                'event_location' => 'Shop',
+                'public_order_token' => 'token-test-2',
+            ],
+        ]),
+    ]);
+    $repository = new \Forge\Server\PdoStaffOrderRepository($pdo, [
+        'FORGE_TRAY_NUMBERS' => '1,2,3,4,5,6,7,8,9',
+    ]);
+
+    assertThrows(
+        static function () use ($repository): void {
+            $repository->deleteTestOrder('123e4567-e89b-42d3-a456-426614174506', 'DELETE TEST ORDER');
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof \Forge\Server\StorageUnavailableException);
+        }
+    );
+
+    $orderRow = $repository->getOrder('123e4567-e89b-42d3-a456-426614174506');
+    $trayRow = $pdo->query('SELECT tray_status, current_order_uuid FROM forge_production_trays WHERE tray_number = 9')->fetch(PDO::FETCH_ASSOC);
+    $historyRow = $pdo->query("SELECT released_at, release_reason FROM forge_tray_assignment_history WHERE forge_order_uuid = '123e4567-e89b-42d3-a456-426614174506' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+
+    assertSame('tray_assigned', $orderRow['production_status']);
+    assertSame(9, $orderRow['current_tray_number']);
+    assertSame('assigned', $trayRow['tray_status'] ?? null);
+    assertSame('123e4567-e89b-42d3-a456-426614174506', $trayRow['current_order_uuid'] ?? null);
+    assertSame(null, $historyRow['released_at'] ?? null);
+    assertSame(null, $historyRow['release_reason'] ?? null);
+});
+
 $runner->run('configured tray numbers are deduplicated and sorted numerically', static function (): void {
     $trayNumbers = \Forge\Server\parseConfiguredTrayNumbers('12, 2, 7 2 4');
 
@@ -3147,6 +3394,29 @@ $runner->run('legacy cleanup migration endpoint and tombstones stay staff-only a
     assertTrue(strpos($orderRepositorySource, 'hasCleanupTombstone') !== false);
 });
 
+$runner->run('order cancellation and Test Session deletion stay staff-only and use the dedicated migration safely', static function (): void {
+    $migrationSource = file_get_contents(dirname(__DIR__) . '/migrations/013_add_cancelled_at_to_forge_orders.sql');
+    $cancelEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/cancel-order.php');
+    $deleteEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/delete-test-order.php');
+    $repositorySource = file_get_contents(dirname(__DIR__) . '/lib/staff-order-repository.php');
+    $orderRepositorySource = file_get_contents(dirname(__DIR__) . '/lib/order-repository.php');
+
+    assertTrue(is_string($migrationSource));
+    assertTrue(is_string($cancelEndpointSource));
+    assertTrue(is_string($deleteEndpointSource));
+    assertTrue(is_string($repositorySource));
+    assertTrue(is_string($orderRepositorySource));
+    assertTrue(strpos($migrationSource, 'ADD COLUMN cancelled_at') !== false);
+    assertTrue(strpos($cancelEndpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($deleteEndpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($cancelEndpointSource, 'cancelOrder') !== false);
+    assertTrue(strpos($deleteEndpointSource, 'deleteTestOrder') !== false);
+    assertTrue(strpos($repositorySource, 'DELETE TEST ORDER') !== false);
+    assertTrue(strpos($repositorySource, 'Test Session orders must be deleted with Delete Test Order.') !== false);
+    assertTrue(strpos($repositorySource, 'Only Test Session orders can be permanently deleted.') !== false);
+    assertTrue(strpos($orderRepositorySource, 'forge_order_cleanup_tombstones') !== false);
+});
+
 $runner->run('invalid stored staff order payload fails safely', static function (): void {
     assertThrows(
         static function (): void {
@@ -3373,6 +3643,256 @@ function removeTempImportDirectory(string $directory): void
     }
 
     @rmdir($directory);
+}
+
+final class SqliteStaffOrderTestPdo extends PDO
+{
+    #[\ReturnTypeWillChange]
+    public function prepare($query, $options = [])
+    {
+        $normalized = str_replace(' FOR UPDATE', '', (string) $query);
+        $normalized = str_replace(
+            'ON DUPLICATE KEY UPDATE tray_number = tray_number',
+            'ON CONFLICT(tray_number) DO NOTHING',
+            $normalized
+        );
+
+        return parent::prepare($normalized, is_array($options) ? $options : []);
+    }
+}
+
+function createStaffOrderRepositoryTestPdo(bool $includeCleanupTombstones = true): PDO
+{
+    $pdo = new SqliteStaffOrderTestPdo('sqlite::memory:');
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+
+    $pdo->exec(
+        'CREATE TABLE forge_orders (
+            forge_order_uuid TEXT PRIMARY KEY,
+            forge_order_number INTEGER DEFAULT NULL,
+            record_version TEXT NOT NULL,
+            source TEXT NOT NULL,
+            submitted_at TEXT NOT NULL,
+            received_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            device_id TEXT DEFAULT NULL,
+            event_id TEXT DEFAULT NULL,
+            internal_note TEXT DEFAULT NULL,
+            payload_json TEXT NOT NULL,
+            payload_sha256 TEXT NOT NULL,
+            production_status TEXT NOT NULL,
+            current_tray_number INTEGER DEFAULT NULL,
+            ready_to_pack_at TEXT DEFAULT NULL,
+            cancelled_at TEXT DEFAULT NULL
+        )'
+    );
+    $pdo->exec(
+        'CREATE TABLE forge_production_trays (
+            tray_number INTEGER PRIMARY KEY,
+            tray_status TEXT NOT NULL,
+            current_order_uuid TEXT DEFAULT NULL,
+            assigned_at TEXT DEFAULT NULL,
+            updated_at TEXT NOT NULL
+        )'
+    );
+    $pdo->exec(
+        'CREATE TABLE forge_tray_assignment_history (
+            tray_assignment_id TEXT PRIMARY KEY,
+            tray_number INTEGER NOT NULL,
+            forge_order_uuid TEXT NOT NULL,
+            assigned_at TEXT NOT NULL,
+            released_at TEXT DEFAULT NULL,
+            release_reason TEXT DEFAULT NULL
+        )'
+    );
+    $pdo->exec(
+        'CREATE TABLE forge_order_item_production (
+            forge_order_uuid TEXT NOT NULL,
+            line_id TEXT NOT NULL,
+            required_quantity INTEGER NOT NULL,
+            completed_quantity INTEGER NOT NULL,
+            production_status TEXT NOT NULL,
+            completed_at TEXT DEFAULT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (forge_order_uuid, line_id)
+        )'
+    );
+
+    if ($includeCleanupTombstones) {
+        $pdo->exec(
+            'CREATE TABLE forge_order_cleanup_tombstones (
+                forge_order_uuid TEXT PRIMARY KEY,
+                deleted_at TEXT NOT NULL
+            )'
+        );
+    }
+
+    return $pdo;
+}
+
+function seedStaffOrderRepositoryTestOrder(PDO $pdo, array $options = []): void
+{
+    $forgeOrderUuid = (string) ($options['forge_order_uuid'] ?? '123e4567-e89b-42d3-a456-426614174599');
+    $forgeOrderNumber = $options['forge_order_number'] ?? 1042;
+    $productionStatus = (string) ($options['production_status'] ?? 'submitted');
+    $currentTrayNumber = $options['current_tray_number'] ?? null;
+    $internalNote = $options['internal_note'] ?? null;
+    $cancelledAt = $options['cancelled_at'] ?? null;
+    $payload = $options['payload'] ?? createValidPayload([
+        'forge_order_uuid' => $forgeOrderUuid,
+        'forge_order_number' => $forgeOrderNumber,
+    ]);
+    $payloadJson = json_encode($payload, JSON_THROW_ON_ERROR);
+    $payloadSha = hash('sha256', $payloadJson);
+    $submittedAt = (string) ($options['submitted_at'] ?? '2026-07-24 19:00:00.000000');
+    $receivedAt = (string) ($options['received_at'] ?? '2026-07-24 19:01:00.000000');
+    $updatedAt = (string) ($options['updated_at'] ?? '2026-07-24 19:02:00.000000');
+    $eventId = is_array($payload['event'] ?? null) ? (string) (($payload['event']['event_id'] ?? '') ?: '') : null;
+
+    $insertOrder = $pdo->prepare(
+        'INSERT INTO forge_orders (
+            forge_order_uuid,
+            forge_order_number,
+            record_version,
+            source,
+            submitted_at,
+            received_at,
+            updated_at,
+            device_id,
+            event_id,
+            internal_note,
+            payload_json,
+            payload_sha256,
+            production_status,
+            current_tray_number,
+            ready_to_pack_at,
+            cancelled_at
+         ) VALUES (
+            :forge_order_uuid,
+            :forge_order_number,
+            :record_version,
+            :source,
+            :submitted_at,
+            :received_at,
+            :updated_at,
+            :device_id,
+            :event_id,
+            :internal_note,
+            :payload_json,
+            :payload_sha256,
+            :production_status,
+            :current_tray_number,
+            :ready_to_pack_at,
+            :cancelled_at
+         )'
+    );
+    $insertOrder->execute([
+        ':forge_order_uuid' => $forgeOrderUuid,
+        ':forge_order_number' => $forgeOrderNumber,
+        ':record_version' => '1.0',
+        ':source' => 'customer_kiosk',
+        ':submitted_at' => $submittedAt,
+        ':received_at' => $receivedAt,
+        ':updated_at' => $updatedAt,
+        ':device_id' => 'ipad-1',
+        ':event_id' => $eventId,
+        ':internal_note' => $internalNote,
+        ':payload_json' => $payloadJson,
+        ':payload_sha256' => $payloadSha,
+        ':production_status' => $productionStatus,
+        ':current_tray_number' => $currentTrayNumber,
+        ':ready_to_pack_at' => $options['ready_to_pack_at'] ?? null,
+        ':cancelled_at' => $cancelledAt,
+    ]);
+
+    $items = is_array($payload['items'] ?? null) ? $payload['items'] : [];
+    $insertItem = $pdo->prepare(
+        'INSERT INTO forge_order_item_production (
+            forge_order_uuid,
+            line_id,
+            required_quantity,
+            completed_quantity,
+            production_status,
+            completed_at,
+            updated_at
+         ) VALUES (
+            :forge_order_uuid,
+            :line_id,
+            :required_quantity,
+            :completed_quantity,
+            :production_status,
+            :completed_at,
+            :updated_at
+         )'
+    );
+
+    foreach ($items as $item) {
+        $lineId = trim((string) ($item['line_id'] ?? ''));
+        if ($lineId === '') {
+            continue;
+        }
+
+        $insertItem->execute([
+            ':forge_order_uuid' => $forgeOrderUuid,
+            ':line_id' => $lineId,
+            ':required_quantity' => (int) ($item['quantity'] ?? 1),
+            ':completed_quantity' => (int) ($item['completed_quantity'] ?? 0),
+            ':production_status' => (string) ($item['production_status'] ?? 'pending'),
+            ':completed_at' => $item['completed_at'] ?? null,
+            ':updated_at' => $updatedAt,
+        ]);
+    }
+
+    if ($currentTrayNumber !== null) {
+        $trayTimestamp = (string) ($options['tray_updated_at'] ?? $updatedAt);
+        $insertTray = $pdo->prepare(
+            'INSERT INTO forge_production_trays (
+                tray_number,
+                tray_status,
+                current_order_uuid,
+                assigned_at,
+                updated_at
+             ) VALUES (
+                :tray_number,
+                :tray_status,
+                :current_order_uuid,
+                :assigned_at,
+                :updated_at
+             )'
+        );
+        $insertTray->execute([
+            ':tray_number' => (int) $currentTrayNumber,
+            ':tray_status' => 'assigned',
+            ':current_order_uuid' => $forgeOrderUuid,
+            ':assigned_at' => $trayTimestamp,
+            ':updated_at' => $trayTimestamp,
+        ]);
+
+        $insertHistory = $pdo->prepare(
+            'INSERT INTO forge_tray_assignment_history (
+                tray_assignment_id,
+                tray_number,
+                forge_order_uuid,
+                assigned_at,
+                released_at,
+                release_reason
+             ) VALUES (
+                :tray_assignment_id,
+                :tray_number,
+                :forge_order_uuid,
+                :assigned_at,
+                NULL,
+                NULL
+             )'
+        );
+        $insertHistory->execute([
+            ':tray_assignment_id' => $options['tray_assignment_id'] ?? ($forgeOrderUuid . '-assignment'),
+            ':tray_number' => (int) $currentTrayNumber,
+            ':forge_order_uuid' => $forgeOrderUuid,
+            ':assigned_at' => $trayTimestamp,
+        ]);
+    }
 }
 
 $runner->finish();

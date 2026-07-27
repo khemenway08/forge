@@ -8,6 +8,7 @@
   }
 }(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const FILTER_KEYS = [
+    'orderScope',
     'product',
     'ornamentType',
     'size',
@@ -22,7 +23,7 @@
     'syncStatus'
   ];
   const ITEM_FILTER_KEYS = ['product', 'ornamentType', 'size', 'treeColor', 'bowColor', 'year', 'productionStatus'];
-  const ORDER_FILTER_KEYS = ['fulfillment', 'event', 'tray', 'syncStatus', 'openFlags'];
+  const ORDER_FILTER_KEYS = ['orderScope', 'fulfillment', 'event', 'tray', 'syncStatus', 'openFlags'];
   const TERMINAL_ORDER_STATUSES = new Set(['ready_to_pack', 'packed', 'shipped', 'picked_up', 'cancelled']);
   const ACTIVE_PRODUCTION_ORDER_STATUSES = new Set(['submitted', 'tray_assigned', 'in_production']);
   const ISSUE_PRIORITY = ['waiting_for_tray', 'custom_icon_required', 'blocked_items', 'other_open_flags'];
@@ -91,6 +92,7 @@
 
   function createEmptyOrderFilters() {
     return {
+      orderScope: 'all',
       product: 'all',
       ornamentType: 'all',
       size: 'all',
@@ -154,6 +156,7 @@
     const sortedRecords = sortLocalOrdersNewestFirst(records);
 
     return {
+      orderScope: buildOptionList(sortedRecords, normalizedFilters, searchTerm, 'orderScope'),
       product: buildOptionList(sortedRecords, normalizedFilters, searchTerm, 'product'),
       ornamentType: buildOptionList(sortedRecords, normalizedFilters, searchTerm, 'ornamentType'),
       size: buildOptionList(sortedRecords, normalizedFilters, searchTerm, 'size'),
@@ -551,6 +554,9 @@
   }
 
   function buildOptionList(records, filters, searchTerm, dimension) {
+    if (dimension === 'orderScope') {
+      return buildOrderScopeOptionList(records, filters, searchTerm);
+    }
     if (dimension === 'openFlags') {
       return buildOpenFlagsOptionList(records, filters, searchTerm);
     }
@@ -639,6 +645,45 @@
       .sort((left, right) => compareFilterOptions('openFlags', left, right));
   }
 
+  function buildOrderScopeOptionList(records, filters, searchTerm) {
+    const baseFilters = removeFilterDimension(filters, 'orderScope');
+    const counts = {
+      active: 0,
+      cancelled: 0,
+      test_orders: 0
+    };
+
+    sortLocalOrdersNewestFirst(records).forEach((record) => {
+      if (searchTerm && !createOrderSearchDocument(record).includes(searchTerm)) {
+        return;
+      }
+
+      const matchingItems = getMatchingProductionItems(record, baseFilters).map((match) => match.attributes);
+      if (matchingItems.length === 0 || !recordMatchesNonItemFilters(record, baseFilters, matchingItems)) {
+        return;
+      }
+
+      if (isActiveScopeRecord(record)) {
+        counts.active += 1;
+      }
+      if (normalizeLifecycleStatus(record?.production_status) === 'cancelled') {
+        counts.cancelled += 1;
+      }
+      if (getRecordEventType(record) === 'test_session') {
+        counts.test_orders += 1;
+      }
+    });
+
+    return Object.entries(counts)
+      .filter(([, count]) => count > 0)
+      .map(([value, count]) => ({
+        value,
+        label: formatFilterLabel('orderScope', value),
+        count
+      }))
+      .sort((left, right) => compareFilterOptions('orderScope', left, right));
+  }
+
   function recordMatches(record, filters, searchTerm) {
     if (searchTerm && !createOrderSearchDocument(record).includes(searchTerm)) {
       return false;
@@ -671,6 +716,19 @@
   function recordMatchesNonItemFilters(record, filters, matchingItems, excludeDimension = '') {
     const normalizedFilters = normalizeFilters(filters);
     const excluded = excludeDimension || '';
+
+    if (excluded !== 'orderScope') {
+      const orderScopeFilter = normalizeFilterValue(normalizedFilters.orderScope);
+      if (orderScopeFilter === 'active' && !isActiveScopeRecord(record)) {
+        return false;
+      }
+      if (orderScopeFilter === 'cancelled' && normalizeLifecycleStatus(record?.production_status) !== 'cancelled') {
+        return false;
+      }
+      if (orderScopeFilter === 'test_orders' && getRecordEventType(record) !== 'test_session') {
+        return false;
+      }
+    }
 
     if (excluded !== 'fulfillment') {
       const fulfillmentFilter = normalizeFilterValue(normalizedFilters.fulfillment);
@@ -812,12 +870,30 @@
     return normalizeFilterValue(firstNonEmpty([record?.event_id, payload.event?.event_id, payload.event_id]));
   }
 
+  function getRecordEventType(record) {
+    const payload = getPayload(record);
+    return normalizeStableValue(payload.event?.event_type);
+  }
+
   function getRecordTrayValue(record) {
     const trayNumber = normalizeTrayNumber(record && record.current_tray_number);
     return trayNumber ? String(trayNumber) : 'unassigned';
   }
 
   function getOrderDimensionValues(record, dimension) {
+    if (dimension === 'orderScope') {
+      const values = [];
+      if (isActiveScopeRecord(record)) {
+        values.push({ value: 'active', label: 'Active' });
+      }
+      if (normalizeLifecycleStatus(record?.production_status) === 'cancelled') {
+        values.push({ value: 'cancelled', label: 'Cancelled' });
+      }
+      if (getRecordEventType(record) === 'test_session') {
+        values.push({ value: 'test_orders', label: 'Test Orders' });
+      }
+      return values;
+    }
     if (dimension === 'fulfillment') {
       const fulfillment = getRecordFulfillmentMethod(record);
       return fulfillment ? [{ value: fulfillment, label: getFulfillmentLabel(fulfillment) }] : [];
@@ -1109,6 +1185,17 @@
   }
 
   function formatFilterLabel(dimension, value) {
+    if (dimension === 'orderScope') {
+      if (value === 'active') {
+        return 'Active';
+      }
+      if (value === 'cancelled') {
+        return 'Cancelled';
+      }
+      if (value === 'test_orders') {
+        return 'Test Orders';
+      }
+    }
     if (dimension === 'product') {
       return getProductDisplayName(value);
     }
@@ -1308,6 +1395,10 @@
 
   function normalizeLifecycleStatus(value) {
     return asTrimmedString(value).toLowerCase();
+  }
+
+  function isActiveScopeRecord(record) {
+    return ['submitted', 'tray_assigned', 'in_production', 'ready_to_pack'].includes(normalizeLifecycleStatus(record?.production_status));
   }
 
   function normalizeItemProductionStatus(item) {

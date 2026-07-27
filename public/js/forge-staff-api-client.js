@@ -19,6 +19,8 @@
   const START_EVENT_ENDPOINT = 'start-event.php';
   const END_EVENT_ENDPOINT = 'end-event.php';
   const INTERNAL_NOTE_ENDPOINT = 'internal-note.php';
+  const CANCEL_ORDER_ENDPOINT = 'cancel-order.php';
+  const DELETE_TEST_ORDER_ENDPOINT = 'delete-test-order.php';
   const LEGACY_TEST_CLEANUP_ENDPOINT = 'legacy-test-cleanup.php';
   const TRAYS_ENDPOINT = 'trays.php';
   const ASSIGN_TRAY_ENDPOINT = 'assign-tray.php';
@@ -36,6 +38,8 @@
     event_not_found: 'That event could not be found.',
     event_conflict: 'That event could not be updated right now.',
     internal_note_too_long: 'Internal notes are too long.',
+    order_not_cancellable: 'That order cannot be cancelled right now.',
+    test_order_delete_not_allowed: 'Only Test Session orders can be permanently deleted.',
     cleanup_conflict: 'Legacy test cleanup changed. Run a new preview before deleting anything.',
     no_trays_configured: 'No production trays are configured.',
     order_not_found: 'That order could not be found.',
@@ -335,6 +339,20 @@
       }
     }
 
+    async function cancelOrder(forgeOrderUuid) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      if (!orderUuid) {
+        throw new ForgeStaffApiError('invalid_request', 'A saved order is required.');
+      }
+
+      return submitStaffMutation(
+        `${baseUrl}/${CANCEL_ORDER_ENDPOINT}`,
+        { forge_order_uuid: orderUuid },
+        'Order cancellation could not be prepared.',
+        normalizeCancelOrderPayload
+      );
+    }
+
     async function assignTray(forgeOrderUuid, trayNumber) {
       const orderUuid = asTrimmedString(forgeOrderUuid);
       const normalizedTrayNumber = normalizeTrayNumber(trayNumber);
@@ -479,6 +497,27 @@
       }
     }
 
+    async function deleteTestOrder(forgeOrderUuid, confirmationText) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      const normalizedConfirmationText = asTrimmedString(confirmationText);
+      if (!orderUuid) {
+        throw new ForgeStaffApiError('invalid_request', 'A saved order is required.');
+      }
+      if (!normalizedConfirmationText) {
+        throw new ForgeStaffApiError('invalid_request', 'Enter DELETE TEST ORDER before deleting this order.');
+      }
+
+      return submitStaffMutation(
+        `${baseUrl}/${DELETE_TEST_ORDER_ENDPOINT}`,
+        {
+          forge_order_uuid: orderUuid,
+          confirmation_text: normalizedConfirmationText
+        },
+        'Test order deletion could not be prepared.',
+        normalizeDeleteTestOrderPayload
+      );
+    }
+
     async function previewLegacyTestCleanup() {
       try {
         const response = await performJsonRequest(fetchImpl, `${baseUrl}/${LEGACY_TEST_CLEANUP_ENDPOINT}`, timeoutMs, {
@@ -597,6 +636,42 @@
       }
     }
 
+    async function submitStaffMutation(url, payload, invalidRequestMessage, normalizeResponse) {
+      let requestBody = '';
+      try {
+        requestBody = JSON.stringify(payload);
+      } catch (error) {
+        throw new ForgeStaffApiError('invalid_request', invalidRequestMessage, { cause: error });
+      }
+
+      try {
+        const response = await performJsonRequest(fetchImpl, url, timeoutMs, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json'
+          },
+          credentials: 'same-origin',
+          cache: 'no-store',
+          body: requestBody
+        });
+        const responsePayload = await parseJsonResponse(response);
+        if (response.status === 401) {
+          return {
+            ok: false,
+            authenticated: false,
+            unauthenticated: true
+          };
+        }
+        if (!response.ok) {
+          throw buildServerError(response.status, responsePayload);
+        }
+        return normalizeResponse(responsePayload);
+      } catch (error) {
+        throw normalizeClientError(error);
+      }
+    }
+
     return {
       checkSession,
       login,
@@ -609,11 +684,13 @@
       endEvent,
       listOrders,
       listTrays,
+      cancelOrder,
       assignTray,
       completeItemQuantity,
       updateInternalNote,
       previewLegacyTestCleanup,
-      applyLegacyTestCleanup
+      applyLegacyTestCleanup,
+      deleteTestOrder
     };
   }
 
@@ -827,6 +904,46 @@
       authenticated: true,
       internalNote: normalizeNullableString(data.internal_note),
       order: data.order && typeof data.order === 'object' ? data.order : null
+    };
+  }
+
+  function normalizeCancelOrderPayload(payload) {
+    const application = asTrimmedString(payload && payload.application);
+    const apiVersion = asTrimmedString(payload && payload.api_version);
+    const status = asTrimmedString(payload && payload.status);
+    const data = payload && typeof payload === 'object' ? payload.data : null;
+
+    if (application !== 'Forge' || apiVersion !== '1' || status !== 'ok' || !data || typeof data !== 'object') {
+      throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+    }
+
+    return {
+      ok: true,
+      authenticated: true,
+      order: data.order && typeof data.order === 'object' ? data.order : null,
+      tray: data.tray && typeof data.tray === 'object' ? normalizeTrayRecord(data.tray) : null,
+      assignmentHistory: data.assignment_history && typeof data.assignment_history === 'object'
+        ? normalizeAssignmentHistoryRecord(data.assignment_history)
+        : null
+    };
+  }
+
+  function normalizeDeleteTestOrderPayload(payload) {
+    const application = asTrimmedString(payload && payload.application);
+    const apiVersion = asTrimmedString(payload && payload.api_version);
+    const status = asTrimmedString(payload && payload.status);
+    const data = payload && typeof payload === 'object' ? payload.data : null;
+
+    if (application !== 'Forge' || apiVersion !== '1' || status !== 'ok' || !data || typeof data !== 'object') {
+      throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+    }
+
+    return {
+      ok: true,
+      authenticated: true,
+      deletedOrderUuid: asTrimmedString(data.deleted_order_uuid),
+      deletedOrderNumber: normalizeOptionalNonNegativeInteger(data.deleted_order_number, 'A valid deleted test order number is required.'),
+      releasedTrayNumber: data.released_tray_number == null ? null : normalizeTrayNumber(data.released_tray_number)
     };
   }
 

@@ -8,12 +8,13 @@
   }
 }(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const DATABASE_NAME = 'forge-orders';
-  const DATABASE_VERSION = 3;
+  const DATABASE_VERSION = 4;
   const OBJECT_STORE_NAMES = {
     orders: 'orders',
     trays: 'production_trays',
     trayAssignmentHistory: 'tray_assignment_history',
-    packingVerifications: 'packing_verifications'
+    packingVerifications: 'packing_verifications',
+    cleanupTombstones: 'order_cleanup_tombstones'
   };
   const INDEX_NAMES = {
     orders: {
@@ -41,6 +42,9 @@
       forgeOrderUuid: 'forge_order_uuid',
       trayNumber: 'tray_number',
       verifiedAt: 'verified_at'
+    },
+    cleanupTombstones: {
+      deletedAt: 'deleted_at'
     }
   };
   const PACKING_NOTE_MAX_LENGTH = 500;
@@ -73,6 +77,7 @@
     failed: 'failed',
     conflict: 'conflict'
   };
+  const ORDER_DELETE_TEST_CONFIRMATION_TEXT = 'DELETE TEST ORDER';
   const SERVER_UPLOAD_ERROR_MESSAGE_MAX_LENGTH = 160;
   const SERVER_UPLOAD_HASH_PATTERN = /^[0-9a-f]{64}$/;
   const SERVER_UPLOAD_ERROR_MESSAGES = {
@@ -99,7 +104,8 @@
       orders: options.objectStoreName || options.objectStoreNames?.orders || OBJECT_STORE_NAMES.orders,
       trays: options.objectStoreNames?.trays || OBJECT_STORE_NAMES.trays,
       trayAssignmentHistory: options.objectStoreNames?.trayAssignmentHistory || OBJECT_STORE_NAMES.trayAssignmentHistory,
-      packingVerifications: options.objectStoreNames?.packingVerifications || OBJECT_STORE_NAMES.packingVerifications
+      packingVerifications: options.objectStoreNames?.packingVerifications || OBJECT_STORE_NAMES.packingVerifications,
+      cleanupTombstones: options.objectStoreNames?.cleanupTombstones || OBJECT_STORE_NAMES.cleanupTombstones
     };
     const trayInventoryConfig = normalizeTrayInventoryConfig(options.trayInventory || DEFAULT_TRAY_INVENTORY);
     const getNow = typeof options.now === 'function' ? options.now : () => new Date();
@@ -131,6 +137,9 @@
           const packingVerificationStore = db.objectStoreNames.contains(objectStoreNames.packingVerifications)
             ? transaction.objectStore(objectStoreNames.packingVerifications)
             : db.createObjectStore(objectStoreNames.packingVerifications, { keyPath: 'packing_verification_id' });
+          const cleanupTombstoneStore = db.objectStoreNames.contains(objectStoreNames.cleanupTombstones)
+            ? transaction.objectStore(objectStoreNames.cleanupTombstones)
+            : db.createObjectStore(objectStoreNames.cleanupTombstones, { keyPath: 'forge_order_uuid' });
 
           ensureIndex(orderStore, INDEX_NAMES.orders.submittedAt, 'submitted_at');
           ensureIndex(orderStore, INDEX_NAMES.orders.localSavedAt, 'local_saved_at');
@@ -153,6 +162,7 @@
           ensureIndex(packingVerificationStore, INDEX_NAMES.packingVerifications.forgeOrderUuid, 'forge_order_uuid', { unique: true });
           ensureIndex(packingVerificationStore, INDEX_NAMES.packingVerifications.trayNumber, 'tray_number');
           ensureIndex(packingVerificationStore, INDEX_NAMES.packingVerifications.verifiedAt, 'verified_at');
+          ensureIndex(cleanupTombstoneStore, INDEX_NAMES.cleanupTombstones.deletedAt, 'deleted_at');
         };
         request.onsuccess = async () => {
           try {
@@ -188,6 +198,9 @@
 
     async function saveNewOrder(record) {
       const normalizedRecord = normalizeLocalOrderRecord(record);
+      if (await hasCleanupTombstone(normalizedRecord.forge_order_uuid)) {
+        throw new Error('This Forge order UUID was previously deleted and cannot be saved again.');
+      }
       const existingRecord = await getOrder(normalizedRecord.forge_order_uuid);
       if (existingRecord) {
         return {
@@ -434,6 +447,16 @@
         return index.get(orderUuid);
       });
       return record ? normalizePackingVerificationRecord(record) : null;
+    }
+
+    async function hasCleanupTombstone(forgeOrderUuid) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      if (!orderUuid) {
+        return false;
+      }
+      const db = await openOrderStore();
+      const record = await runRequest(db, 'readonly', objectStoreNames.cleanupTombstones, (store) => store.get(orderUuid));
+      return Boolean(record);
     }
 
     async function assignTrayToOrder(forgeOrderUuid, trayNumber) {
@@ -694,6 +717,258 @@
       });
     }
 
+    async function cancelOrder(forgeOrderUuid) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      if (!orderUuid) {
+        throw new Error('Order cancellation requires a Forge order UUID.');
+      }
+
+      const db = await openOrderStore();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(
+          [objectStoreNames.orders, objectStoreNames.trays, objectStoreNames.trayAssignmentHistory],
+          'readwrite'
+        );
+        const ordersStore = transaction.objectStore(objectStoreNames.orders);
+        const traysStore = transaction.objectStore(objectStoreNames.trays);
+        const trayAssignmentHistoryStore = transaction.objectStore(objectStoreNames.trayAssignmentHistory);
+        const timestamp = normalizeDateValue(getNow()).toISOString();
+        let cancellationResult = null;
+
+        transaction.oncomplete = () => resolve(cancellationResult);
+        transaction.onerror = () => reject(transaction.__forgeError || transaction.error || new Error('Order cancellation failed.'));
+        transaction.onabort = () => reject(transaction.__forgeError || transaction.error || new Error('Order cancellation was aborted.'));
+
+        const orderRequest = ordersStore.get(orderUuid);
+        orderRequest.onerror = () => abortTransaction(transaction, orderRequest.error || new Error('The selected order could not be loaded.'));
+        orderRequest.onsuccess = () => {
+          const storedOrder = orderRequest.result;
+          if (!storedOrder) {
+            abortTransaction(transaction, new Error('That saved order could not be found.'));
+            return;
+          }
+
+          const normalizedOrder = normalizeOrderRecordForRead(storedOrder);
+          if (getEventTypeForRecord(normalizedOrder) === 'test_session') {
+            abortTransaction(transaction, new Error('Test Session orders must be deleted with Delete Test Order.'));
+            return;
+          }
+          if (normalizeProductionStatus(normalizedOrder.production_status) === PRODUCTION_STATUSES.cancelled) {
+            abortTransaction(transaction, new Error('This order has already been cancelled.'));
+            return;
+          }
+
+          const trayNumber = normalizeNullableTrayNumber(normalizedOrder.current_tray_number);
+          const updatedOrder = normalizeLocalOrderRecord({
+            ...deepCloneValue(normalizedOrder),
+            updated_at: timestamp,
+            production_status: PRODUCTION_STATUSES.cancelled,
+            current_tray_number: null,
+            ready_to_pack_at: null,
+            cancelled_at: timestamp
+          });
+          const putOrderRequest = ordersStore.put(deepCloneValue(updatedOrder));
+          putOrderRequest.onerror = () => abortTransaction(transaction, putOrderRequest.error || new Error('The order could not be cancelled.'));
+
+          if (trayNumber == null) {
+            cancellationResult = {
+              ok: true,
+              order: normalizeOrderRecordForRead(updatedOrder),
+              tray: null,
+              assignmentHistoryRecord: null
+            };
+            return;
+          }
+
+          const trayRequest = traysStore.get(trayNumber);
+          trayRequest.onerror = () => abortTransaction(transaction, trayRequest.error || new Error('The assigned tray could not be loaded.'));
+          trayRequest.onsuccess = () => {
+            const storedTray = trayRequest.result;
+            const updatedTray = createTrayRecord({
+              ...(storedTray ? deepCloneValue(storedTray) : {}),
+              tray_number: trayNumber,
+              tray_status: TRAY_STATUSES.available,
+              current_order_uuid: null,
+              assigned_at: null,
+              updated_at: timestamp
+            });
+            const putTrayRequest = traysStore.put(deepCloneValue(updatedTray));
+            putTrayRequest.onerror = () => abortTransaction(transaction, putTrayRequest.error || new Error('The assigned tray could not be released.'));
+
+            const historyIndex = trayAssignmentHistoryStore.index(INDEX_NAMES.trayAssignmentHistory.forgeOrderUuid);
+            const historyRequest = historyIndex.getAll(orderUuid);
+            historyRequest.onerror = () => abortTransaction(transaction, historyRequest.error || new Error('Tray assignment history could not be loaded.'));
+            historyRequest.onsuccess = () => {
+              const historyRecords = Array.isArray(historyRequest.result) ? historyRequest.result : [];
+              const activeHistoryRecord = historyRecords
+                .map((record) => normalizeTrayAssignmentHistoryRecord(record))
+                .find((record) => record.tray_number === trayNumber && !record.released_at);
+
+              if (activeHistoryRecord) {
+                const releasedHistoryRecord = createTrayAssignmentHistoryRecord({
+                  ...deepCloneValue(activeHistoryRecord),
+                  released_at: timestamp,
+                  release_reason: 'cancelled'
+                });
+                const putHistoryRequest = trayAssignmentHistoryStore.put(deepCloneValue(releasedHistoryRecord));
+                putHistoryRequest.onerror = () => abortTransaction(transaction, putHistoryRequest.error || new Error('Tray release history could not be saved.'));
+                cancellationResult = {
+                  ok: true,
+                  order: normalizeOrderRecordForRead(updatedOrder),
+                  tray: normalizeTrayRecord(updatedTray),
+                  assignmentHistoryRecord: normalizeTrayAssignmentHistoryRecord(releasedHistoryRecord)
+                };
+                return;
+              }
+
+              cancellationResult = {
+                ok: true,
+                order: normalizeOrderRecordForRead(updatedOrder),
+                tray: normalizeTrayRecord(updatedTray),
+                assignmentHistoryRecord: null
+              };
+            };
+          };
+        };
+      });
+    }
+
+    async function deleteTestOrder(forgeOrderUuid, confirmationText) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      if (!orderUuid) {
+        throw new Error('Delete Test Order requires a Forge order UUID.');
+      }
+      if (asTrimmedString(confirmationText) !== ORDER_DELETE_TEST_CONFIRMATION_TEXT) {
+        throw new Error('Enter DELETE TEST ORDER before deleting this order.');
+      }
+
+      const db = await openOrderStore();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(
+          [
+            objectStoreNames.orders,
+            objectStoreNames.trays,
+            objectStoreNames.trayAssignmentHistory,
+            objectStoreNames.packingVerifications,
+            objectStoreNames.cleanupTombstones
+          ],
+          'readwrite'
+        );
+        const ordersStore = transaction.objectStore(objectStoreNames.orders);
+        const traysStore = transaction.objectStore(objectStoreNames.trays);
+        const trayAssignmentHistoryStore = transaction.objectStore(objectStoreNames.trayAssignmentHistory);
+        const packingVerificationsStore = transaction.objectStore(objectStoreNames.packingVerifications);
+        const cleanupTombstonesStore = transaction.objectStore(objectStoreNames.cleanupTombstones);
+        const timestamp = normalizeDateValue(getNow()).toISOString();
+        let deleteResult = null;
+
+        transaction.oncomplete = () => resolve(deleteResult);
+        transaction.onerror = () => reject(transaction.__forgeError || transaction.error || new Error('Test order deletion failed.'));
+        transaction.onabort = () => reject(transaction.__forgeError || transaction.error || new Error('Test order deletion was aborted.'));
+
+        const orderRequest = ordersStore.get(orderUuid);
+        orderRequest.onerror = () => abortTransaction(transaction, orderRequest.error || new Error('The selected order could not be loaded.'));
+        orderRequest.onsuccess = () => {
+          const storedOrder = orderRequest.result;
+          if (!storedOrder) {
+            abortTransaction(transaction, new Error('That saved order could not be found.'));
+            return;
+          }
+
+          const normalizedOrder = normalizeOrderRecordForRead(storedOrder);
+          if (getEventTypeForRecord(normalizedOrder) !== 'test_session') {
+            abortTransaction(transaction, new Error('Only Test Session orders can be permanently deleted.'));
+            return;
+          }
+
+          const trayNumber = normalizeNullableTrayNumber(normalizedOrder.current_tray_number);
+
+          const finalizeDelete = () => {
+            const putTombstoneRequest = cleanupTombstonesStore.put(createCleanupTombstoneRecord({
+              forge_order_uuid: orderUuid,
+              deleted_at: timestamp
+            }));
+            putTombstoneRequest.onerror = () => abortTransaction(transaction, putTombstoneRequest.error || new Error('The cleanup tombstone could not be saved.'));
+
+            const deleteOrderRequest = ordersStore.delete(orderUuid);
+            deleteOrderRequest.onerror = () => abortTransaction(transaction, deleteOrderRequest.error || new Error('The saved test order could not be deleted.'));
+
+            deleteResult = {
+              ok: true,
+              deletedOrderUuid: orderUuid,
+              deletedOrderNumber: normalizedOrder.forge_order_number || null,
+              releasedTrayNumber: trayNumber || null
+            };
+          };
+
+          const deleteHistoryAndVerification = () => {
+            const historyIndex = trayAssignmentHistoryStore.index(INDEX_NAMES.trayAssignmentHistory.forgeOrderUuid);
+            const historyRequest = historyIndex.getAll(orderUuid);
+            historyRequest.onerror = () => abortTransaction(transaction, historyRequest.error || new Error('Tray assignment history could not be loaded.'));
+            historyRequest.onsuccess = () => {
+              const historyRecords = Array.isArray(historyRequest.result) ? historyRequest.result : [];
+              historyRecords.forEach((record) => {
+                const deleteHistoryRequest = trayAssignmentHistoryStore.delete(record.tray_assignment_id);
+                deleteHistoryRequest.onerror = () => abortTransaction(transaction, deleteHistoryRequest.error || new Error('Tray assignment history could not be deleted.'));
+              });
+
+              const verificationIndex = packingVerificationsStore.index(INDEX_NAMES.packingVerifications.forgeOrderUuid);
+              const verificationRequest = verificationIndex.get(orderUuid);
+              verificationRequest.onerror = () => abortTransaction(transaction, verificationRequest.error || new Error('Packing verification could not be loaded.'));
+              verificationRequest.onsuccess = () => {
+                const verificationRecord = verificationRequest.result;
+                if (verificationRecord) {
+                  const deleteVerificationRequest = packingVerificationsStore.delete(verificationRecord.packing_verification_id);
+                  deleteVerificationRequest.onerror = () => abortTransaction(transaction, deleteVerificationRequest.error || new Error('Packing verification could not be deleted.'));
+                }
+                finalizeDelete();
+              };
+            };
+          };
+
+          if (trayNumber == null) {
+            deleteHistoryAndVerification();
+            return;
+          }
+
+          const trayRequest = traysStore.get(trayNumber);
+          trayRequest.onerror = () => abortTransaction(transaction, trayRequest.error || new Error('The assigned tray could not be loaded.'));
+          trayRequest.onsuccess = () => {
+            const storedTray = trayRequest.result;
+            const updatedTray = createTrayRecord({
+              ...(storedTray ? deepCloneValue(storedTray) : {}),
+              tray_number: trayNumber,
+              tray_status: TRAY_STATUSES.available,
+              current_order_uuid: null,
+              assigned_at: null,
+              updated_at: timestamp
+            });
+            const putTrayRequest = traysStore.put(deepCloneValue(updatedTray));
+            putTrayRequest.onerror = () => abortTransaction(transaction, putTrayRequest.error || new Error('The assigned tray could not be released.'));
+
+            const historyIndex = trayAssignmentHistoryStore.index(INDEX_NAMES.trayAssignmentHistory.forgeOrderUuid);
+            const historyRequest = historyIndex.getAll(orderUuid);
+            historyRequest.onerror = () => abortTransaction(transaction, historyRequest.error || new Error('Tray assignment history could not be loaded.'));
+            historyRequest.onsuccess = () => {
+              const historyRecords = Array.isArray(historyRequest.result) ? historyRequest.result : [];
+              historyRecords
+                .map((record) => normalizeTrayAssignmentHistoryRecord(record))
+                .filter((record) => !record.released_at)
+                .forEach((record) => {
+                  const putHistoryRequest = trayAssignmentHistoryStore.put(createTrayAssignmentHistoryRecord({
+                    ...deepCloneValue(record),
+                    released_at: timestamp,
+                    release_reason: 'deleted_test_order'
+                  }));
+                  putHistoryRequest.onerror = () => abortTransaction(transaction, putHistoryRequest.error || new Error('Tray release history could not be saved.'));
+                });
+              deleteHistoryAndVerification();
+            };
+          };
+        };
+      });
+    }
+
     async function completePackingVerification(forgeOrderUuid, verifiedItemIds, packingNote) {
       const orderUuid = asTrimmedString(forgeOrderUuid);
       if (!orderUuid) {
@@ -847,9 +1122,12 @@
       listTrayAssignmentHistory,
       listPackingVerifications,
       getPackingVerificationForOrder,
+      hasCleanupTombstone,
       assignTrayToOrder,
       incrementOrderItemCompletion,
       updateInternalNote,
+      cancelOrder,
+      deleteTestOrder,
       completePackingVerification
     };
   }
@@ -862,6 +1140,7 @@
     const trays = new Map();
     const trayAssignmentHistory = new Map();
     const packingVerifications = new Map();
+    const cleanupTombstones = new Map();
 
     trayInventoryConfig.initialTrayNumbers.forEach((trayNumber) => {
       trays.set(trayNumber, createTrayRecord({ tray_number: trayNumber }));
@@ -890,6 +1169,9 @@
       },
       async saveNewOrder(record) {
         const normalizedRecord = normalizeLocalOrderRecord(record);
+        if (cleanupTombstones.has(normalizedRecord.forge_order_uuid)) {
+          throw new Error('This Forge order UUID was previously deleted and cannot be saved again.');
+        }
         const existing = records.get(normalizedRecord.forge_order_uuid);
         if (existing) {
           return {
@@ -1003,6 +1285,9 @@
           }
         }
         return null;
+      },
+      async hasCleanupTombstone(forgeOrderUuid) {
+        return cleanupTombstones.has(asTrimmedString(forgeOrderUuid));
       },
       async assignTrayToOrder(forgeOrderUuid, trayNumber) {
         const orderUuid = asTrimmedString(forgeOrderUuid);
@@ -1159,6 +1444,125 @@
         return {
           ok: true,
           order: updatedOrder
+        };
+      },
+      async cancelOrder(forgeOrderUuid) {
+        const orderUuid = asTrimmedString(forgeOrderUuid);
+        const storedOrder = records.get(orderUuid);
+        if (!storedOrder) {
+          throw new Error('That saved order could not be found.');
+        }
+
+        const normalizedOrder = normalizeOrderRecordForRead(storedOrder);
+        if (getEventTypeForRecord(normalizedOrder) === 'test_session') {
+          throw new Error('Test Session orders must be deleted with Delete Test Order.');
+        }
+        if (normalizeProductionStatus(normalizedOrder.production_status) === PRODUCTION_STATUSES.cancelled) {
+          throw new Error('This order has already been cancelled.');
+        }
+
+        const timestamp = normalizeDateValue(getNow()).toISOString();
+        const trayNumber = normalizeNullableTrayNumber(normalizedOrder.current_tray_number);
+        const updatedOrder = normalizeLocalOrderRecord({
+          ...deepCloneValue(normalizedOrder),
+          updated_at: timestamp,
+          production_status: PRODUCTION_STATUSES.cancelled,
+          current_tray_number: null,
+          ready_to_pack_at: null,
+          cancelled_at: timestamp
+        });
+        records.set(orderUuid, deepCloneValue(updatedOrder));
+
+        let tray = null;
+        let assignmentHistoryRecord = null;
+        if (trayNumber != null) {
+          const existingTray = trays.get(trayNumber);
+          const updatedTray = createTrayRecord({
+            ...(existingTray ? deepCloneValue(existingTray) : {}),
+            tray_number: trayNumber,
+            tray_status: TRAY_STATUSES.available,
+            current_order_uuid: null,
+            assigned_at: null,
+            updated_at: timestamp
+          });
+          trays.set(trayNumber, deepCloneValue(updatedTray));
+          tray = normalizeTrayRecord(updatedTray);
+
+          for (const [assignmentId, record] of trayAssignmentHistory.entries()) {
+            const normalizedRecord = normalizeTrayAssignmentHistoryRecord(record);
+            if (normalizedRecord.forge_order_uuid === orderUuid && normalizedRecord.tray_number === trayNumber && !normalizedRecord.released_at) {
+              assignmentHistoryRecord = createTrayAssignmentHistoryRecord({
+                ...deepCloneValue(normalizedRecord),
+                released_at: timestamp,
+                release_reason: 'cancelled'
+              });
+              trayAssignmentHistory.set(assignmentId, deepCloneValue(assignmentHistoryRecord));
+            }
+          }
+        }
+
+        return {
+          ok: true,
+          order: normalizeOrderRecordForRead(updatedOrder),
+          tray,
+          assignmentHistoryRecord: assignmentHistoryRecord ? normalizeTrayAssignmentHistoryRecord(assignmentHistoryRecord) : null
+        };
+      },
+      async deleteTestOrder(forgeOrderUuid, confirmationText) {
+        const orderUuid = asTrimmedString(forgeOrderUuid);
+        if (asTrimmedString(confirmationText) !== ORDER_DELETE_TEST_CONFIRMATION_TEXT) {
+          throw new Error('Enter DELETE TEST ORDER before deleting this order.');
+        }
+
+        const storedOrder = records.get(orderUuid);
+        if (!storedOrder) {
+          throw new Error('That saved order could not be found.');
+        }
+
+        const normalizedOrder = normalizeOrderRecordForRead(storedOrder);
+        if (getEventTypeForRecord(normalizedOrder) !== 'test_session') {
+          throw new Error('Only Test Session orders can be permanently deleted.');
+        }
+
+        const timestamp = normalizeDateValue(getNow()).toISOString();
+        const trayNumber = normalizeNullableTrayNumber(normalizedOrder.current_tray_number);
+        if (trayNumber != null) {
+          const existingTray = trays.get(trayNumber);
+          trays.set(trayNumber, createTrayRecord({
+            ...(existingTray ? deepCloneValue(existingTray) : {}),
+            tray_number: trayNumber,
+            tray_status: TRAY_STATUSES.available,
+            current_order_uuid: null,
+            assigned_at: null,
+            updated_at: timestamp
+          }));
+        }
+
+        for (const [assignmentId, record] of trayAssignmentHistory.entries()) {
+          const normalizedRecord = normalizeTrayAssignmentHistoryRecord(record);
+          if (normalizedRecord.forge_order_uuid === orderUuid) {
+            trayAssignmentHistory.delete(assignmentId);
+          }
+        }
+
+        for (const [verificationId, record] of packingVerifications.entries()) {
+          const normalizedRecord = normalizePackingVerificationRecord(record);
+          if (normalizedRecord.forge_order_uuid === orderUuid) {
+            packingVerifications.delete(verificationId);
+          }
+        }
+
+        cleanupTombstones.set(orderUuid, createCleanupTombstoneRecord({
+          forge_order_uuid: orderUuid,
+          deleted_at: timestamp
+        }));
+        records.delete(orderUuid);
+
+        return {
+          ok: true,
+          deletedOrderUuid: orderUuid,
+          deletedOrderNumber: normalizedOrder.forge_order_number || null,
+          releasedTrayNumber: trayNumber || null
         };
       },
       async completePackingVerification(forgeOrderUuid, verifiedItemIds, packingNote) {
@@ -1545,6 +1949,7 @@
       total_item_count: derivedCounts.total_item_count,
       completed_item_count: derivedCounts.completed_item_count,
       ready_to_pack_at: readyToPackAt,
+      cancelled_at: record.cancelled_at == null ? null : asTrimmedString(record.cancelled_at),
       packed_at: record.packed_at == null ? null : asTrimmedString(record.packed_at),
       fulfilled_at: record.fulfilled_at == null ? null : asTrimmedString(record.fulfilled_at),
       payload: payloadWithOrderNumber
@@ -1762,6 +2167,26 @@
       return value == null ? null : asNullableTrimmedString(value);
     }
     return asNullableTrimmedString(value);
+  }
+
+  function getEventTypeForRecord(record) {
+    return asTrimmedString(record?.payload?.event?.event_type).toLowerCase();
+  }
+
+  function createCleanupTombstoneRecord(record = {}) {
+    const forgeOrderUuid = asTrimmedString(record.forge_order_uuid);
+    const deletedAt = asTrimmedString(record.deleted_at);
+    if (!forgeOrderUuid) {
+      throw new Error('Cleanup tombstones require forge_order_uuid.');
+    }
+    if (!deletedAt) {
+      throw new Error('Cleanup tombstones require deleted_at.');
+    }
+
+    return deepCloneValue({
+      forge_order_uuid: forgeOrderUuid,
+      deleted_at: deletedAt
+    });
   }
 
   function createPackingVerificationRecord(record = {}) {
@@ -2119,6 +2544,7 @@
     createDefaultTrayInventoryConfig,
     createInMemoryOrderStore,
     createOrderStore,
+    createCleanupTombstoneRecord,
     deriveOrderCompletionCounts,
     normalizeLocalOrderRecord,
     normalizeOrderRecordForRead,
@@ -2142,8 +2568,12 @@
     listTrayAssignmentHistory: (...args) => defaultOrderStore.listTrayAssignmentHistory(...args),
     listPackingVerifications: (...args) => defaultOrderStore.listPackingVerifications(...args),
     getPackingVerificationForOrder: (...args) => defaultOrderStore.getPackingVerificationForOrder(...args),
+    hasCleanupTombstone: (...args) => defaultOrderStore.hasCleanupTombstone(...args),
     assignTrayToOrder: (...args) => defaultOrderStore.assignTrayToOrder(...args),
     incrementOrderItemCompletion: (...args) => defaultOrderStore.incrementOrderItemCompletion(...args),
+    updateInternalNote: (...args) => defaultOrderStore.updateInternalNote(...args),
+    cancelOrder: (...args) => defaultOrderStore.cancelOrder(...args),
+    deleteTestOrder: (...args) => defaultOrderStore.deleteTestOrder(...args),
     completePackingVerification: (...args) => defaultOrderStore.completePackingVerification(...args)
   };
 }));

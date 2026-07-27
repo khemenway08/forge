@@ -498,6 +498,11 @@ function loadForgeHostedStaffAppForTrayDetail() {
   let assignTrayButton = null;
   let completionButtons = [];
   let internalNoteSaveCallCount = 0;
+  let cancelOrderCallCount = 0;
+  let deleteTestOrderCallCount = 0;
+  let cancelOrderError = null;
+  let deleteTestOrderError = null;
+  let sharedRecordDeleted = false;
 
   welcomeScreen.dataset.screen = 'welcome';
   staffAccessScreen.dataset.screen = 'staff-access';
@@ -761,7 +766,7 @@ function loadForgeHostedStaffAppForTrayDetail() {
             authenticated: true,
             dataSource: 'server',
             readOnly: true,
-            records: [structuredClone(sharedRecord)]
+            records: sharedRecordDeleted ? [] : [structuredClone(sharedRecord)]
           };
         },
         async loadTrays() {
@@ -815,6 +820,56 @@ function loadForgeHostedStaffAppForTrayDetail() {
             readOnly: true,
             internalNote: sharedRecord.internal_note,
             order: structuredClone(sharedRecord)
+          };
+        },
+        async cancelOrder(orderUuid) {
+          cancelOrderCallCount += 1;
+          assert.equal(orderUuid, 'shared-order-1');
+          if (cancelOrderError) {
+            throw cancelOrderError;
+          }
+          sharedRecord.production_status = 'cancelled';
+          sharedRecord.current_tray_number = null;
+          sharedRecord.cancelled_at = '2026-07-20T12:15:00Z';
+          sharedRecord.staff_can_assign_tray = false;
+          sharedRecord.staff_can_complete_items = false;
+          sharedRecord.ready_to_pack_at = null;
+          return {
+            ok: true,
+            authenticated: true,
+            dataSource: 'server',
+            readOnly: true,
+            order: structuredClone(sharedRecord),
+            tray: {
+              tray_number: 3,
+              tray_status: 'available',
+              current_order_uuid: null
+            },
+            assignmentHistory: {
+              tray_assignment_id: 'assignment-shared-order-1',
+              tray_number: 3,
+              forge_order_uuid: 'shared-order-1',
+              released_at: '2026-07-20T12:15:00Z',
+              release_reason: 'cancelled'
+            }
+          };
+        },
+        async deleteTestOrder(orderUuid, confirmationText) {
+          deleteTestOrderCallCount += 1;
+          assert.equal(orderUuid, 'shared-order-1');
+          assert.equal(confirmationText, 'DELETE TEST ORDER');
+          if (deleteTestOrderError) {
+            throw deleteTestOrderError;
+          }
+          sharedRecordDeleted = true;
+          return {
+            ok: true,
+            authenticated: true,
+            dataSource: 'server',
+            readOnly: true,
+            deletedOrderUuid: 'shared-order-1',
+            deletedOrderNumber: sharedRecord.forge_order_number,
+            releasedTrayNumber: sharedRecord.current_tray_number || null
           };
         }
       };
@@ -888,8 +943,21 @@ function loadForgeHostedStaffAppForTrayDetail() {
     getInternalNoteSaveCallCount() {
       return internalNoteSaveCallCount;
     },
+    getCancelOrderCallCount() {
+      return cancelOrderCallCount;
+    },
+    getDeleteTestOrderCallCount() {
+      return deleteTestOrderCallCount;
+    },
     setSharedRecord(overrides) {
       Object.assign(sharedRecord, structuredClone(overrides));
+      sharedRecordDeleted = false;
+    },
+    setCancelOrderError(error) {
+      cancelOrderError = error;
+    },
+    setDeleteTestOrderError(error) {
+      deleteTestOrderError = error;
     }
   };
 }
@@ -1595,6 +1663,158 @@ test('shared server order detail renders the internal notes section and note bad
   assert.match(String(detailDialog.innerHTML || ''), /Customer confirmed spelling\./);
   assert.match(String(detailDialog.innerHTML || ''), /Paid cash at show\./);
   assert.match(String(detailDialog.innerHTML || ''), />NOTE</);
+});
+
+test('shared server order detail renders cancel-order confirmation with the stored order context', async () => {
+  const { context, detailDialog, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
+
+  setSharedRecord({
+    production_status: 'tray_assigned',
+    current_tray_number: 3,
+    payload: {
+      customer: { full_name: 'Kyle Hemenway' },
+      fulfillment: { method: 'shipping' },
+      items: [{ line_id: 'shared-tree-line', quantity: 1, completed_quantity: 0, production_status: 'pending' }],
+      event: { event_id: 'event-live-1', event_name: 'Austin Market', event_type: 'live_event' },
+      forge_order_number: 1001
+    }
+  });
+
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+  vm.runInContext('staffOrdersState.detailDestructiveAction = "cancel_order"; renderStaffOrderDetail();', context);
+
+  assert.match(String(detailDialog.innerHTML || ''), /Cancel Order/);
+  assert.match(String(detailDialog.innerHTML || ''), /Order 1001/);
+  assert.match(String(detailDialog.innerHTML || ''), /Kyle Hemenway/);
+  assert.match(String(detailDialog.innerHTML || ''), /Tray 3/);
+  assert.match(String(detailDialog.innerHTML || ''), /active production stops/);
+});
+
+test('shared server cancellation updates the detail view with a CANCELLED badge and disables active-production controls', async () => {
+  const {
+    context,
+    detailDialog,
+    getCancelOrderCallCount,
+    setSharedRecord
+  } = loadForgeHostedStaffAppForTrayDetail();
+
+  setSharedRecord({
+    production_status: 'tray_assigned',
+    current_tray_number: 3,
+    staff_can_assign_tray: false,
+    staff_can_complete_items: true,
+    payload: {
+      customer: { full_name: 'Kyle Hemenway' },
+      fulfillment: { method: 'shipping' },
+      items: [{ line_id: 'shared-tree-line', quantity: 1, completed_quantity: 0, production_status: 'pending' }],
+      event: { event_id: 'event-live-1', event_name: 'Austin Market', event_type: 'live_event' },
+      forge_order_number: 1001
+    }
+  });
+
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+  await context.submitStaffOrderCancellation('shared-order-1');
+
+  assert.equal(getCancelOrderCallCount(), 1);
+  assert.match(String(detailDialog.innerHTML || ''), /Cancelled/);
+  assert.match(String(detailDialog.innerHTML || ''), /Tray assignment, item completion, packing, and Ready-to-Pack progression are disabled/);
+  assert.doesNotMatch(String(detailDialog.innerHTML || ''), /Assign Tray/);
+  assert.doesNotMatch(String(detailDialog.innerHTML || ''), /staff-complete-item/);
+});
+
+test('shared server cancellation failures stay in the dialog and never claim success', async () => {
+  const { context, detailDialog, setCancelOrderError } = loadForgeHostedStaffAppForTrayDetail();
+
+  setCancelOrderError(new Error('Order cancellation is currently unavailable.'));
+
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+  await context.submitStaffOrderCancellation('shared-order-1');
+
+  assert.match(String(detailDialog.innerHTML || ''), /Order cancellation is currently unavailable\./);
+  assert.doesNotMatch(String(detailDialog.innerHTML || ''), /cancelled\./i);
+});
+
+test('shared server Test Session orders render typed delete confirmation and hide cancel-order controls', async () => {
+  const { context, detailDialog, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
+
+  setSharedRecord({
+    current_tray_number: 8,
+    payload: {
+      customer: { full_name: 'Test Customer' },
+      fulfillment: { method: 'shipping' },
+      items: [{ line_id: 'shared-tree-line', quantity: 1, completed_quantity: 0, production_status: 'pending' }],
+      event: { event_id: 'event-test-1', event_name: 'Checkout Test Session', event_type: 'test_session' },
+      forge_order_number: 1001
+    }
+  });
+
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+  vm.runInContext('staffOrdersState.detailDestructiveAction = "delete_test_order"; staffOrdersState.detailDestructiveConfirmationText = "DELETE TEST ORDER"; renderStaffOrderDetail();', context);
+
+  assert.match(String(detailDialog.innerHTML || ''), /Delete Test Order/);
+  assert.match(String(detailDialog.innerHTML || ''), /TEST/);
+  assert.match(String(detailDialog.innerHTML || ''), /Checkout Test Session/);
+  assert.match(String(detailDialog.innerHTML || ''), /DELETE TEST ORDER/);
+  assert.doesNotMatch(String(detailDialog.innerHTML || ''), /Confirm Cancel Order/);
+});
+
+test('shared server Test Session deletion closes the detail dialog and refreshes the queue', async () => {
+  const {
+    context,
+    detailDialog,
+    getDeleteTestOrderCallCount,
+    setSharedRecord
+  } = loadForgeHostedStaffAppForTrayDetail();
+
+  setSharedRecord({
+    current_tray_number: 8,
+    payload: {
+      customer: { full_name: 'Test Customer' },
+      fulfillment: { method: 'shipping' },
+      items: [{ line_id: 'shared-tree-line', quantity: 1, completed_quantity: 0, production_status: 'pending' }],
+      event: { event_id: 'event-test-1', event_name: 'Checkout Test Session', event_type: 'test_session' },
+      forge_order_number: 1001
+    }
+  });
+
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+  vm.runInContext('staffOrdersState.detailDestructiveAction = "delete_test_order"; staffOrdersState.detailDestructiveConfirmationText = "DELETE TEST ORDER";', context);
+  await context.submitStaffDeleteTestOrder('shared-order-1');
+
+  assert.equal(getDeleteTestOrderCallCount(), 1);
+  assert.equal(detailDialog.hidden, true);
+
+  await context.openStaffOrderDetail('shared-order-1');
+  assert.match(String(detailDialog.innerHTML || ''), /could not be found/i);
+});
+
+test('shared server Test Session deletion failures stay in the dialog and never claim success', async () => {
+  const { context, detailDialog, setSharedRecord, setDeleteTestOrderError } = loadForgeHostedStaffAppForTrayDetail();
+
+  setSharedRecord({
+    current_tray_number: 8,
+    payload: {
+      customer: { full_name: 'Test Customer' },
+      fulfillment: { method: 'shipping' },
+      items: [{ line_id: 'shared-tree-line', quantity: 1, completed_quantity: 0, production_status: 'pending' }],
+      event: { event_id: 'event-test-1', event_name: 'Checkout Test Session', event_type: 'test_session' },
+      forge_order_number: 1001
+    }
+  });
+  setDeleteTestOrderError(new Error('Test order deletion is currently unavailable.'));
+
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+  vm.runInContext('staffOrdersState.detailDestructiveAction = "delete_test_order"; staffOrdersState.detailDestructiveConfirmationText = "DELETE TEST ORDER";', context);
+  await context.submitStaffDeleteTestOrder('shared-order-1');
+
+  assert.match(String(detailDialog.innerHTML || ''), /Test order deletion is currently unavailable\./);
+  assert.doesNotMatch(String(detailDialog.innerHTML || ''), /deleted from this Test Session/i);
 });
 
 test('shared server internal note save updates the note without leaving the order detail', async () => {

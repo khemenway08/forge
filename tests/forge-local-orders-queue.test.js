@@ -794,6 +794,72 @@ test('production-status filtering uses item status rather than parent order stat
   assert.equal(queueHelpers.getMatchingOrderItems(record, { productionStatus: 'cancelled' }).length, 1);
 });
 
+test('order scope filters and available options separate active cancelled and Test Session orders safely', () => {
+  const records = [
+    createRecord({
+      forge_order_uuid: 'active-live-order',
+      production_status: 'tray_assigned',
+      payload: {
+        ...createRecord().payload,
+        event: {
+          event_id: 'event-live-1',
+          event_name: 'Austin Market',
+          event_type: 'live_event'
+        }
+      }
+    }),
+    createRecord({
+      forge_order_uuid: 'cancelled-live-order',
+      production_status: 'cancelled',
+      current_tray_number: null,
+      payload: {
+        ...createRecord().payload,
+        event: {
+          event_id: 'event-live-2',
+          event_name: 'Dallas Market',
+          event_type: 'live_event'
+        }
+      }
+    }),
+    createRecord({
+      forge_order_uuid: 'active-test-order',
+      production_status: 'submitted',
+      current_tray_number: null,
+      payload: {
+        ...createRecord().payload,
+        event: {
+          event_id: 'event-test-1',
+          event_name: 'Checkout Test Session',
+          event_type: 'test_session'
+        }
+      }
+    })
+  ];
+
+  const availableFilters = queueHelpers.getAvailableOrderFilters(records, {
+    activeFilters: queueHelpers.createEmptyOrderFilters(),
+    searchTerm: ''
+  });
+
+  assert.deepEqual(availableFilters.orderScope, [
+    { value: 'active', label: 'Active', count: 2 },
+    { value: 'cancelled', label: 'Cancelled', count: 1 },
+    { value: 'test_orders', label: 'Test Orders', count: 1 }
+  ]);
+  assert.deepEqual(
+    queueHelpers.filterLocalOrders(records, { orderScope: 'active' }).map((record) => record.forge_order_uuid),
+    ['active-test-order', 'active-live-order']
+  );
+  assert.deepEqual(
+    queueHelpers.filterLocalOrders(records, { orderScope: 'cancelled' }).map((record) => record.forge_order_uuid),
+    ['cancelled-live-order']
+  );
+  assert.deepEqual(
+    queueHelpers.filterLocalOrders(records, { orderScope: 'test_orders' }).map((record) => record.forge_order_uuid),
+    ['active-test-order']
+  );
+});
+
 test('queue summary metrics use filtered physical quantity and do not double-count orders', () => {
   const record = createRecord({
     forge_order_uuid: 'metric-order',

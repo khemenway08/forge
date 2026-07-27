@@ -223,6 +223,44 @@
       };
     }
 
+    async function cancelOrder(forgeOrderUuid) {
+      if (environment.dataSource === STAFF_DATA_SOURCES.local) {
+        assertLocalOrderStore(localOrderStore, 'cancelOrder');
+        const result = await localOrderStore.cancelOrder(forgeOrderUuid);
+        return {
+          ok: true,
+          authenticated: true,
+          dataSource: STAFF_DATA_SOURCES.local,
+          readOnly: false,
+          order: result && result.order ? result.order : null,
+          tray: result && result.tray ? result.tray : null,
+          assignmentHistory: result && result.assignmentHistoryRecord ? result.assignmentHistoryRecord : null
+        };
+      }
+
+      assertStaffApiClient(staffApiClient, 'cancelOrder');
+      const result = await staffApiClient.cancelOrder(forgeOrderUuid);
+      if (!result || (!result.ok && result.unauthenticated) || result.authenticated === false) {
+        return {
+          ok: false,
+          authenticated: false,
+          unauthenticated: true,
+          dataSource: STAFF_DATA_SOURCES.server,
+          readOnly: true
+        };
+      }
+
+      return {
+        ok: true,
+        authenticated: true,
+        dataSource: STAFF_DATA_SOURCES.server,
+        readOnly: true,
+        order: adaptServerOrderForQueue(result.order),
+        tray: result.tray || null,
+        assignmentHistory: result.assignmentHistory || null
+      };
+    }
+
     async function completeItemQuantity(forgeOrderUuid, lineId, expectedCompletedQuantity, targetCompletedQuantity) {
       if (environment.dataSource === STAFF_DATA_SOURCES.local) {
         assertLocalOrderStore(localOrderStore, 'incrementOrderItemCompletion');
@@ -370,6 +408,44 @@
       };
     }
 
+    async function deleteTestOrder(forgeOrderUuid, confirmationText) {
+      if (environment.dataSource === STAFF_DATA_SOURCES.local) {
+        assertLocalOrderStore(localOrderStore, 'deleteTestOrder');
+        const result = await localOrderStore.deleteTestOrder(forgeOrderUuid, confirmationText);
+        return {
+          ok: true,
+          authenticated: true,
+          dataSource: STAFF_DATA_SOURCES.local,
+          readOnly: false,
+          deletedOrderUuid: result?.deletedOrderUuid || '',
+          deletedOrderNumber: Number.isInteger(result?.deletedOrderNumber) ? result.deletedOrderNumber : null,
+          releasedTrayNumber: Number.isInteger(result?.releasedTrayNumber) ? result.releasedTrayNumber : null
+        };
+      }
+
+      assertStaffApiClient(staffApiClient, 'deleteTestOrder');
+      const result = await staffApiClient.deleteTestOrder(forgeOrderUuid, confirmationText);
+      if (!result || (!result.ok && result.unauthenticated) || result.authenticated === false) {
+        return {
+          ok: false,
+          authenticated: false,
+          unauthenticated: true,
+          dataSource: STAFF_DATA_SOURCES.server,
+          readOnly: true
+        };
+      }
+
+      return {
+        ok: true,
+        authenticated: true,
+        dataSource: STAFF_DATA_SOURCES.server,
+        readOnly: true,
+        deletedOrderUuid: result.deletedOrderUuid || '',
+        deletedOrderNumber: Number.isInteger(result.deletedOrderNumber) ? result.deletedOrderNumber : null,
+        releasedTrayNumber: Number.isInteger(result.releasedTrayNumber) ? result.releasedTrayNumber : null
+      };
+    }
+
     return {
       environment,
       checkAccess,
@@ -378,10 +454,12 @@
       loadOrders,
       loadTrays,
       assignTrayToOrder,
+      cancelOrder,
       completeItemQuantity,
       updateInternalNote,
       previewLegacyTestCleanup,
-      applyLegacyTestCleanup
+      applyLegacyTestCleanup,
+      deleteTestOrder
     };
   }
 
@@ -516,6 +594,7 @@
       has_internal_note: Boolean(record && record.has_internal_note) || normalizeNullableString(record && record.internal_note) !== null,
       production_status: productionStatus,
       current_tray_number: trayNumber,
+      cancelled_at: normalizeNullableString(record && record.cancelled_at),
       packed_at: null,
       ready_to_pack_at: readyToPackAt,
       total_item_count: totalItemCount,

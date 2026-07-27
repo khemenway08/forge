@@ -162,6 +162,10 @@ const staffOrdersState = {
   detailInternalNoteSaving: false,
   detailInternalNoteStatus: '',
   detailInternalNoteStatusTone: 'success',
+  detailDestructiveAction: '',
+  detailDestructiveConfirmationText: '',
+  detailDestructiveSaving: false,
+  detailDestructiveError: '',
   trayDialogOpen: false,
   trayDialogOrderUuid: '',
   trayDialogRecord: null,
@@ -2451,6 +2455,7 @@ function clearStaffOrderData() {
   staffOrdersState.legacyCleanupNoticeTone = 'success';
   staffOrdersState.legacyCleanupPreview = null;
   staffOrdersState.legacyCleanupConfirmationText = '';
+  resetStaffOrderDetailDestructiveState();
   staffOrdersState.batchSummary = null;
   staffOrdersState.batchError = '';
   staffOrdersState.searchTerm = '';
@@ -5159,8 +5164,42 @@ function ensureStaffOrderDetailUi() {
       return;
     }
 
+    if (action === 'staff-open-cancel-order' && orderUuid) {
+      staffOrdersState.detailDestructiveAction = 'cancel_order';
+      staffOrdersState.detailDestructiveConfirmationText = '';
+      staffOrdersState.detailDestructiveSaving = false;
+      staffOrdersState.detailDestructiveError = '';
+      renderStaffOrderDetail();
+      return;
+    }
+
+    if (action === 'staff-open-delete-test-order' && orderUuid) {
+      staffOrdersState.detailDestructiveAction = 'delete_test_order';
+      staffOrdersState.detailDestructiveConfirmationText = '';
+      staffOrdersState.detailDestructiveSaving = false;
+      staffOrdersState.detailDestructiveError = '';
+      renderStaffOrderDetail();
+      return;
+    }
+
+    if (action === 'staff-close-destructive-action' && !staffOrdersState.detailDestructiveSaving) {
+      resetStaffOrderDetailDestructiveState();
+      renderStaffOrderDetail();
+      return;
+    }
+
     if (action === 'staff-save-internal-note' && orderUuid && !staffOrdersState.detailInternalNoteSaving) {
       submitStaffInternalNote(orderUuid);
+      return;
+    }
+
+    if (action === 'staff-confirm-cancel-order' && orderUuid && !staffOrdersState.detailDestructiveSaving) {
+      submitStaffOrderCancellation(orderUuid);
+      return;
+    }
+
+    if (action === 'staff-confirm-delete-test-order' && orderUuid && !staffOrdersState.detailDestructiveSaving) {
+      submitStaffDeleteTestOrder(orderUuid);
       return;
     }
 
@@ -5174,14 +5213,17 @@ function ensureStaffOrderDetailUi() {
 
   staffOrderDetailDialog?.addEventListener('input', (event) => {
     const target = event.target;
-    if (!(target instanceof HTMLTextAreaElement)) {
-      return;
-    }
-
-    if (target.matches('[data-staff-internal-note-field]')) {
+    if (target && typeof target.matches === 'function' && target.matches('[data-staff-internal-note-field]')) {
       staffOrdersState.detailInternalNoteDraft = target.value.slice(0, 4000);
       staffOrdersState.detailInternalNoteStatus = '';
       staffOrdersState.detailInternalNoteStatusTone = 'success';
+      return;
+    }
+
+    if (target && typeof target.matches === 'function' && target.matches('[data-staff-destructive-confirmation]')) {
+      staffOrdersState.detailDestructiveConfirmationText = String(target.value || '').slice(0, 64).trim();
+      staffOrdersState.detailDestructiveError = '';
+      renderStaffOrderDetail();
     }
   });
 
@@ -5535,6 +5577,38 @@ function canStaffAssignTray(record) {
   return canAssignTrayToOrder(record) && (!isStaffReadOnlyRecord(record) || record?.staff_can_assign_tray === true);
 }
 
+function isCancelledOrder(record) {
+  return getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.cancelled;
+}
+
+function isTestSessionOrder(record) {
+  return getOrderEventSnapshot(record)?.event_type === 'test_session';
+}
+
+function getDeleteTestOrderConfirmationText() {
+  return forgeOrderStore.ORDER_DELETE_TEST_CONFIRMATION_TEXT || 'DELETE TEST ORDER';
+}
+
+function canCancelStaffOrder(record) {
+  return Boolean(record)
+    && !staffOrdersState.demoMode
+    && !isCancelledOrder(record)
+    && !isTestSessionOrder(record);
+}
+
+function canDeleteStaffTestOrder(record) {
+  return Boolean(record)
+    && !staffOrdersState.demoMode
+    && isTestSessionOrder(record);
+}
+
+function resetStaffOrderDetailDestructiveState() {
+  staffOrdersState.detailDestructiveAction = '';
+  staffOrdersState.detailDestructiveConfirmationText = '';
+  staffOrdersState.detailDestructiveSaving = false;
+  staffOrdersState.detailDestructiveError = '';
+}
+
 function getOrderCompletionCounts(record) {
   const totalItemCount = Number.isInteger(record?.total_item_count)
     ? Math.max(record.total_item_count, 0)
@@ -5691,6 +5765,117 @@ function buildStaffNoticeMarkup(message, tone = 'success') {
     <div class="staff-inline-notice staff-inline-notice--${escapeHtml(tone)}" role="status" aria-live="polite">
       ${escapeHtml(message)}
     </div>
+  `;
+}
+
+function buildStaffOrderDestructiveActionsMarkup(record) {
+  const canCancel = canCancelStaffOrder(record);
+  const canDeleteTestOrder = canDeleteStaffTestOrder(record);
+  if (!canCancel && !canDeleteTestOrder && !staffOrdersState.detailDestructiveAction) {
+    return '';
+  }
+
+  const payload = record?.payload || {};
+  const customerName = payload.customer?.full_name || 'Unknown customer';
+  const trayNumber = getOrderTrayNumber(record);
+  const eventSnapshot = getOrderEventSnapshot(record);
+  const action = staffOrdersState.detailDestructiveAction;
+  const isCancelAction = action === 'cancel_order';
+  const isDeleteAction = action === 'delete_test_order';
+  const expectedDeleteConfirmation = getDeleteTestOrderConfirmationText();
+  const deleteConfirmationMatches = staffOrdersState.detailDestructiveConfirmationText === expectedDeleteConfirmation;
+
+  return `
+    <section class="staff-order-detail-section">
+      <h3>Order Actions</h3>
+      <p class="staff-order-detail-note">Cancelled orders remain stored for history, but they leave active production immediately. Ending a Test Session order here permanently removes only that saved test order.</p>
+      ${staffOrdersState.detailDestructiveError ? buildStaffNoticeMarkup(staffOrdersState.detailDestructiveError, 'error') : ''}
+      <div class="staff-order-card-actions">
+        ${canCancel ? `
+          <button
+            class="secondary-button"
+            type="button"
+            data-action="staff-open-cancel-order"
+            data-order-uuid="${escapeHtml(record.forge_order_uuid)}"
+            ${staffOrdersState.detailDestructiveSaving ? 'disabled' : ''}
+          >${isCancelAction ? 'Review Cancellation' : 'Cancel Order'}</button>
+        ` : ''}
+        ${canDeleteTestOrder ? `
+          <button
+            class="secondary-button"
+            type="button"
+            data-action="staff-open-delete-test-order"
+            data-order-uuid="${escapeHtml(record.forge_order_uuid)}"
+            ${staffOrdersState.detailDestructiveSaving ? 'disabled' : ''}
+          >${isDeleteAction ? 'Review Test Deletion' : 'Delete Test Order'}</button>
+        ` : ''}
+      </div>
+      ${isCancelAction ? `
+        <div class="staff-order-detail-row">
+          <span>Cancel Order</span>
+          <strong>${escapeHtml(getOrderDisplayReference(record))} · ${escapeHtml(customerName)}</strong>
+        </div>
+        <div class="staff-order-detail-grid">
+          <div><span>Assigned Tray</span><strong>${escapeHtml(trayNumber ? `Tray ${trayNumber}` : 'No tray assigned')}</strong></div>
+          <div><span>Result</span><strong>Stored order remains, active production stops</strong></div>
+        </div>
+        <p class="staff-order-detail-note">This removes the order from active production, clears any assigned tray, and preserves customer, event, pricing, note, and completion history.</p>
+        <div class="staff-order-card-actions">
+          <button
+            class="primary-button"
+            type="button"
+            data-action="staff-confirm-cancel-order"
+            data-order-uuid="${escapeHtml(record.forge_order_uuid)}"
+            ${staffOrdersState.detailDestructiveSaving ? 'disabled' : ''}
+          >${staffOrdersState.detailDestructiveSaving ? 'Cancelling...' : 'Confirm Cancel Order'}</button>
+          <button
+            class="text-button"
+            type="button"
+            data-action="staff-close-destructive-action"
+            ${staffOrdersState.detailDestructiveSaving ? 'disabled' : ''}
+          >Keep Order Active</button>
+        </div>
+      ` : ''}
+      ${isDeleteAction ? `
+        <div class="staff-order-detail-row">
+          <span>Delete Test Order</span>
+          <strong>TEST · ${escapeHtml(getOrderDisplayReference(record))} · ${escapeHtml(customerName)}</strong>
+        </div>
+        <div class="staff-order-detail-grid">
+          <div><span>Test Session</span><strong>${escapeHtml(eventSnapshot?.event_name || 'Test Session')}</strong></div>
+          <div><span>Submitted</span><strong>${escapeHtml(formatReadableDateTime(record.submitted_at || ''))}</strong></div>
+          <div><span>Assigned Tray</span><strong>${escapeHtml(trayNumber ? `Tray ${trayNumber}` : 'No tray assigned')}</strong></div>
+          <div><span>Deletion Scope</span><strong>Deletes this saved Test Session order only</strong></div>
+        </div>
+        <div class="staff-filter-field">
+          <label for="staff-delete-test-order-confirmation">Type Confirmation</label>
+          <input
+            id="staff-delete-test-order-confirmation"
+            type="text"
+            data-staff-destructive-confirmation
+            value="${escapeHtml(staffOrdersState.detailDestructiveConfirmationText)}"
+            placeholder="${escapeHtml(expectedDeleteConfirmation)}"
+            ${staffOrdersState.detailDestructiveSaving ? 'disabled' : ''}
+          >
+        </div>
+        <p class="staff-orders-status">Required: <strong>${escapeHtml(expectedDeleteConfirmation)}</strong></p>
+        <div class="staff-order-card-actions">
+          <button
+            class="primary-button"
+            type="button"
+            data-action="staff-confirm-delete-test-order"
+            data-order-uuid="${escapeHtml(record.forge_order_uuid)}"
+            ${!deleteConfirmationMatches || staffOrdersState.detailDestructiveSaving ? 'disabled' : ''}
+          >${staffOrdersState.detailDestructiveSaving ? 'Deleting Test Order...' : 'Delete Test Order Permanently'}</button>
+          <button
+            class="text-button"
+            type="button"
+            data-action="staff-close-destructive-action"
+            ${staffOrdersState.detailDestructiveSaving ? 'disabled' : ''}
+          >Keep Test Order</button>
+        </div>
+      ` : ''}
+    </section>
   `;
 }
 
@@ -5994,6 +6179,7 @@ function renderStaffOrdersQueue() {
   `).join('');
 
   staffOrdersFilters.innerHTML = [
+    { key: 'orderScope', label: 'Scope', options: availableFilters.orderScope },
     { key: 'product', label: 'Product', options: availableFilters.product },
     { key: 'ornamentType', label: 'Ornament Type', options: availableFilters.ornamentType },
     { key: 'size', label: 'Size', options: availableFilters.size },
@@ -6800,6 +6986,7 @@ async function openStaffOrderDetail(forgeOrderUuid) {
   staffOrdersState.detailInternalNoteSaving = false;
   staffOrdersState.detailInternalNoteStatus = '';
   staffOrdersState.detailInternalNoteStatusTone = 'success';
+  resetStaffOrderDetailDestructiveState();
   staffOrdersState.detailOrderUuid = forgeOrderUuid;
   staffOrdersState.detailRecord = null;
   staffOrdersState.detailPackingVerification = null;
@@ -6854,6 +7041,7 @@ function closeStaffOrderDetail() {
   staffOrdersState.detailInternalNoteSaving = false;
   staffOrdersState.detailInternalNoteStatus = '';
   staffOrdersState.detailInternalNoteStatusTone = 'success';
+  resetStaffOrderDetailDestructiveState();
   renderStaffOrderDetail();
   if (lastStaffOrderDetailFocusTarget) {
     lastStaffOrderDetailFocusTarget.focus();
@@ -6922,6 +7110,7 @@ function renderStaffOrderDetail() {
   const completionCounts = getOrderCompletionCounts(record);
   const completionSummary = getOrderCompletionSummary(record);
   const showNoTrayMessage = !getOrderTrayNumber(record);
+  const isCancelledRecord = isCancelledOrder(record);
   const isPackedOrder = getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.packed;
   const syncStatusLabel = getStaffSyncStatusLabel(record);
   const syncStatusBadgeClass = getStaffSyncStatusBadgeClass(record);
@@ -6987,11 +7176,14 @@ function renderStaffOrderDetail() {
         <div><span>Event Type</span><strong>${escapeHtml(eventSnapshot?.event_type === 'test_session' ? 'Test Session' : (eventSnapshot ? 'Live Event' : 'Not attached'))}</strong></div>
       </div>
       ${showOpenFlagProgressNote ? '<p class="staff-order-detail-note">All required pieces are complete, but this order still has an open flag and cannot move to Ready to Pack yet.</p>' : ''}
+      ${isCancelledRecord ? '<p class="staff-order-detail-note">This order is cancelled and remains stored for history. Tray assignment, item completion, packing, and Ready-to-Pack progression are disabled.</p>' : ''}
       <div class="staff-order-detail-flags">
         <span>Open Flags</span>
         ${openFlags.length ? `<ul>${openFlags.map((flag) => `<li>${escapeHtml(flag.message || flag.code || 'Open flag')}</li>`).join('')}</ul>` : '<p>No order-level open flags.</p>'}
       </div>
     </section>
+
+    ${buildStaffOrderDestructiveActionsMarkup(record)}
 
     <section class="staff-order-detail-section">
       <h3>Internal Notes</h3>
@@ -7068,11 +7260,13 @@ function renderStaffOrderDetail() {
 
     <section class="staff-order-detail-section staff-order-detail-items">
       <h3>Items</h3>
-      ${isPackedOrder
+      ${isCancelledRecord
+        ? '<p class="staff-order-detail-note">Cancelled orders stay visible for history, but item completion is permanently disabled.</p>'
+        : (isPackedOrder
         ? '<p class="staff-order-detail-note">Packing has been verified and the assigned tray has already been released.</p>'
         : (showNoTrayMessage
           ? '<p class="staff-order-detail-note">Assign a tray before marking any finished piece complete.</p>'
-          : '<p class="staff-order-detail-note">Mark complete only after the finished piece has been placed in the assigned tray.</p>')}
+          : '<p class="staff-order-detail-note">Mark complete only after the finished piece has been placed in the assigned tray.</p>'))}
       ${getStaffOrderItemsMarkup(record, payload.items || [])}
     </section>
   `;
@@ -7180,6 +7374,101 @@ async function submitStaffInternalNote(forgeOrderUuid) {
     renderStaffOrderDetail();
   } finally {
     staffOrdersState.detailInternalNoteSaving = false;
+    renderStaffOrderDetail();
+  }
+}
+
+async function submitStaffOrderCancellation(forgeOrderUuid) {
+  if (!forgeOrderUuid || staffOrdersState.detailDestructiveSaving) {
+    return;
+  }
+
+  const currentRecord = staffOrdersState.detailRecord;
+  if (!currentRecord || currentRecord.forge_order_uuid !== forgeOrderUuid) {
+    staffOrdersState.detailDestructiveError = 'Order cancellation is unavailable right now.';
+    renderStaffOrderDetail();
+    return;
+  }
+
+  staffOrdersState.detailDestructiveSaving = true;
+  staffOrdersState.detailDestructiveError = '';
+  staffOrdersState.detailError = '';
+  renderStaffOrderDetail();
+
+  try {
+    const result = await staffRuntime.cancelOrder(forgeOrderUuid);
+    if (!result?.ok) {
+      if (result?.unauthenticated) {
+        showUnauthenticatedStaffAccess();
+        return;
+      }
+      throw new Error(result?.errorMessage || 'Order cancellation could not be saved.');
+    }
+
+    await loadStaffOrdersQueue();
+    const refreshedRecord = staffOrdersState.records.find((record) => record?.forge_order_uuid === forgeOrderUuid) || result.order || null;
+    staffOrdersState.detailRecord = refreshedRecord;
+    staffOrdersState.detailPackingVerification = null;
+    resetStaffOrderDetailDestructiveState();
+    staffOrdersState.notice = result?.tray?.tray_number
+      ? `${getOrderDisplayReference(refreshedRecord || currentRecord)} cancelled. Tray ${result.tray.tray_number} is now available.`
+      : `${getOrderDisplayReference(refreshedRecord || currentRecord)} cancelled.`;
+    staffOrdersState.noticeTone = 'success';
+    renderStaffOrderDetail();
+  } catch (error) {
+    console.error('Forge order cancellation failed', error);
+    staffOrdersState.notice = '';
+    staffOrdersState.noticeTone = 'error';
+    staffOrdersState.detailDestructiveError = error?.message || 'Order cancellation could not be saved.';
+    staffOrdersState.detailDestructiveSaving = false;
+    renderStaffOrderDetail();
+  }
+}
+
+async function submitStaffDeleteTestOrder(forgeOrderUuid) {
+  if (!forgeOrderUuid || staffOrdersState.detailDestructiveSaving) {
+    return;
+  }
+
+  const currentRecord = staffOrdersState.detailRecord;
+  if (!currentRecord || currentRecord.forge_order_uuid !== forgeOrderUuid) {
+    staffOrdersState.detailDestructiveError = 'Test order deletion is unavailable right now.';
+    renderStaffOrderDetail();
+    return;
+  }
+
+  staffOrdersState.detailDestructiveSaving = true;
+  staffOrdersState.detailDestructiveError = '';
+  staffOrdersState.detailError = '';
+  renderStaffOrderDetail();
+
+  try {
+    const result = await staffRuntime.deleteTestOrder(
+      forgeOrderUuid,
+      staffOrdersState.detailDestructiveConfirmationText
+    );
+    if (!result?.ok) {
+      if (result?.unauthenticated) {
+        showUnauthenticatedStaffAccess();
+        return;
+      }
+      throw new Error(result?.errorMessage || 'Test order deletion could not be saved.');
+    }
+
+    const deletedReference = result.deletedOrderNumber
+      ? `Order ${result.deletedOrderNumber}`
+      : getOrderDisplayReference(currentRecord);
+    const releasedTrayCopy = result.releasedTrayNumber ? ` Tray ${result.releasedTrayNumber} is now available.` : '';
+    staffOrdersState.notice = `${deletedReference} deleted from this Test Session.${releasedTrayCopy}`;
+    staffOrdersState.noticeTone = 'success';
+    closeStaffOrderDetail();
+    await loadStaffOrdersQueue();
+  } catch (error) {
+    console.error('Forge test order deletion failed', error);
+    staffOrdersState.notice = '';
+    staffOrdersState.noticeTone = 'error';
+    staffOrdersState.detailDestructiveError = error?.message || 'Test order deletion could not be saved.';
+    staffOrdersState.detailDestructiveSaving = false;
     renderStaffOrderDetail();
   }
 }

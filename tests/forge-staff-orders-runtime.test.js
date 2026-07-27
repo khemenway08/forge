@@ -725,6 +725,91 @@ test('hosted internal note updates return the refreshed shared order safely', as
   assert.equal(result.order.current_tray_number, 6);
 });
 
+test('hosted cancellation returns the refreshed shared order and released tray safely', async () => {
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'https:', hostname: 'forge.example.com' },
+    staffApiClient: {
+      async cancelOrder(orderUuid) {
+        assert.equal(orderUuid, 'order-12');
+        return {
+          ok: true,
+          authenticated: true,
+          order: {
+            forge_order_uuid: 'order-12',
+            forge_order_number: 1042,
+            submitted_at: '2026-07-20T10:00:00Z',
+            received_at: '2026-07-20T10:05:00Z',
+            updated_at: '2026-07-20T10:09:00Z',
+            production_status: 'cancelled',
+            current_tray_number: null,
+            cancelled_at: '2026-07-20T10:09:00Z',
+            internal_note: 'Customer confirmed spelling.',
+            has_internal_note: true,
+            payload: {
+              customer: { full_name: 'Kyle' },
+              event: { event_type: 'live_event', event_name: 'Austin Market' },
+              items: []
+            }
+          },
+          tray: {
+            tray_number: 6,
+            tray_status: 'available',
+            current_order_uuid: null
+          },
+          assignmentHistory: {
+            tray_assignment_id: 'assignment-12',
+            forge_order_uuid: 'order-12',
+            tray_number: 6,
+            released_at: '2026-07-20T10:09:00Z',
+            release_reason: 'cancelled'
+          }
+        };
+      }
+    }
+  });
+
+  const result = await runtime.cancelOrder('order-12');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.order.production_status, 'cancelled');
+  assert.equal(result.order.current_tray_number, null);
+  assert.equal(result.order.cancelled_at, '2026-07-20T10:09:00Z');
+  assert.equal(result.tray.tray_number, 6);
+  assert.equal(result.assignmentHistory.release_reason, 'cancelled');
+});
+
+test('localhost test-order deletion stays on the local order-store path without hosted requests', async () => {
+  const calls = [];
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'http:', hostname: 'localhost' },
+    localOrderStore: {
+      async deleteTestOrder(forgeOrderUuid, confirmationText) {
+        calls.push(['deleteTestOrder', forgeOrderUuid, confirmationText]);
+        return {
+          deletedOrderUuid: forgeOrderUuid,
+          deletedOrderNumber: 1007,
+          releasedTrayNumber: 8
+        };
+      }
+    },
+    staffApiClient: {
+      async deleteTestOrder() {
+        calls.push(['hostedDeleteTestOrder']);
+        throw new Error('hosted client should not be called');
+      }
+    }
+  });
+
+  const result = await runtime.deleteTestOrder('order-local-test', 'DELETE TEST ORDER');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.readOnly, false);
+  assert.equal(result.deletedOrderUuid, 'order-local-test');
+  assert.equal(result.deletedOrderNumber, 1007);
+  assert.equal(result.releasedTrayNumber, 8);
+  assert.deepEqual(calls, [['deleteTestOrder', 'order-local-test', 'DELETE TEST ORDER']]);
+});
+
 test('hosted legacy cleanup preview returns the protected and eligible order snapshot safely', async () => {
   const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
     locationLike: { protocol: 'https:', hostname: 'forge.example.com' },

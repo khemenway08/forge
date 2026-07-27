@@ -47,6 +47,14 @@ final class InternalOrderNoteTooLongException extends \RuntimeException
 {
 }
 
+final class CancelOrderNotAllowedException extends \RuntimeException
+{
+}
+
+final class TestOrderDeletionNotAllowedException extends \RuntimeException
+{
+}
+
 final class LegacyTestCleanupConflictException extends \RuntimeException
 {
 }
@@ -58,10 +66,14 @@ final class PdoStaffOrderRepository
     public const LEGACY_TEST_CLEANUP_CUTOFF_LOCAL = '2026-07-25 00:00:00';
     public const LEGACY_TEST_CLEANUP_EXCLUDED_PREVIEW_LIMIT = 5;
     public const LEGACY_TEST_CLEANUP_RELEASE_REASON = 'legacy_test_cleanup';
+    public const CANCELLED_RELEASE_REASON = 'cancelled';
+    public const DELETE_TEST_ORDER_RELEASE_REASON = 'deleted_test_order';
+    public const TEST_ORDER_DELETE_CONFIRMATION_TEXT = 'DELETE TEST ORDER';
     private const ORDER_STATUS_SUBMITTED = 'submitted';
     private const ORDER_STATUS_TRAY_ASSIGNED = 'tray_assigned';
     private const ORDER_STATUS_IN_PRODUCTION = 'in_production';
     private const ORDER_STATUS_READY_TO_PACK = 'ready_to_pack';
+    private const ORDER_STATUS_CANCELLED = 'cancelled';
     private const TRAY_STATUS_AVAILABLE = 'available';
     private const TRAY_STATUS_ASSIGNED = 'assigned';
     private const TRAY_STATUS_OUT_OF_SERVICE = 'out_of_service';
@@ -109,7 +121,8 @@ final class PdoStaffOrderRepository
                     payload_sha256,
                     production_status,
                     current_tray_number,
-                    ready_to_pack_at
+                    ready_to_pack_at,
+                    cancelled_at
                  FROM forge_orders
                  ORDER BY received_at DESC, forge_order_uuid DESC
                  LIMIT :limit OFFSET :offset'
@@ -184,7 +197,8 @@ final class PdoStaffOrderRepository
                     payload_sha256,
                     production_status,
                     current_tray_number,
-                    ready_to_pack_at
+                    ready_to_pack_at,
+                    cancelled_at
                  FROM forge_orders
                  WHERE forge_order_uuid = :forge_order_uuid
                  LIMIT 1'
@@ -682,6 +696,251 @@ final class PdoStaffOrderRepository
 
     /**
      * @return array{
+     *   order: array<string, mixed>,
+     *   tray: ?array<string, mixed>,
+     *   assignment_history: ?array<string, mixed>
+     * }
+     */
+    public function cancelOrder(string $forgeOrderUuid): array
+    {
+        $orderUuid = trim($forgeOrderUuid);
+        if ($orderUuid === '') {
+            throw new StaffOrderNotFoundException('That order could not be found.');
+        }
+
+        $timestamp = gmdate('Y-m-d H:i:s.u');
+
+        try {
+            $this->pdo->beginTransaction();
+
+            $orderRow = $this->loadOrderRowForUpdate($orderUuid);
+            if ($orderRow === null) {
+                throw new StaffOrderNotFoundException('That order could not be found.');
+            }
+
+            $lockedOrder = normalizeStoredStaffOrderRecord($orderRow, $this->loadItemProductionRowsForOrderForUpdate($orderUuid));
+            $eventSnapshot = is_array($lockedOrder['payload']['event'] ?? null) ? $lockedOrder['payload']['event'] : null;
+            if (($eventSnapshot['event_type'] ?? null) === 'test_session') {
+                throw new CancelOrderNotAllowedException('Test Session orders must be deleted with Delete Test Order.');
+            }
+
+            $productionStatus = is_string($lockedOrder['production_status'] ?? null)
+                ? $lockedOrder['production_status']
+                : self::ORDER_STATUS_SUBMITTED;
+            if ($productionStatus === self::ORDER_STATUS_CANCELLED) {
+                throw new CancelOrderNotAllowedException('This order has already been cancelled.');
+            }
+
+            $currentTrayNumber = normalizeNullableTrayNumber($lockedOrder['current_tray_number'] ?? null);
+            $releasedTray = null;
+            $releasedHistory = null;
+
+            $updateOrder = $this->pdo->prepare(
+                'UPDATE forge_orders
+                 SET production_status = :production_status,
+                     current_tray_number = NULL,
+                     cancelled_at = :cancelled_at,
+                     ready_to_pack_at = NULL,
+                     updated_at = :updated_at
+                 WHERE forge_order_uuid = :forge_order_uuid'
+            );
+            $updateOrder->execute([
+                ':production_status' => self::ORDER_STATUS_CANCELLED,
+                ':cancelled_at' => $timestamp,
+                ':updated_at' => $timestamp,
+                ':forge_order_uuid' => $orderUuid,
+            ]);
+
+            if ($currentTrayNumber !== null) {
+                $trayRow = $this->loadTrayRowForUpdate($currentTrayNumber);
+                if ($trayRow !== null) {
+                    $updateTray = $this->pdo->prepare(
+                        'UPDATE forge_production_trays
+                         SET tray_status = :tray_status,
+                             current_order_uuid = NULL,
+                             assigned_at = NULL,
+                             updated_at = :updated_at
+                         WHERE tray_number = :tray_number'
+                    );
+                    $updateTray->execute([
+                        ':tray_status' => self::TRAY_STATUS_AVAILABLE,
+                        ':updated_at' => $timestamp,
+                        ':tray_number' => $currentTrayNumber,
+                    ]);
+                }
+
+                $activeHistory = $this->loadActiveAssignmentHistoryForUpdate($orderUuid, $currentTrayNumber);
+                if (is_array($activeHistory)) {
+                    $updateHistory = $this->pdo->prepare(
+                        'UPDATE forge_tray_assignment_history
+                         SET released_at = :released_at,
+                             release_reason = :release_reason
+                         WHERE tray_assignment_id = :tray_assignment_id'
+                    );
+                    $updateHistory->execute([
+                        ':released_at' => $timestamp,
+                        ':release_reason' => self::CANCELLED_RELEASE_REASON,
+                        ':tray_assignment_id' => $activeHistory['tray_assignment_id'],
+                    ]);
+                    $releasedHistory = $this->loadAssignmentHistoryById((string) $activeHistory['tray_assignment_id']);
+                }
+
+                $updatedTrayRow = $this->loadTrayRowForUpdate($currentTrayNumber);
+                $releasedTray = is_array($updatedTrayRow) ? normalizeStoredTrayRecord($updatedTrayRow) : null;
+            }
+
+            $updatedOrderRow = $this->loadOrderRowForUpdate($orderUuid);
+            if (!is_array($updatedOrderRow)) {
+                throw new StorageUnavailableException('Order cancellation is currently unavailable.');
+            }
+
+            $this->pdo->commit();
+
+            return [
+                'order' => normalizeStoredStaffOrderRecord($updatedOrderRow, $this->loadItemProductionRowsForOrder($orderUuid)),
+                'tray' => $releasedTray,
+                'assignment_history' => is_array($releasedHistory) ? normalizeStoredTrayAssignmentHistoryRecord($releasedHistory) : null,
+            ];
+        } catch (
+            StaffOrderNotFoundException
+            | CancelOrderNotAllowedException
+            | StorageUnavailableException $exception
+        ) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $exception;
+        } catch (PDOException $exception) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw new StorageUnavailableException('Order cancellation is currently unavailable.', 0, $exception);
+        }
+    }
+
+    /**
+     * @return array{
+     *   deleted_order_uuid: string,
+     *   deleted_order_number: ?int,
+     *   released_tray_number: ?int
+     * }
+     */
+    public function deleteTestOrder(string $forgeOrderUuid, string $confirmationText): array
+    {
+        $orderUuid = trim($forgeOrderUuid);
+        $normalizedConfirmationText = trim($confirmationText);
+        if ($orderUuid === '') {
+            throw new StaffOrderNotFoundException('That order could not be found.');
+        }
+        if ($normalizedConfirmationText !== self::TEST_ORDER_DELETE_CONFIRMATION_TEXT) {
+            throw new \InvalidArgumentException('Enter DELETE TEST ORDER before deleting this order.');
+        }
+
+        $timestamp = gmdate('Y-m-d H:i:s.u');
+
+        try {
+            $this->pdo->beginTransaction();
+
+            $orderRow = $this->loadOrderRowForUpdate($orderUuid);
+            if ($orderRow === null) {
+                throw new StaffOrderNotFoundException('That order could not be found.');
+            }
+
+            $lockedOrder = normalizeStoredStaffOrderRecord($orderRow, $this->loadItemProductionRowsForOrderForUpdate($orderUuid));
+            $eventSnapshot = is_array($lockedOrder['payload']['event'] ?? null) ? $lockedOrder['payload']['event'] : null;
+            if (($eventSnapshot['event_type'] ?? null) !== 'test_session') {
+                throw new TestOrderDeletionNotAllowedException('Only Test Session orders can be permanently deleted.');
+            }
+
+            $orderNumber = normalizeNullableOrderNumber($lockedOrder['forge_order_number'] ?? null);
+            $releasedTrayNumber = normalizeNullableTrayNumber($lockedOrder['current_tray_number'] ?? null);
+
+            if ($releasedTrayNumber !== null) {
+                $updateTray = $this->pdo->prepare(
+                    'UPDATE forge_production_trays
+                     SET tray_status = :tray_status,
+                         current_order_uuid = NULL,
+                         assigned_at = NULL,
+                         updated_at = :updated_at
+                     WHERE current_order_uuid = :forge_order_uuid'
+                );
+                $updateTray->execute([
+                    ':tray_status' => self::TRAY_STATUS_AVAILABLE,
+                    ':updated_at' => $timestamp,
+                    ':forge_order_uuid' => $orderUuid,
+                ]);
+
+                $updateHistory = $this->pdo->prepare(
+                    'UPDATE forge_tray_assignment_history
+                     SET released_at = :released_at,
+                         release_reason = :release_reason
+                     WHERE forge_order_uuid = :forge_order_uuid
+                       AND released_at IS NULL'
+                );
+                $updateHistory->execute([
+                    ':released_at' => $timestamp,
+                    ':release_reason' => self::DELETE_TEST_ORDER_RELEASE_REASON,
+                    ':forge_order_uuid' => $orderUuid,
+                ]);
+            }
+
+            $this->executeUuidBatchMutation(
+                'DELETE FROM forge_order_item_production WHERE forge_order_uuid IN (%s)',
+                [$orderUuid]
+            );
+            $this->executeUuidBatchMutation(
+                'DELETE FROM forge_tray_assignment_history WHERE forge_order_uuid IN (%s)',
+                [$orderUuid]
+            );
+
+            $insertTombstone = $this->pdo->prepare(
+                'INSERT INTO forge_order_cleanup_tombstones (
+                    forge_order_uuid,
+                    deleted_at
+                 ) VALUES (
+                    :forge_order_uuid,
+                    :deleted_at
+                 )'
+            );
+            $insertTombstone->execute([
+                ':forge_order_uuid' => $orderUuid,
+                ':deleted_at' => $timestamp,
+            ]);
+
+            $deleteOrder = $this->pdo->prepare(
+                'DELETE FROM forge_orders WHERE forge_order_uuid = :forge_order_uuid'
+            );
+            $deleteOrder->execute([
+                ':forge_order_uuid' => $orderUuid,
+            ]);
+
+            $this->pdo->commit();
+
+            return [
+                'deleted_order_uuid' => $orderUuid,
+                'deleted_order_number' => $orderNumber,
+                'released_tray_number' => $releasedTrayNumber,
+            ];
+        } catch (
+            StaffOrderNotFoundException
+            | TestOrderDeletionNotAllowedException
+            | StorageUnavailableException
+            | \InvalidArgumentException $exception
+        ) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $exception;
+        } catch (PDOException $exception) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw new StorageUnavailableException('Test order deletion is currently unavailable.', 0, $exception);
+        }
+    }
+
+    /**
+     * @return array{
      *   cutoff_timezone: string,
      *   cutoff_local: string,
      *   cutoff_utc: string,
@@ -933,7 +1192,8 @@ final class PdoStaffOrderRepository
                 payload_sha256,
                 production_status,
                 current_tray_number,
-                ready_to_pack_at
+                ready_to_pack_at,
+                cancelled_at
              FROM forge_orders
              WHERE forge_order_uuid = :forge_order_uuid
              LIMIT 1
@@ -1315,6 +1575,7 @@ function normalizeStoredStaffOrderRecord($record, array $itemProductionRows = []
         'total_item_count' => $counts['total_item_count'],
         'completed_item_count' => $counts['completed_item_count'],
         'ready_to_pack_at' => $readyToPackAt,
+        'cancelled_at' => normalizeNullableDatabaseDateTime($record['cancelled_at'] ?? null),
         'has_open_flags' => $hasOpenFlags,
     ];
 }
