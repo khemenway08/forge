@@ -5112,7 +5112,31 @@ function ensureStaffPackingUi() {
 }
 
 function getOrderShortReference(record) {
+  const forgeOrderNumber = getOrderNumber(record);
+  if (forgeOrderNumber !== null) {
+    return String(forgeOrderNumber);
+  }
   return forgeLocalOrdersQueue.getShortOrderReference(record) || 'No Ref';
+}
+
+function getOrderDisplayReference(record) {
+  return `Order ${getOrderShortReference(record)}`;
+}
+
+function getOrderNumber(record) {
+  const explicitValue = record && typeof record === 'object' ? record.forge_order_number : null;
+  const payloadValue = record && record.payload && typeof record.payload === 'object'
+    ? record.payload.forge_order_number
+    : null;
+  const value = explicitValue == null ? payloadValue : explicitValue;
+  if (Number.isInteger(value)) {
+    return value > 0 ? value : null;
+  }
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+    const parsed = Number.parseInt(value.trim(), 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  }
+  return null;
 }
 
 function getOrderProductionStatus(record) {
@@ -5757,7 +5781,7 @@ function buildReadyToPackCardMarkup(record) {
         <span class="staff-status-badge ${escapeHtml(getOrderProductionStatusBadgeClass(record))}">${escapeHtml(getOrderProductionStatusLabel(record))}</span>
       </div>
       <div class="staff-ready-card-body">
-        <div class="staff-order-ref">${escapeHtml(getOrderShortReference(record))}</div>
+        <div class="staff-order-ref">${escapeHtml(getOrderDisplayReference(record))}</div>
         <p class="staff-ready-card-customer">${escapeHtml(payload.customer?.full_name || 'Unknown customer')}</p>
         <div class="staff-ready-card-meta">
           <strong>${escapeHtml(getOrderCompletionSummary(record))}</strong>
@@ -5864,7 +5888,7 @@ function buildStaffOrderCardMarkup(record, filters) {
     <article class="staff-order-card">
       <div class="staff-order-card-header">
         <div class="staff-order-card-title">
-          <div class="staff-order-ref">${escapeHtml(getOrderShortReference(record))}</div>
+          <div class="staff-order-ref">${escapeHtml(getOrderDisplayReference(record))}</div>
           <p>${escapeHtml(formatReadableDateTime(record.submitted_at || record.local_saved_at || ''))}</p>
         </div>
         <div class="staff-order-card-badges">
@@ -6093,7 +6117,7 @@ function renderStaffOrderDetail() {
     <div class="staff-order-detail-header">
       <div class="staff-order-detail-heading">
         <p class="eyebrow staff-orders-eyebrow">Development Only</p>
-        <h2 id="staff-order-detail-title">Order ${escapeHtml(shortOrderReference)}</h2>
+        <h2 id="staff-order-detail-title">${escapeHtml(getOrderDisplayReference(record))}</h2>
         <p class="staff-order-detail-customer">${escapeHtml(customer.full_name || 'Unknown customer')}</p>
         <div class="staff-order-detail-badges">
           <span class="staff-tray-badge ${escapeHtml(getOrderTrayBadgeClass(record))}">${escapeHtml(trayLabel)}</span>
@@ -6116,13 +6140,19 @@ function renderStaffOrderDetail() {
     ${showRawJsonAction ? buildStaffUtilityActionMarkup(record) : ''}
 
     <div class="staff-order-detail-meta">
-      <div><span>Order Number</span><strong>${escapeHtml(shortOrderReference)}</strong></div>
+      <div><span>Order Number</span><strong>${escapeHtml(getOrderDisplayReference(record))}</strong></div>
       <div><span>Fulfillment</span><strong>${escapeHtml(fulfillment.method === 'pickup' ? 'Pickup' : 'Shipping')}</strong></div>
-      <div><span>UUID</span><strong>${escapeHtml(record.forge_order_uuid)}</strong></div>
       <div><span>Submitted</span><strong>${escapeHtml(formatReadableDateTime(record.submitted_at || ''))}</strong></div>
       <div><span>${escapeHtml(sourceConfig.savedTimestampLabel)}</span><strong>${escapeHtml(formatReadableDateTime(record.local_saved_at || record.received_at || ''))}</strong></div>
       <div><span>Sync Status</span><strong>${escapeHtml(syncStatusLabel)}</strong></div>
     </div>
+
+    <section class="staff-order-detail-section">
+      <h3>System Details</h3>
+      <div class="staff-order-detail-grid">
+        <div><span>UUID</span><strong>${escapeHtml(record.forge_order_uuid)}</strong></div>
+      </div>
+    </section>
 
     <section class="staff-order-detail-section">
       <h3>Order</h3>
@@ -6445,7 +6475,7 @@ function renderStaffTrayAssignment() {
       <div>
         <p class="eyebrow staff-orders-eyebrow">Production Tray Assignment</p>
         <h2 id="staff-tray-assignment-title">Assign Tray</h2>
-        <p>${escapeHtml(getOrderShortReference(record))} • ${escapeHtml(customerName)}</p>
+        <p>${escapeHtml(getOrderDisplayReference(record))} • ${escapeHtml(customerName)}</p>
       </div>
       <button class="text-button" type="button" data-action="close-staff-tray-assignment"${staffOrdersState.trayDialogSaving ? ' disabled' : ''}>Cancel</button>
     </div>
@@ -6454,7 +6484,7 @@ function renderStaffTrayAssignment() {
 
     <section class="staff-order-detail-section">
       <div class="staff-order-detail-grid">
-        <div><span>Order Number</span><strong>${escapeHtml(getOrderShortReference(record))}</strong></div>
+        <div><span>Order Number</span><strong>${escapeHtml(getOrderDisplayReference(record))}</strong></div>
         <div><span>Customer</span><strong>${escapeHtml(customerName)}</strong></div>
         <div><span>Current Tray</span><strong>${escapeHtml(getOrderTrayLabel(record))}</strong></div>
         <div><span>Production Status</span><strong>${escapeHtml(getOrderProductionStatusLabel(record))}</strong></div>
@@ -6672,7 +6702,7 @@ function renderStaffPackingDialog() {
         <div>
           <p class="eyebrow staff-orders-eyebrow">Packing Verification</p>
           <h2 id="staff-packing-title">Pack Order</h2>
-          <p>${escapeHtml(getOrderShortReference(record))} • ${escapeHtml(customerName)}</p>
+          <p>${escapeHtml(getOrderDisplayReference(record))} • ${escapeHtml(customerName)}</p>
         </div>
         <button class="text-button" type="button" data-action="close-staff-packing"${staffOrdersState.packingDialogSaving ? ' disabled' : ''}>Cancel</button>
       </div>
@@ -6681,7 +6711,7 @@ function renderStaffPackingDialog() {
 
       <section class="staff-order-detail-section">
         <div class="staff-order-detail-grid">
-          <div><span>Order Reference</span><strong>${escapeHtml(getOrderShortReference(record))}</strong></div>
+          <div><span>Order Reference</span><strong>${escapeHtml(getOrderDisplayReference(record))}</strong></div>
           <div><span>Customer</span><strong>${escapeHtml(customerName)}</strong></div>
           <div><span>Assigned Tray</span><strong>${escapeHtml(`Tray ${trayNumber}`)}</strong></div>
           <div><span>Fulfillment</span><strong>${escapeHtml(fulfillmentMethod)}</strong></div>
@@ -7230,7 +7260,7 @@ async function renderThankYouScreen() {
     thankYouReference.hidden = false;
     thankYouReference.innerHTML = `
       <span class="summary-label">Order Reference</span>
-      <strong>${escapeHtml(record.forge_order_uuid.slice(0, 8).toUpperCase())}</strong>
+      <strong>${escapeHtml(getOrderShortReference(record))}</strong>
     `;
   } catch (error) {
     console.error('Forge thank-you screen failed to load the saved order', error);

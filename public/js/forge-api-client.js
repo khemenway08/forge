@@ -169,6 +169,7 @@
     const data = payload && typeof payload === 'object' ? payload.data : null;
     const forgeOrderUuid = asTrimmedString(data && data.forge_order_uuid);
     const created = data && typeof data === 'object' ? data.created : undefined;
+    const forgeOrderNumber = normalizeNullableOrderNumber(data && data.forge_order_number);
     const receivedAt = asTrimmedString(data && data.received_at);
     const payloadSha256 = asTrimmedString(data && data.payload_sha256);
     const submittedForgeOrderUuid = asTrimmedString(orderPayload && orderPayload.forge_order_uuid);
@@ -183,6 +184,7 @@
       || typeof created !== 'boolean'
       || !isValidIsoDate(receivedAt)
       || !HEX_64_PATTERN.test(payloadSha256)
+      || (data && Object.prototype.hasOwnProperty.call(data, 'forge_order_number') && data.forge_order_number !== null && forgeOrderNumber === null)
       || !submittedForgeOrderUuid
       || forgeOrderUuid !== submittedForgeOrderUuid
     ) {
@@ -192,6 +194,7 @@
     return {
       ok: true,
       forgeOrderUuid,
+      forgeOrderNumber,
       created,
       receivedAt,
       payloadSha256
@@ -239,6 +242,20 @@
     }
 
     return new ForgeApiError('unavailable', 'The Forge server is currently unavailable.');
+  }
+
+  function normalizeNullableOrderNumber(value) {
+    if (value === null || value === undefined || value === '') {
+      return null;
+    }
+    if (Number.isInteger(value)) {
+      return value > 0 ? value : null;
+    }
+    if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+      const parsed = Number.parseInt(value.trim(), 10);
+      return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+    }
+    return null;
   }
 
   function resolveFetchImplementation(fetchImpl) {

@@ -13,9 +13,10 @@ use Forge\Server\StoreOrderResult;
 
 final class InMemoryOrderRepository implements OrderRepositoryInterface
 {
-    /** @var array<string, array{payload: array, payload_sha256: string, received_at: string}> */
+    /** @var array<string, array{payload: array, payload_sha256: string, received_at: string, forge_order_number: int}> */
     private array $records = [];
     private ?\Throwable $nextFailure = null;
+    private int $nextForgeOrderNumber = 1001;
 
     public function failOnce(\Throwable $failure): void
     {
@@ -32,18 +33,20 @@ final class InMemoryOrderRepository implements OrderRepositoryInterface
 
         $forgeOrderUuid = $payload['forge_order_uuid'];
         if (!isset($this->records[$forgeOrderUuid])) {
+            $forgeOrderNumber = $this->nextForgeOrderNumber++;
             $this->records[$forgeOrderUuid] = [
                 'payload' => json_decode($canonicalJson, true, 512, JSON_THROW_ON_ERROR),
                 'payload_sha256' => $payloadSha256,
                 'received_at' => $receivedAt,
+                'forge_order_number' => $forgeOrderNumber,
             ];
 
-            return new StoreOrderResult($forgeOrderUuid, true, $receivedAt, $payloadSha256);
+            return new StoreOrderResult($forgeOrderUuid, true, $receivedAt, $payloadSha256, $forgeOrderNumber);
         }
 
         $existing = $this->records[$forgeOrderUuid];
         if (hash_equals($existing['payload_sha256'], $payloadSha256)) {
-            return new StoreOrderResult($forgeOrderUuid, false, $existing['received_at'], $existing['payload_sha256']);
+            return new StoreOrderResult($forgeOrderUuid, false, $existing['received_at'], $existing['payload_sha256'], $existing['forge_order_number']);
         }
 
         throw new OrderConflictException('Conflict');
@@ -57,8 +60,9 @@ final class InMemoryOrderRepository implements OrderRepositoryInterface
 
 final class DatabaseTimestampOrderRepository implements OrderRepositoryInterface
 {
-    /** @var array<string, array{payload: array, payload_sha256: string, received_at_database: string, received_at_iso8601: string}> */
+    /** @var array<string, array{payload: array, payload_sha256: string, received_at_database: string, received_at_iso8601: string, forge_order_number: int}> */
     private array $records = [];
+    private int $nextForgeOrderNumber = 1001;
 
     public function storeOrder(array $payload, string $canonicalJson, string $payloadSha256, string $receivedAt): StoreOrderResult
     {
@@ -67,14 +71,16 @@ final class DatabaseTimestampOrderRepository implements OrderRepositoryInterface
         $receivedAtDatabase = OrderPayload::normalizeDatabaseDateTime($receivedAtIso8601);
 
         if (!isset($this->records[$forgeOrderUuid])) {
+            $forgeOrderNumber = $this->nextForgeOrderNumber++;
             $this->records[$forgeOrderUuid] = [
                 'payload' => json_decode($canonicalJson, true, 512, JSON_THROW_ON_ERROR),
                 'payload_sha256' => $payloadSha256,
                 'received_at_database' => $receivedAtDatabase,
                 'received_at_iso8601' => $receivedAtIso8601,
+                'forge_order_number' => $forgeOrderNumber,
             ];
 
-            return new StoreOrderResult($forgeOrderUuid, true, $receivedAtIso8601, $payloadSha256);
+            return new StoreOrderResult($forgeOrderUuid, true, $receivedAtIso8601, $payloadSha256, $forgeOrderNumber);
         }
 
         $existing = $this->records[$forgeOrderUuid];
@@ -83,7 +89,8 @@ final class DatabaseTimestampOrderRepository implements OrderRepositoryInterface
                 $forgeOrderUuid,
                 false,
                 OrderPayload::databaseDateTimeToIso8601($existing['received_at_database']),
-                $existing['payload_sha256']
+                $existing['payload_sha256'],
+                $existing['forge_order_number']
             );
         }
 
@@ -474,6 +481,28 @@ $runner->run('first create returns created true', static function (): void {
 
     assertSame(201, $response['statusCode']);
     assertSame(true, $response['body']['data']['created']);
+    assertSame(1001, $response['body']['data']['forge_order_number']);
+});
+
+$runner->run('next unique order receives the next sequential number', static function (): void {
+    [$handler] = createHandler();
+    $first = $handler->handleRequest(
+        'POST',
+        'application/json',
+        json_encode(createValidPayload(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+    );
+    $secondPayload = createValidPayload([
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174111',
+        'submitted_at' => '2026-07-17T12:10:01+00:00',
+    ]);
+    $second = $handler->handleRequest(
+        'POST',
+        'application/json',
+        json_encode($secondPayload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+    );
+
+    assertSame(1001, $first['body']['data']['forge_order_number']);
+    assertSame(1002, $second['body']['data']['forge_order_number']);
 });
 
 $runner->run('identical UUID and payload returns created false', static function (): void {
@@ -486,6 +515,7 @@ $runner->run('identical UUID and payload returns created false', static function
     assertSame(201, $first['statusCode']);
     assertSame(200, $second['statusCode']);
     assertSame(false, $second['body']['data']['created']);
+    assertSame($first['body']['data']['forge_order_number'], $second['body']['data']['forge_order_number']);
 });
 
 $runner->run('identical retry returns the original received_at value and leaves the stored record unchanged', static function (): void {
@@ -504,6 +534,7 @@ $runner->run('identical retry returns the original received_at value and leaves 
     assertSame(200, $second['statusCode']);
     assertSame(false, $second['body']['data']['created']);
     assertSame($firstReceivedAt, $second['body']['data']['received_at']);
+    assertSame($first['body']['data']['forge_order_number'], $second['body']['data']['forge_order_number']);
     assertSame($storedAfterFirst, $storedAfterSecond);
 });
 
@@ -518,6 +549,7 @@ $runner->run('duplicate identical order returns HTTP 200 created false and prese
     assertSame(200, $second['statusCode']);
     assertSame(false, $second['body']['data']['created']);
     assertSame($first['body']['data']['received_at'], $second['body']['data']['received_at']);
+    assertSame($first['body']['data']['forge_order_number'], $second['body']['data']['forge_order_number']);
 });
 
 $runner->run('same UUID with different payload produces uuid_conflict', static function (): void {
@@ -932,6 +964,8 @@ $runner->run('stored staff order records normalize payload JSON and UTC timestam
     assertSame('2026-07-19T10:06:00+00:00', $record['updated_at']);
     assertSame('holiday-market', $record['event_id']);
     assertSame('123e4567-e89b-42d3-a456-426614174000', $record['payload']['forge_order_uuid']);
+    assertSame(null, $record['forge_order_number']);
+    assertSame(false, array_key_exists('forge_order_number', $record['payload']));
 });
 
 $runner->run('stored staff order records default missing production fields to submitted with no tray', static function (): void {
@@ -948,6 +982,7 @@ $runner->run('stored staff order records default missing production fields to su
 
     assertSame('submitted', $record['production_status']);
     assertSame(null, $record['current_tray_number']);
+    assertSame(null, $record['forge_order_number']);
 });
 
 $runner->run('stored staff order records infer tray assigned when a tray number exists', static function (): void {

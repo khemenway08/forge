@@ -83,6 +83,7 @@ final class PdoStaffOrderRepository
             $statement = $this->pdo->prepare(
                 'SELECT
                     forge_order_uuid,
+                    forge_order_number,
                     record_version,
                     source,
                     submitted_at,
@@ -156,6 +157,7 @@ final class PdoStaffOrderRepository
             $statement = $this->pdo->prepare(
                 'SELECT
                     forge_order_uuid,
+                    forge_order_number,
                     record_version,
                     source,
                     submitted_at,
@@ -652,6 +654,7 @@ final class PdoStaffOrderRepository
         $statement = $this->pdo->prepare(
             'SELECT
                 forge_order_uuid,
+                forge_order_number,
                 record_version,
                 source,
                 submitted_at,
@@ -969,6 +972,7 @@ function normalizeStoredStaffOrderRecord($record, array $itemProductionRows = []
 
     return [
         'forge_order_uuid' => trim((string) ($record['forge_order_uuid'] ?? '')),
+        'forge_order_number' => normalizeNullableOrderNumber($record['forge_order_number'] ?? ($payload['forge_order_number'] ?? null)),
         'record_version' => trim((string) ($record['record_version'] ?? '')),
         'source' => trim((string) ($record['source'] ?? '')),
         'submitted_at' => OrderPayload::databaseDateTimeToIso8601((string) ($record['submitted_at'] ?? '')),
@@ -977,7 +981,10 @@ function normalizeStoredStaffOrderRecord($record, array $itemProductionRows = []
         'device_id' => normalizeNullableString($record['device_id'] ?? null),
         'event_id' => normalizeNullableString($record['event_id'] ?? null),
         'payload_sha256' => trim((string) ($record['payload_sha256'] ?? '')),
-        'payload' => $normalizedPayload,
+        'payload' => withNormalizedPayloadOrderNumber(
+            $normalizedPayload,
+            normalizeNullableOrderNumber($record['forge_order_number'] ?? ($payload['forge_order_number'] ?? null))
+        ),
         'production_status' => $productionStatus,
         'current_tray_number' => $currentTrayNumber,
         'total_item_count' => $counts['total_item_count'],
@@ -1041,6 +1048,43 @@ function normalizeNullableString($value): ?string
 
     $normalized = trim($value);
     return $normalized === '' ? null : $normalized;
+}
+
+/**
+ * @param mixed $value
+ */
+function normalizeNullableOrderNumber($value): ?int
+{
+    if ($value === null || $value === '') {
+        return null;
+    }
+
+    if (is_int($value)) {
+        return $value > 0 ? $value : null;
+    }
+
+    if (is_string($value) && preg_match('/^\d+$/', trim($value))) {
+        $normalized = (int) trim($value);
+        return $normalized > 0 ? $normalized : null;
+    }
+
+    return null;
+}
+
+/**
+ * @param array<string, mixed> $payload
+ * @return array<string, mixed>
+ */
+function withNormalizedPayloadOrderNumber(array $payload, ?int $forgeOrderNumber): array
+{
+    $nextPayload = $payload;
+    if ($forgeOrderNumber === null) {
+        unset($nextPayload['forge_order_number']);
+        return $nextPayload;
+    }
+
+    $nextPayload['forge_order_number'] = $forgeOrderNumber;
+    return $nextPayload;
 }
 
 /**

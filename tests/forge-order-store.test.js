@@ -233,6 +233,7 @@ test('markOrderServerUploadSuccess stores server metadata for created and idempo
 
   const createdResult = await store.markOrderServerUploadSuccess('success-order', {
     forgeOrderUuid: 'success-order',
+    forgeOrderNumber: 1001,
     created: true,
     receivedAt: '2026-07-17T08:30:00.000Z',
     payloadSha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
@@ -242,6 +243,8 @@ test('markOrderServerUploadSuccess stores server metadata for created and idempo
   assert.equal(createdResult.server_received_at, '2026-07-17T08:30:00.000Z');
   assert.equal(createdResult.server_payload_sha256, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
   assert.equal(createdResult.server_created, true);
+  assert.equal(createdResult.forge_order_number, 1001);
+  assert.equal(createdResult.payload.forge_order_number, 1001);
   assert.equal(createdResult.server_upload_attempt_count, 1);
   assert.equal(createdResult.last_server_upload_error, null);
   assert.equal(createdResult.sync_status, 'pending');
@@ -250,12 +253,14 @@ test('markOrderServerUploadSuccess stores server metadata for created and idempo
 
   const idempotentResult = await store.markOrderServerUploadSuccess('success-order', {
     forgeOrderUuid: 'success-order',
+    forgeOrderNumber: 1001,
     created: false,
     receivedAt: '2026-07-17T08:30:00.000Z',
     payloadSha256: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
   }, '2026-07-17T08:31:00.000Z');
 
   assert.equal(idempotentResult.server_created, false);
+  assert.equal(idempotentResult.forge_order_number, 1001);
   assert.equal(idempotentResult.server_payload_sha256, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
   assert.equal(idempotentResult.sync_status, 'pending');
   assert.equal(idempotentResult.current_tray_number, 7);

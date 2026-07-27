@@ -91,6 +91,7 @@ final class OrderHandler
                 'headers' => [],
                 'body' => ApiResponse::success([
                     'forge_order_uuid' => $result->forgeOrderUuid,
+                    'forge_order_number' => $result->forgeOrderNumber,
                     'created' => $result->created,
                     'received_at' => $result->receivedAt,
                     'payload_sha256' => $result->payloadSha256,

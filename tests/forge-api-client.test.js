@@ -405,6 +405,7 @@ test('valid HTTP 201 response normalizes created true', async () => {
   assert.deepEqual(result, {
     ok: true,
     forgeOrderUuid: payload.forge_order_uuid,
+    forgeOrderNumber: 1001,
     created: true,
     receivedAt: '2026-07-17T12:00:02+00:00',
     payloadSha256: 'a'.repeat(64)
@@ -420,6 +421,7 @@ test('valid HTTP 200 response normalizes created false', async () => {
   const result = await client.submitOrder(payload);
 
   assert.equal(result.created, false);
+  assert.equal(result.forgeOrderNumber, 1001);
 });
 
 test('unexpected success status produces invalid_response', async () => {
@@ -769,6 +771,7 @@ function createOrderSuccessEnvelope(forgeOrderUuid, created) {
     status: 'ok',
     data: {
       forge_order_uuid: forgeOrderUuid,
+      forge_order_number: 1001,
       created,
       received_at: '2026-07-17T12:00:02+00:00',
       payload_sha256: 'a'.repeat(64)

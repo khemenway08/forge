@@ -372,6 +372,11 @@
 
   function adaptServerOrderForQueue(record) {
     const payload = deepCloneValue(record && typeof record.payload === 'object' ? record.payload : {});
+    const forgeOrderNumber = normalizeNullableOrderNumber(
+      record && record.forge_order_number != null
+        ? record.forge_order_number
+        : payload.forge_order_number
+    );
     const trayNumber = normalizeNullableTrayNumber(record && record.current_tray_number);
     const productionStatus = normalizeProductionStatus(record && record.production_status, trayNumber);
     const totalItemCount = normalizeOptionalCount(record && record.total_item_count);
@@ -379,8 +384,15 @@
     const readyToPackAt = normalizeNullableString(record && record.ready_to_pack_at);
     const canCompleteItems = Boolean(trayNumber)
       && ['tray_assigned', 'in_production'].includes(productionStatus);
+    const normalizedPayload = forgeOrderNumber === null
+      ? payload
+      : {
+        ...payload,
+        forge_order_number: forgeOrderNumber
+      };
     return {
       forge_order_uuid: asTrimmedString(record && record.forge_order_uuid),
+      forge_order_number: forgeOrderNumber,
       record_version: asTrimmedString(record && record.record_version) || '1',
       source: asTrimmedString(record && record.source) || 'server',
       submitted_at: asTrimmedString(record && record.submitted_at),
@@ -400,7 +412,7 @@
       total_item_count: totalItemCount,
       completed_item_count: completedItemCount,
       has_open_flags: Boolean(record && record.has_open_flags) || Boolean(payload && payload.has_open_flags),
-      payload,
+      payload: normalizedPayload,
       staff_data_source: STAFF_DATA_SOURCES.server,
       staff_read_only: true,
       staff_can_assign_tray: productionStatus === 'submitted' && trayNumber === null,
@@ -454,6 +466,20 @@
 
     const trayNumber = Number.parseInt(stringValue, 10);
     return Number.isInteger(trayNumber) && trayNumber > 0 ? trayNumber : null;
+  }
+
+  function normalizeNullableOrderNumber(value) {
+    if (value === null || value === undefined || value === '') {
+      return null;
+    }
+    if (Number.isInteger(value)) {
+      return value > 0 ? value : null;
+    }
+    if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+      const parsed = Number.parseInt(value.trim(), 10);
+      return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+    }
+    return null;
   }
 
   function normalizeProductionStatus(value, trayNumber) {

@@ -608,7 +608,9 @@ function loadForgeHostedStaffAppForTrayDetail() {
   let completionCallCount = 0;
   const sharedRecord = {
     forge_order_uuid: 'shared-order-1',
+    forge_order_number: 1001,
     payload: {
+      forge_order_number: 1001,
       customer: { full_name: 'Kyle Hemenway' },
       fulfillment: { method: 'shipping' },
       items: [
@@ -1302,6 +1304,9 @@ test('shared server order detail assign tray button opens the tray picker after 
 
   await context.openStaffAccessScreen('staff-orders');
   await context.openStaffOrderDetail('shared-order-1');
+  assert.match(String(detailDialog.innerHTML || ''), /Order 1001/);
+  assert.match(String(detailDialog.innerHTML || ''), /System Details/);
+  assert.match(String(detailDialog.innerHTML || ''), /shared-order-1/);
 
   let assignTrayButton = getAssignTrayButton();
   assert.ok(assignTrayButton);

@@ -17,13 +17,15 @@ final class StoreOrderResult
     public bool $created;
     public string $receivedAt;
     public string $payloadSha256;
+    public ?int $forgeOrderNumber;
 
-    public function __construct(string $forgeOrderUuid, bool $created, string $receivedAt, string $payloadSha256)
+    public function __construct(string $forgeOrderUuid, bool $created, string $receivedAt, string $payloadSha256, ?int $forgeOrderNumber = null)
     {
         $this->forgeOrderUuid = $forgeOrderUuid;
         $this->created = $created;
         $this->receivedAt = $receivedAt;
         $this->payloadSha256 = $payloadSha256;
+        $this->forgeOrderNumber = $forgeOrderNumber;
     }
 }
 
@@ -57,9 +59,11 @@ final class PdoOrderRepository implements OrderRepositoryInterface
 
         try {
             $this->pdo->beginTransaction();
+            $forgeOrderNumber = $this->reserveNextForgeOrderNumber($receivedAtDatabase);
             $statement = $this->pdo->prepare(
                 'INSERT INTO forge_orders (
                     forge_order_uuid,
+                    forge_order_number,
                     record_version,
                     source,
                     submitted_at,
@@ -71,6 +75,7 @@ final class PdoOrderRepository implements OrderRepositoryInterface
                     payload_sha256
                 ) VALUES (
                     :forge_order_uuid,
+                    :forge_order_number,
                     :record_version,
                     :source,
                     :submitted_at,
@@ -82,14 +87,17 @@ final class PdoOrderRepository implements OrderRepositoryInterface
                     :payload_sha256
                 )'
             );
-            $statement->execute($insertValues);
+            $statement->execute($insertValues + [
+                ':forge_order_number' => $forgeOrderNumber,
+            ]);
             $this->pdo->commit();
 
             return new StoreOrderResult(
                 $metadata['forge_order_uuid'],
                 true,
                 $receivedAtIso,
-                $payloadSha256
+                $payloadSha256,
+                $forgeOrderNumber
             );
         } catch (PDOException $exception) {
             if ($this->pdo->inTransaction()) {
@@ -110,7 +118,8 @@ final class PdoOrderRepository implements OrderRepositoryInterface
                     $metadata['forge_order_uuid'],
                     false,
                     OrderPayload::databaseDateTimeToIso8601($existing['received_at']),
-                    $existing['payload_sha256']
+                    $existing['payload_sha256'],
+                    $this->normalizeNullableOrderNumber($existing['forge_order_number'] ?? null)
                 );
             }
 
@@ -122,7 +131,7 @@ final class PdoOrderRepository implements OrderRepositoryInterface
     {
         try {
             $statement = $this->pdo->prepare(
-                'SELECT forge_order_uuid, received_at, payload_sha256
+                'SELECT forge_order_uuid, forge_order_number, received_at, payload_sha256
                  FROM forge_orders
                  WHERE forge_order_uuid = :forge_order_uuid
                  LIMIT 1'
@@ -142,5 +151,44 @@ final class PdoOrderRepository implements OrderRepositoryInterface
         $driverCode = isset($exception->errorInfo[1]) ? (int) $exception->errorInfo[1] : null;
 
         return $sqlState === '23000' && $driverCode === 1062;
+    }
+
+    private function reserveNextForgeOrderNumber(string $createdAtDatabase): int
+    {
+        $statement = $this->pdo->prepare(
+            'INSERT INTO forge_order_number_sequence (created_at)
+             VALUES (:created_at)'
+        );
+        $statement->execute([
+            ':created_at' => $createdAtDatabase,
+        ]);
+
+        $nextOrderNumber = (int) $this->pdo->lastInsertId();
+        if ($nextOrderNumber < 1001) {
+            throw new StorageUnavailableException('Forge order storage is currently unavailable.');
+        }
+
+        return $nextOrderNumber;
+    }
+
+    /**
+     * @param mixed $value
+     */
+    private function normalizeNullableOrderNumber($value): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (is_int($value)) {
+            return $value > 0 ? $value : null;
+        }
+
+        if (is_string($value) && preg_match('/^\d+$/', trim($value))) {
+            $normalized = (int) trim($value);
+            return $normalized > 0 ? $normalized : null;
+        }
+
+        return null;
     }
 }

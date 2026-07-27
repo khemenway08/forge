@@ -322,6 +322,7 @@
             server_received_at: result.receivedAt,
             server_payload_sha256: result.payloadSha256,
             server_created: result.created,
+            forge_order_number: result.forgeOrderNumber,
             last_server_upload_error: null
           });
 
@@ -910,6 +911,7 @@
           server_received_at: result.receivedAt,
           server_payload_sha256: result.payloadSha256,
           server_created: result.created,
+          forge_order_number: result.forgeOrderNumber,
           last_server_upload_error: null
         });
 
@@ -1414,6 +1416,11 @@
     if (!forgeOrderUuid) {
       throw new Error('Forge local order records require forge_order_uuid.');
     }
+    const forgeOrderNumber = normalizeNullableOrderNumber(
+      record.forge_order_number == null
+        ? (record.payload && typeof record.payload === 'object' ? record.payload.forge_order_number : null)
+        : record.forge_order_number
+    );
 
     const submittedAt = asTrimmedString(record.submitted_at);
     const localSavedAt = asTrimmedString(record.local_saved_at);
@@ -1438,11 +1445,18 @@
       payload: normalizedPayload,
       has_open_flags: record.has_open_flags
     });
+    const payloadWithOrderNumber = forgeOrderNumber === null
+      ? normalizedPayload
+      : {
+        ...normalizedPayload,
+        forge_order_number: forgeOrderNumber
+      };
 
     return deepCloneValue({
       record_type: asTrimmedString(record.record_type) || 'forge_local_order',
       record_version: asTrimmedString(record.record_version) || '1.0',
       forge_order_uuid: forgeOrderUuid,
+      forge_order_number: forgeOrderNumber,
       status: asTrimmedString(record.status) || 'submitted',
       sync_status: asTrimmedString(record.sync_status) || 'pending',
       submitted_at: submittedAt,
@@ -1468,7 +1482,7 @@
       ready_to_pack_at: readyToPackAt,
       packed_at: record.packed_at == null ? null : asTrimmedString(record.packed_at),
       fulfilled_at: record.fulfilled_at == null ? null : asTrimmedString(record.fulfilled_at),
-      payload: normalizedPayload
+      payload: payloadWithOrderNumber
     });
   }
 
@@ -1755,6 +1769,20 @@
     return normalized && !Number.isNaN(Date.parse(normalized)) ? normalized : null;
   }
 
+  function normalizeNullableOrderNumber(value) {
+    if (value === null || value === undefined || value === '') {
+      return null;
+    }
+    if (Number.isInteger(value)) {
+      return value > 0 ? value : null;
+    }
+    if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+      const parsed = Number.parseInt(value.trim(), 10);
+      return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+    }
+    return null;
+  }
+
   function validateServerUploadSuccessResult(orderUuid, result) {
     const source = result && typeof result === 'object' ? result : {};
     if (asTrimmedString(source.forgeOrderUuid) !== orderUuid) {
@@ -1768,6 +1796,9 @@
     }
     if (typeof source.created !== 'boolean') {
       throw new Error('The server upload result requires a created flag.');
+    }
+    if (source.forgeOrderNumber !== undefined && source.forgeOrderNumber !== null && normalizeNullableOrderNumber(source.forgeOrderNumber) === null) {
+      throw new Error('The server upload result requires a valid forge order number when provided.');
     }
   }
 

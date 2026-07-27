@@ -60,6 +60,7 @@ function createSuccessResult(overrides = {}) {
   return {
     ok: true,
     forgeOrderUuid: 'sync-order-1',
+    forgeOrderNumber: 1001,
     created: true,
     receivedAt: '2026-07-17T10:05:00.000Z',
     payloadSha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -248,6 +249,8 @@ test('successful sync records stored state and keeps sync_status pending', async
   assert.equal(result.record.server_upload_status, orderStoreModule.SERVER_UPLOAD_STATUSES.stored);
   assert.equal(result.record.sync_status, 'pending');
   assert.equal(storedRecord.sync_status, 'pending');
+  assert.equal(storedRecord.forge_order_number, 1001);
+  assert.equal(storedRecord.payload.forge_order_number, 1001);
   assert.equal(storedRecord.server_created, false);
   assert.equal(storedRecord.server_payload_sha256, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
 });

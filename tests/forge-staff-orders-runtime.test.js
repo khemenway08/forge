@@ -158,6 +158,7 @@ test('authenticated hosted session loads adapted server orders', async () => {
             },
             {
               forge_order_uuid: 'order-3',
+              forge_order_number: 1001,
               submitted_at: '2026-07-18T14:00:00Z',
               received_at: '2026-07-18T14:05:00Z',
               updated_at: '2026-07-18T14:05:00Z',
@@ -179,6 +180,8 @@ test('authenticated hosted session loads adapted server orders', async () => {
   assert.equal(result.readOnly, true);
   assert.equal(result.records.length, 2);
   assert.equal(result.records[0].forge_order_uuid, 'order-3');
+  assert.equal(result.records[0].forge_order_number, 1001);
+  assert.equal(result.records[0].payload.forge_order_number, 1001);
   assert.equal(result.records[0].sync_status, 'synced');
   assert.equal(result.records[0].staff_read_only, true);
   assert.equal(result.records[0].production_status, 'tray_assigned');
