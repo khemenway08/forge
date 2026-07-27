@@ -451,6 +451,82 @@ test('assignTrayToOrder prevents one tray from being assigned twice and one orde
   assert.equal(orderB.production_status, orderStoreModule.PRODUCTION_STATUSES.submitted);
 });
 
+test('existing local orders without an internal note remain readable and unchanged until explicitly updated', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore();
+
+  await store.saveNewOrder(createRecord({
+    forge_order_uuid: 'order-no-note',
+    payload: {
+      forge_order_uuid: 'order-no-note',
+      customer: { full_name: 'Historical Customer' },
+      items: [{ quantity: 1 }],
+      pricing: { estimated_total_cents: 3000 }
+    }
+  }));
+
+  const record = await store.getOrder('order-no-note');
+
+  assert.equal(record.internal_note, null);
+  assert.equal(record.has_internal_note, false);
+  assert.equal(record.payload.customer.full_name, 'Historical Customer');
+});
+
+test('updateInternalNote changes only the intended local order note and preserves unrelated order fields', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore({
+    now: () => new Date('2026-07-27T16:45:00.000Z')
+  });
+
+  await store.saveNewOrder(createRecord({
+    forge_order_uuid: 'order-note',
+    forge_order_number: 1042,
+    event_id: 'event-1',
+    current_tray_number: 7,
+    production_status: orderStoreModule.PRODUCTION_STATUSES.inProduction,
+    payload: {
+      forge_order_uuid: 'order-note',
+      customer: { full_name: 'Kyle Hemenway' },
+      fulfillment: { method: 'shipping' },
+      items: [{ line_id: 'line-1', quantity: 2, completed_quantity: 1, production_status: 'in_production' }],
+      pricing: { estimated_total_cents: 3000 }
+    }
+  }));
+
+  const result = await store.updateInternalNote('order-note', 'Customer confirmed spelling.\nCall before shipping.');
+  const updated = await store.getOrder('order-note');
+
+  assert.equal(result.order.internal_note, 'Customer confirmed spelling.\nCall before shipping.');
+  assert.equal(updated.internal_note, 'Customer confirmed spelling.\nCall before shipping.');
+  assert.equal(updated.has_internal_note, true);
+  assert.equal(updated.forge_order_uuid, 'order-note');
+  assert.equal(updated.forge_order_number, 1042);
+  assert.equal(updated.event_id, 'event-1');
+  assert.equal(updated.current_tray_number, 7);
+  assert.equal(updated.production_status, orderStoreModule.PRODUCTION_STATUSES.inProduction);
+  assert.equal(updated.completed_item_count, 1);
+  assert.equal(updated.payload.customer.full_name, 'Kyle Hemenway');
+  assert.equal(updated.payload.fulfillment.method, 'shipping');
+});
+
+test('updateInternalNote clears blank local notes intentionally', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore();
+
+  await store.saveNewOrder(createRecord({
+    forge_order_uuid: 'order-clear-note',
+    internal_note: 'Paid cash at show.',
+    payload: {
+      forge_order_uuid: 'order-clear-note',
+      customer: { full_name: 'Meagan Smith' },
+      items: [{ quantity: 1 }],
+      pricing: { estimated_total_cents: 3000 }
+    }
+  }));
+
+  const result = await store.updateInternalNote('order-clear-note', '   \n\t  ');
+
+  assert.equal(result.order.internal_note, null);
+  assert.equal(result.order.has_internal_note, false);
+});
+
 test('legacy item production fields normalize on read without rewriting the order', async () => {
   const store = orderStoreModule.createInMemoryOrderStore();
 

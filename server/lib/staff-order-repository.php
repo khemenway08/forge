@@ -43,8 +43,13 @@ final class ProductionOrderItemNotCompletableException extends \RuntimeException
 {
 }
 
+final class InternalOrderNoteTooLongException extends \RuntimeException
+{
+}
+
 final class PdoStaffOrderRepository
 {
+    private const INTERNAL_NOTE_MAX_LENGTH = 4000;
     private const ORDER_STATUS_SUBMITTED = 'submitted';
     private const ORDER_STATUS_TRAY_ASSIGNED = 'tray_assigned';
     private const ORDER_STATUS_IN_PRODUCTION = 'in_production';
@@ -91,6 +96,7 @@ final class PdoStaffOrderRepository
                     updated_at,
                     device_id,
                     event_id,
+                    internal_note,
                     payload_json,
                     payload_sha256,
                     production_status,
@@ -165,6 +171,7 @@ final class PdoStaffOrderRepository
                     updated_at,
                     device_id,
                     event_id,
+                    internal_note,
                     payload_json,
                     payload_sha256,
                     production_status,
@@ -597,6 +604,74 @@ final class PdoStaffOrderRepository
         }
     }
 
+    /**
+     * @return array{
+     *   order: array<string, mixed>,
+     *   internal_note: ?string
+     * }
+     */
+    public function updateInternalNote(string $forgeOrderUuid, ?string $internalNote): array
+    {
+        $orderUuid = trim($forgeOrderUuid);
+        if ($orderUuid === '') {
+            throw new StaffOrderNotFoundException('That order could not be found.');
+        }
+
+        $normalizedInternalNote = normalizeInternalOrderNoteForStorage($internalNote, self::INTERNAL_NOTE_MAX_LENGTH);
+        $timestamp = gmdate('Y-m-d H:i:s.u');
+
+        try {
+            $this->pdo->beginTransaction();
+
+            $orderRow = $this->loadOrderRowForUpdate($orderUuid);
+            if ($orderRow === null) {
+                throw new StaffOrderNotFoundException('That order could not be found.');
+            }
+
+            $updateOrder = $this->pdo->prepare(
+                'UPDATE forge_orders
+                 SET internal_note = :internal_note,
+                     updated_at = :updated_at
+                 WHERE forge_order_uuid = :forge_order_uuid'
+            );
+            $updateOrder->bindValue(':internal_note', $normalizedInternalNote, $normalizedInternalNote === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+            $updateOrder->bindValue(':updated_at', $timestamp, PDO::PARAM_STR);
+            $updateOrder->bindValue(':forge_order_uuid', $orderUuid, PDO::PARAM_STR);
+            $updateOrder->execute();
+
+            $updatedOrderRow = $this->loadOrderRowForUpdate($orderUuid);
+            if (!is_array($updatedOrderRow)) {
+                throw new StorageUnavailableException('Internal notes are currently unavailable.');
+            }
+
+            $this->pdo->commit();
+
+            $normalizedOrder = normalizeStoredStaffOrderRecord(
+                $updatedOrderRow,
+                $this->loadItemProductionRowsForOrder($orderUuid)
+            );
+
+            return [
+                'order' => $normalizedOrder,
+                'internal_note' => $normalizedOrder['internal_note'] ?? null,
+            ];
+        } catch (
+            StaffOrderNotFoundException
+            | InternalOrderNoteTooLongException
+            | StorageUnavailableException $exception
+        ) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $exception;
+        } catch (PDOException $exception) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw new StorageUnavailableException('Internal notes are currently unavailable.', 0, $exception);
+        }
+    }
+
     private function ensureConfiguredTrays(): void
     {
         try {
@@ -662,6 +737,7 @@ final class PdoStaffOrderRepository
                 updated_at,
                 device_id,
                 event_id,
+                internal_note,
                 payload_json,
                 payload_sha256,
                 production_status,
@@ -980,6 +1056,8 @@ function normalizeStoredStaffOrderRecord($record, array $itemProductionRows = []
         'updated_at' => OrderPayload::databaseDateTimeToIso8601((string) ($record['updated_at'] ?? '')),
         'device_id' => normalizeNullableString($record['device_id'] ?? null),
         'event_id' => normalizeNullableString($record['event_id'] ?? null),
+        'internal_note' => normalizeStoredInternalOrderNote($record['internal_note'] ?? null),
+        'has_internal_note' => normalizeStoredInternalOrderNote($record['internal_note'] ?? null) !== null,
         'payload_sha256' => trim((string) ($record['payload_sha256'] ?? '')),
         'payload' => withNormalizedPayloadOrderNumber(
             $normalizedPayload,
@@ -1048,6 +1126,50 @@ function normalizeNullableString($value): ?string
 
     $normalized = trim($value);
     return $normalized === '' ? null : $normalized;
+}
+
+/**
+ * @param mixed $value
+ */
+function normalizeStoredInternalOrderNote($value): ?string
+{
+    if (!is_string($value)) {
+        return null;
+    }
+
+    $normalized = str_replace(["\r\n", "\r"], "\n", $value);
+    return trim($normalized) === '' ? null : $normalized;
+}
+
+/**
+ * @param mixed $value
+ */
+function normalizeInternalOrderNoteForStorage($value, int $maxLength): ?string
+{
+    if ($value === null) {
+        return null;
+    }
+
+    if (!is_string($value)) {
+        throw new \InvalidArgumentException('A valid internal note is required.');
+    }
+
+    $normalized = str_replace(["\r\n", "\r"], "\n", $value);
+    if (trim($normalized) === '') {
+        return null;
+    }
+
+    if (function_exists('mb_strlen')) {
+        $noteLength = mb_strlen($normalized, 'UTF-8');
+    } else {
+        $noteLength = strlen($normalized);
+    }
+
+    if ($noteLength > $maxLength) {
+        throw new InternalOrderNoteTooLongException(sprintf('Internal notes must be %d characters or fewer.', $maxLength));
+    }
+
+    return $normalized;
 }
 
 /**

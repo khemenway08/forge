@@ -1446,6 +1446,80 @@ $runner->run('stored staff order records stay in production when open flags rema
     assertSame(true, $record['has_open_flags']);
 });
 
+$runner->run('historical staff order records without an internal note remain readable and unchanged', static function (): void {
+    $record = \Forge\Server\normalizeStoredStaffOrderRecord([
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174401',
+        'forge_order_number' => 1042,
+        'record_version' => '1.0',
+        'source' => 'customer_kiosk',
+        'submitted_at' => '2026-07-19 10:00:00.123456',
+        'received_at' => '2026-07-19 10:05:00.123456',
+        'updated_at' => '2026-07-19 10:06:00.123456',
+        'device_id' => 'ipad-1',
+        'event_id' => 'event-1',
+        'payload_json' => json_encode(createValidPayload(), JSON_THROW_ON_ERROR),
+        'payload_sha256' => str_repeat('a', 64),
+        'production_status' => 'submitted',
+        'current_tray_number' => null,
+        'ready_to_pack_at' => null,
+    ]);
+
+    assertSame(null, $record['internal_note']);
+    assertSame(false, $record['has_internal_note']);
+    assertSame('Kyle Hemenway', $record['payload']['customer']['full_name']);
+});
+
+$runner->run('stored staff order records surface the private internal note separately from the immutable customer payload', static function (): void {
+    $payload = createValidPayload();
+    $payload['customer']['full_name'] = 'Meagan Smith';
+
+    $record = \Forge\Server\normalizeStoredStaffOrderRecord([
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174402',
+        'forge_order_number' => 1043,
+        'record_version' => '1.0',
+        'source' => 'customer_kiosk',
+        'submitted_at' => '2026-07-19 10:00:00.123456',
+        'received_at' => '2026-07-19 10:05:00.123456',
+        'updated_at' => '2026-07-19 10:06:00.123456',
+        'device_id' => 'ipad-1',
+        'event_id' => 'event-1',
+        'internal_note' => "Customer confirmed spelling.\nCall before shipping.",
+        'payload_json' => json_encode($payload, JSON_THROW_ON_ERROR),
+        'payload_sha256' => str_repeat('b', 64),
+        'production_status' => 'submitted',
+        'current_tray_number' => null,
+        'ready_to_pack_at' => null,
+    ]);
+
+    assertSame("Customer confirmed spelling.\nCall before shipping.", $record['internal_note']);
+    assertSame(true, $record['has_internal_note']);
+    assertSame(false, array_key_exists('internal_note', $record['payload']));
+    assertSame('Meagan Smith', $record['payload']['customer']['full_name']);
+});
+
+$runner->run('internal order notes preserve quotes apostrophes and line breaks safely', static function (): void {
+    $note = "Customer confirmed \"O'Brien\" spelling.\r\nCall before shipping.\nPaid cash at show.";
+    $normalized = \Forge\Server\normalizeInternalOrderNoteForStorage($note, 4000);
+
+    assertSame("Customer confirmed \"O'Brien\" spelling.\nCall before shipping.\nPaid cash at show.", $normalized);
+});
+
+$runner->run('blank internal order notes normalize to null safely', static function (): void {
+    assertSame(null, \Forge\Server\normalizeInternalOrderNoteForStorage(" \r\n\t ", 4000));
+});
+
+$runner->run('excessively long internal order notes are rejected safely', static function (): void {
+    assertThrows(
+        static function (): void {
+            \Forge\Server\normalizeInternalOrderNoteForStorage(str_repeat('n', 4001), 4000);
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof \Forge\Server\InternalOrderNoteTooLongException);
+            assertSame('Internal notes must be 4000 characters or fewer.', $exception->getMessage());
+        }
+    );
+});
+
 $runner->run('configured tray numbers are deduplicated and sorted numerically', static function (): void {
     $trayNumbers = \Forge\Server\parseConfiguredTrayNumbers('12, 2, 7 2 4');
 
@@ -2975,6 +3049,26 @@ $runner->run('finished hat catalog endpoints require staff authentication enforc
     assertTrue(strpos($sharedEndpointSource, "function forge_finished_hat_catalog_resolve_absolute_photo_path(?string \$photoPath): ?string") !== false);
     assertTrue(strpos($repositorySource, 'forge_catalog_finished_hats') !== false);
     assertTrue(strpos($repositorySource, 'forge_orders') === false);
+});
+
+$runner->run('internal note migration and endpoint stay staff-only and public endpoints exclude private note fields', static function (): void {
+    $migrationSource = file_get_contents(dirname(__DIR__) . '/migrations/011_add_internal_order_notes.sql');
+    $staffEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/internal-note.php');
+    $staffOrdersEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/orders.php');
+    $publicOrdersEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/orders.php');
+    $publicEventStatusEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/event-status.php');
+
+    assertTrue(is_string($migrationSource));
+    assertTrue(is_string($staffEndpointSource));
+    assertTrue(is_string($staffOrdersEndpointSource));
+    assertTrue(is_string($publicOrdersEndpointSource));
+    assertTrue(is_string($publicEventStatusEndpointSource));
+    assertTrue(strpos($migrationSource, 'ALTER TABLE forge_orders ADD COLUMN internal_note TEXT NULL') !== false);
+    assertTrue(strpos($staffEndpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($staffEndpointSource, 'updateInternalNote') !== false);
+    assertTrue(strpos($staffOrdersEndpointSource, 'internal_note') === false);
+    assertTrue(strpos($publicOrdersEndpointSource, 'internal_note') === false);
+    assertTrue(strpos($publicEventStatusEndpointSource, 'internal_note') === false);
 });
 
 $runner->run('invalid stored staff order payload fails safely', static function (): void {

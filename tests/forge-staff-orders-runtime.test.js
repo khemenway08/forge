@@ -689,6 +689,42 @@ test('hosted item completion returns the updated shared order safely', async () 
   assert.equal(result.item.production_status, 'complete');
 });
 
+test('hosted internal note updates return the refreshed shared order safely', async () => {
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'https:', hostname: 'forge.example.com' },
+    staffApiClient: {
+      async updateInternalNote(orderUuid, internalNote) {
+        assert.equal(orderUuid, 'order-11');
+        assert.equal(internalNote, 'Customer confirmed spelling.\nCall before shipping.');
+        return {
+          ok: true,
+          authenticated: true,
+          internalNote: 'Customer confirmed spelling.\nCall before shipping.',
+          order: {
+            forge_order_uuid: 'order-11',
+            submitted_at: '2026-07-20T10:00:00Z',
+            received_at: '2026-07-20T10:05:00Z',
+            updated_at: '2026-07-20T10:07:00Z',
+            internal_note: 'Customer confirmed spelling.\nCall before shipping.',
+            has_internal_note: true,
+            production_status: 'tray_assigned',
+            current_tray_number: 6,
+            payload: { customer: { full_name: 'Kyle' }, items: [] }
+          }
+        };
+      }
+    }
+  });
+
+  const result = await runtime.updateInternalNote('order-11', 'Customer confirmed spelling.\nCall before shipping.');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.internalNote, 'Customer confirmed spelling.\nCall before shipping.');
+  assert.equal(result.order.internal_note, 'Customer confirmed spelling.\nCall before shipping.');
+  assert.equal(result.order.has_internal_note, true);
+  assert.equal(result.order.current_tray_number, 6);
+});
+
 test('terminal or later production statuses remain preserved and never reopen tray assignment in hosted mode', async () => {
   const records = staffOrdersRuntime.adaptServerOrdersForQueue([
     {
@@ -784,4 +820,37 @@ test('localhost tray assignment stays on the local order-store path without host
   assert.equal(result.readOnly, false);
   assert.deepEqual(calls, [['assignTrayToOrder', 'order-local', 5]]);
   assert.equal(result.tray.tray_number, 5);
+});
+
+test('localhost internal note updates stay on the local order-store path without hosted requests', async () => {
+  const calls = [];
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'http:', hostname: 'localhost' },
+    localOrderStore: {
+      async updateInternalNote(forgeOrderUuid, internalNote) {
+        calls.push(['updateInternalNote', forgeOrderUuid, internalNote]);
+        return {
+          order: {
+            forge_order_uuid: forgeOrderUuid,
+            internal_note: internalNote,
+            has_internal_note: true,
+            payload: { customer: { full_name: 'Kyle' }, items: [] }
+          }
+        };
+      }
+    },
+    staffApiClient: {
+      async updateInternalNote() {
+        calls.push(['hostedUpdateInternalNote']);
+        throw new Error('hosted client should not be called');
+      }
+    }
+  });
+
+  const result = await runtime.updateInternalNote('order-local', 'Paid cash at show.');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.readOnly, false);
+  assert.equal(result.order.internal_note, 'Paid cash at show.');
+  assert.deepEqual(calls, [['updateInternalNote', 'order-local', 'Paid cash at show.']]);
 });

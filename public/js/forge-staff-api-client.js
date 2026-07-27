@@ -18,6 +18,7 @@
   const ACTIVE_EVENT_ENDPOINT = 'active-event.php';
   const START_EVENT_ENDPOINT = 'start-event.php';
   const END_EVENT_ENDPOINT = 'end-event.php';
+  const INTERNAL_NOTE_ENDPOINT = 'internal-note.php';
   const TRAYS_ENDPOINT = 'trays.php';
   const ASSIGN_TRAY_ENDPOINT = 'assign-tray.php';
   const COMPLETE_ITEM_ENDPOINT = 'complete-item.php';
@@ -33,6 +34,7 @@
     storage_unavailable: 'Staff order retrieval is currently unavailable.',
     event_not_found: 'That event could not be found.',
     event_conflict: 'That event could not be updated right now.',
+    internal_note_too_long: 'Internal notes are too long.',
     no_trays_configured: 'No production trays are configured.',
     order_not_found: 'That order could not be found.',
     tray_not_found: 'That production tray could not be found.',
@@ -430,6 +432,51 @@
       }
     }
 
+    async function updateInternalNote(forgeOrderUuid, internalNote) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      if (!orderUuid) {
+        throw new ForgeStaffApiError('invalid_request', 'A saved order is required.');
+      }
+
+      const normalizedInternalNote = normalizeInternalNoteValue(internalNote);
+      let requestBody = '';
+      try {
+        requestBody = JSON.stringify({
+          forge_order_uuid: orderUuid,
+          internal_note: normalizedInternalNote
+        });
+      } catch (error) {
+        throw new ForgeStaffApiError('invalid_request', 'Internal notes could not be prepared.', { cause: error });
+      }
+
+      try {
+        const response = await performJsonRequest(fetchImpl, `${baseUrl}/${INTERNAL_NOTE_ENDPOINT}`, timeoutMs, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json'
+          },
+          credentials: 'same-origin',
+          cache: 'no-store',
+          body: requestBody
+        });
+        const payload = await parseJsonResponse(response);
+        if (response.status === 401) {
+          return {
+            ok: false,
+            authenticated: false,
+            unauthenticated: true
+          };
+        }
+        if (!response.ok) {
+          throw buildServerError(response.status, payload);
+        }
+        return normalizeInternalNotePayload(payload);
+      } catch (error) {
+        throw normalizeClientError(error);
+      }
+    }
+
     async function submitEventMutation(url, payload) {
       let requestBody = '';
       try {
@@ -480,7 +527,8 @@
       listOrders,
       listTrays,
       assignTray,
-      completeItemQuantity
+      completeItemQuantity,
+      updateInternalNote
     };
   }
 
@@ -679,6 +727,24 @@
     };
   }
 
+  function normalizeInternalNotePayload(payload) {
+    const application = asTrimmedString(payload && payload.application);
+    const apiVersion = asTrimmedString(payload && payload.api_version);
+    const status = asTrimmedString(payload && payload.status);
+    const data = payload && typeof payload === 'object' ? payload.data : null;
+
+    if (application !== 'Forge' || apiVersion !== '1' || status !== 'ok' || !data || typeof data !== 'object') {
+      throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+    }
+
+    return {
+      ok: true,
+      authenticated: true,
+      internalNote: normalizeNullableString(data.internal_note),
+      order: data.order && typeof data.order === 'object' ? data.order : null
+    };
+  }
+
   function normalizeEventsPayload(payload) {
     const application = asTrimmedString(payload && payload.application);
     const apiVersion = asTrimmedString(payload && payload.api_version);
@@ -756,6 +822,18 @@
       assigned_at: normalizeNullableString(record && record.assigned_at),
       updated_at: normalizeNullableString(record && record.updated_at)
     };
+  }
+
+  function normalizeInternalNoteValue(value) {
+    if (value === null || value === undefined) {
+      return null;
+    }
+
+    if (typeof value !== 'string') {
+      throw new ForgeStaffApiError('invalid_request', 'A valid internal note is required.');
+    }
+
+    return value;
   }
 
   function normalizeAssignmentHistoryRecord(record) {

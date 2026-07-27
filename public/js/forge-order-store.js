@@ -652,6 +652,48 @@
       });
     }
 
+    async function updateInternalNote(forgeOrderUuid, internalNote) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      if (!orderUuid) {
+        throw new Error('Internal note updates require a Forge order UUID.');
+      }
+
+      const normalizedInternalNote = normalizeInternalNote(internalNote);
+      const db = await openOrderStore();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(objectStoreNames.orders, 'readwrite');
+        const ordersStore = transaction.objectStore(objectStoreNames.orders);
+        const timestamp = normalizeDateValue(getNow()).toISOString();
+        let updatedOrder = null;
+
+        transaction.oncomplete = () => resolve({
+          ok: true,
+          order: updatedOrder
+        });
+        transaction.onerror = () => reject(transaction.__forgeError || transaction.error || new Error('Internal notes could not be saved.'));
+        transaction.onabort = () => reject(transaction.__forgeError || transaction.error || new Error('Internal note update was aborted.'));
+
+        const orderRequest = ordersStore.get(orderUuid);
+        orderRequest.onerror = () => abortTransaction(transaction, orderRequest.error || new Error('The selected order could not be loaded.'));
+        orderRequest.onsuccess = () => {
+          const storedOrder = orderRequest.result;
+          if (!storedOrder) {
+            abortTransaction(transaction, new Error('That saved order could not be found.'));
+            return;
+          }
+
+          updatedOrder = normalizeOrderRecordForRead({
+            ...deepCloneValue(storedOrder),
+            updated_at: timestamp,
+            internal_note: normalizedInternalNote
+          });
+
+          const putRequest = ordersStore.put(deepCloneValue(updatedOrder));
+          putRequest.onerror = () => abortTransaction(transaction, putRequest.error || new Error('The internal note could not be saved.'));
+        };
+      });
+    }
+
     async function completePackingVerification(forgeOrderUuid, verifiedItemIds, packingNote) {
       const orderUuid = asTrimmedString(forgeOrderUuid);
       if (!orderUuid) {
@@ -807,6 +849,7 @@
       getPackingVerificationForOrder,
       assignTrayToOrder,
       incrementOrderItemCompletion,
+      updateInternalNote,
       completePackingVerification
     };
   }
@@ -1096,6 +1139,26 @@
           record: updatedOrder,
           order: updatedOrder,
           item: deepCloneValue(updatedItem)
+        };
+      },
+      async updateInternalNote(forgeOrderUuid, internalNote) {
+        const orderUuid = asTrimmedString(forgeOrderUuid);
+        const storedOrder = records.get(orderUuid);
+        if (!storedOrder) {
+          throw new Error('That saved order could not be found.');
+        }
+
+        const timestamp = normalizeDateValue(getNow()).toISOString();
+        const updatedOrder = normalizeOrderRecordForRead({
+          ...deepCloneValue(storedOrder),
+          updated_at: timestamp,
+          internal_note: normalizeInternalNote(internalNote)
+        });
+
+        records.set(orderUuid, deepCloneValue(updatedOrder));
+        return {
+          ok: true,
+          order: updatedOrder
         };
       },
       async completePackingVerification(forgeOrderUuid, verifiedItemIds, packingNote) {
@@ -1474,6 +1537,8 @@
       server_created: record.server_created === true ? true : (record.server_created === false ? false : null),
       event_id: record.event_id == null ? null : asTrimmedString(record.event_id),
       device_id: record.device_id == null ? null : asTrimmedString(record.device_id),
+      internal_note: normalizeInternalNote(record.internal_note),
+      has_internal_note: normalizeInternalNote(record.internal_note) !== null,
       has_open_flags: hasOpenFlags,
       production_status: productionStatus,
       current_tray_number: currentTrayNumber,
@@ -1488,6 +1553,19 @@
 
   function normalizeOrderRecordForRead(record) {
     return normalizeLocalOrderRecord(record);
+  }
+
+  function normalizeInternalNote(value) {
+    if (value === null || value === undefined) {
+      return null;
+    }
+
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    const normalized = value.replace(/\r\n?/g, '\n');
+    return normalized.trim() === '' ? null : normalized;
   }
 
   function createTrayRecord(record = {}) {

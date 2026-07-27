@@ -151,6 +151,10 @@ const staffOrdersState = {
   detailLoading: false,
   detailError: '',
   detailSavingLineId: '',
+  detailInternalNoteDraft: '',
+  detailInternalNoteSaving: false,
+  detailInternalNoteStatus: '',
+  detailInternalNoteStatusTone: 'success',
   trayDialogOpen: false,
   trayDialogOrderUuid: '',
   trayDialogRecord: null,
@@ -5141,11 +5145,29 @@ function ensureStaffOrderDetailUi() {
       return;
     }
 
+    if (action === 'staff-save-internal-note' && orderUuid && !staffOrdersState.detailInternalNoteSaving) {
+      submitStaffInternalNote(orderUuid);
+      return;
+    }
+
     if (action === 'staff-complete-item' && orderUuid && !staffOrdersState.detailSavingLineId) {
       const lineId = event.target.closest('[data-line-id]')?.dataset.lineId;
       if (lineId) {
         submitStaffItemCompletion(orderUuid, lineId);
       }
+    }
+  });
+
+  staffOrderDetailDialog?.addEventListener('input', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLTextAreaElement)) {
+      return;
+    }
+
+    if (target.matches('[data-staff-internal-note-field]')) {
+      staffOrdersState.detailInternalNoteDraft = target.value.slice(0, 4000);
+      staffOrdersState.detailInternalNoteStatus = '';
+      staffOrdersState.detailInternalNoteStatusTone = 'success';
     }
   });
 
@@ -6443,6 +6465,7 @@ function buildStaffOrderCardMarkup(record, filters) {
   const hasActiveItemFilters = ['product', 'ornamentType', 'size', 'treeColor', 'bowColor', 'year', 'productionStatus']
     .some((key) => String(filters?.[key] || 'all').toLowerCase() !== 'all');
   const hasFlags = Array.isArray(payload.open_flags) && payload.open_flags.length > 0;
+  const hasInternalNote = Boolean(record.has_internal_note) || sanitizeText(record.internal_note || '') !== '';
   const trayLabel = getOrderTrayLabel(record);
   const productionStatusLabel = getOrderProductionStatusLabel(record);
   const completionSummary = getOrderCompletionSummary(record);
@@ -6462,6 +6485,7 @@ function buildStaffOrderCardMarkup(record, filters) {
           <span class="staff-status-badge ${escapeHtml(getOrderProductionStatusBadgeClass(record))}">${escapeHtml(productionStatusLabel)}</span>
           ${buildOrderEventBadges(record)}
           ${buildStaffSyncBadgeMarkup(record)}
+          ${hasInternalNote ? '<span class="staff-status-badge staff-status-badge--sync-pending">NOTE</span>' : ''}
           ${hasFlags ? '<span class="staff-flag-badge">Open Flags</span>' : ''}
         </div>
       </div>
@@ -6556,6 +6580,10 @@ async function openStaffOrderDetail(forgeOrderUuid) {
   staffOrdersState.detailLoading = true;
   staffOrdersState.detailError = '';
   staffOrdersState.detailSavingLineId = '';
+  staffOrdersState.detailInternalNoteDraft = '';
+  staffOrdersState.detailInternalNoteSaving = false;
+  staffOrdersState.detailInternalNoteStatus = '';
+  staffOrdersState.detailInternalNoteStatusTone = 'success';
   staffOrdersState.detailOrderUuid = forgeOrderUuid;
   staffOrdersState.detailRecord = null;
   staffOrdersState.detailPackingVerification = null;
@@ -6577,6 +6605,7 @@ async function openStaffOrderDetail(forgeOrderUuid) {
       staffOrdersState.detailError = getStaffSourceConfig().orderDetailMissingText;
     } else {
       staffOrdersState.detailRecord = record;
+      staffOrdersState.detailInternalNoteDraft = sanitizeText(record.internal_note || '');
       staffOrdersState.detailPackingVerification = packingVerification;
     }
   } catch (error) {
@@ -6605,6 +6634,10 @@ function closeStaffOrderDetail() {
   staffOrdersState.detailPackingVerification = null;
   staffOrdersState.detailError = '';
   staffOrdersState.detailSavingLineId = '';
+  staffOrdersState.detailInternalNoteDraft = '';
+  staffOrdersState.detailInternalNoteSaving = false;
+  staffOrdersState.detailInternalNoteStatus = '';
+  staffOrdersState.detailInternalNoteStatusTone = 'success';
   renderStaffOrderDetail();
   if (lastStaffOrderDetailFocusTarget) {
     lastStaffOrderDetailFocusTarget.focus();
@@ -6677,6 +6710,8 @@ function renderStaffOrderDetail() {
   const syncStatusLabel = getStaffSyncStatusLabel(record);
   const syncStatusBadgeClass = getStaffSyncStatusBadgeClass(record);
   const showRawJsonAction = isLoopbackHost(window.location);
+  const internalNote = sanitizeText(record.internal_note || '');
+  const hasInternalNote = Boolean(record.has_internal_note) || internalNote !== '';
   const showOpenFlagProgressNote = getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.inProduction
     && completionCounts.totalItemCount > 0
     && completionCounts.completedItemCount >= completionCounts.totalItemCount
@@ -6695,6 +6730,7 @@ function renderStaffOrderDetail() {
           <span class="staff-status-badge ${escapeHtml(getOrderProductionStatusBadgeClass(record))}">${escapeHtml(productionStatusLabel)}</span>
           ${buildOrderEventBadges(record)}
           ${buildStaffSyncBadgeMarkup(record)}
+          ${hasInternalNote ? '<span class="staff-status-badge staff-status-badge--sync-pending">NOTE</span>' : ''}
           ${openFlags.length ? '<span class="staff-flag-badge">Open Flags</span>' : ''}
         </div>
         <p class="staff-order-progress-text">${escapeHtml(completionSummary)}</p>
@@ -6738,6 +6774,31 @@ function renderStaffOrderDetail() {
       <div class="staff-order-detail-flags">
         <span>Open Flags</span>
         ${openFlags.length ? `<ul>${openFlags.map((flag) => `<li>${escapeHtml(flag.message || flag.code || 'Open flag')}</li>`).join('')}</ul>` : '<p>No order-level open flags.</p>'}
+      </div>
+    </section>
+
+    <section class="staff-order-detail-section">
+      <h3>Internal Notes</h3>
+      ${staffOrdersState.detailInternalNoteStatus ? buildStaffNoticeMarkup(staffOrdersState.detailInternalNoteStatus, staffOrdersState.detailInternalNoteStatusTone) : ''}
+      <div class="staff-order-detail-row">
+        <span>INTERNAL NOTES</span>
+        <textarea
+          class="staff-packing-note"
+          data-staff-internal-note-field
+          rows="5"
+          maxlength="4000"
+          placeholder="Add a private operational note for staff only."
+          ${staffOrdersState.detailInternalNoteSaving ? 'disabled' : ''}
+        >${escapeHtml(staffOrdersState.detailInternalNoteDraft)}</textarea>
+      </div>
+      <div class="staff-order-card-actions">
+        <button
+          class="primary-button"
+          type="button"
+          data-action="staff-save-internal-note"
+          data-order-uuid="${escapeHtml(record.forge_order_uuid)}"
+          ${staffOrdersState.detailInternalNoteSaving ? 'disabled' : ''}
+        >${staffOrdersState.detailInternalNoteSaving ? 'Saving...' : 'Save Note'}</button>
       </div>
     </section>
 
@@ -6861,6 +6922,48 @@ async function submitStaffItemCompletion(forgeOrderUuid, lineId) {
     renderStaffOrderDetail();
   } finally {
     staffOrdersState.detailSavingLineId = '';
+    renderStaffOrderDetail();
+  }
+}
+
+async function submitStaffInternalNote(forgeOrderUuid) {
+  if (!forgeOrderUuid || staffOrdersState.detailInternalNoteSaving) {
+    return;
+  }
+
+  staffOrdersState.detailInternalNoteSaving = true;
+  staffOrdersState.detailInternalNoteStatus = '';
+  staffOrdersState.detailInternalNoteStatusTone = 'success';
+  staffOrdersState.detailError = '';
+  renderStaffOrderDetail();
+
+  try {
+    const result = await staffRuntime.updateInternalNote(
+      forgeOrderUuid,
+      staffOrdersState.detailInternalNoteDraft
+    );
+    if (!result?.ok) {
+      throw new Error(result?.errorMessage || 'Internal notes could not be saved.');
+    }
+
+    await loadStaffOrdersQueue();
+    const refreshedRecord = staffOrdersState.records.find((record) => record?.forge_order_uuid === forgeOrderUuid) || null;
+    staffOrdersState.detailRecord = refreshedRecord || result?.order || null;
+    staffOrdersState.detailInternalNoteDraft = sanitizeText(
+      (staffOrdersState.detailRecord && staffOrdersState.detailRecord.internal_note) || result?.internalNote || ''
+    );
+    staffOrdersState.detailInternalNoteStatus = staffOrdersState.detailInternalNoteDraft
+      ? 'Internal note saved.'
+      : 'Internal note cleared.';
+    staffOrdersState.detailInternalNoteStatusTone = 'success';
+    renderStaffOrderDetail();
+  } catch (error) {
+    console.error('Forge internal note save failed', error);
+    staffOrdersState.detailInternalNoteStatus = error?.message || 'Internal notes could not be saved.';
+    staffOrdersState.detailInternalNoteStatusTone = 'error';
+    renderStaffOrderDetail();
+  } finally {
+    staffOrdersState.detailInternalNoteSaving = false;
     renderStaffOrderDetail();
   }
 }

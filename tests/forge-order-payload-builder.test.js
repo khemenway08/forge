@@ -174,6 +174,28 @@ test('active event snapshots preserve immutable event metadata on the order payl
   assert.equal(payload.event.event_location, 'Denver');
 });
 
+test('customer order payloads exclude private internal notes even if local item state contains one', () => {
+  const payload = buildForgeOrderPayload(
+    createOrderState([
+      createItem({
+        internal_note: 'Paid cash at show.'
+      })
+    ], {
+      customerDraft: {
+        internal_note: 'Call before shipping.'
+      }
+    }),
+    createContext({
+      internal_note: 'Needs artwork approval.'
+    })
+  );
+
+  assert.doesNotMatch(JSON.stringify(payload), /internal_note/);
+  assert.doesNotMatch(JSON.stringify(payload), /Paid cash at show\./);
+  assert.doesNotMatch(JSON.stringify(payload), /Call before shipping\./);
+  assert.doesNotMatch(JSON.stringify(payload), /Needs artwork approval\./);
+});
+
 test('normalizes a Tree Ornament shipping order with size-based pricing and exact mixed personalization order', () => {
   const item = createItem({
     orderedEntries: [

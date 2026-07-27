@@ -266,6 +266,44 @@
       };
     }
 
+    async function updateInternalNote(forgeOrderUuid, internalNote) {
+      if (environment.dataSource === STAFF_DATA_SOURCES.local) {
+        assertLocalOrderStore(localOrderStore, 'updateInternalNote');
+        const result = await localOrderStore.updateInternalNote(forgeOrderUuid, internalNote);
+        return {
+          ok: true,
+          authenticated: true,
+          dataSource: STAFF_DATA_SOURCES.local,
+          readOnly: false,
+          internalNote: result && Object.prototype.hasOwnProperty.call(result, 'internalNote')
+            ? result.internalNote
+            : normalizeNullableString(result?.order?.internal_note),
+          order: result && result.order ? result.order : null
+        };
+      }
+
+      assertStaffApiClient(staffApiClient, 'updateInternalNote');
+      const result = await staffApiClient.updateInternalNote(forgeOrderUuid, internalNote);
+      if (!result || (!result.ok && result.unauthenticated) || result.authenticated === false) {
+        return {
+          ok: false,
+          authenticated: false,
+          unauthenticated: true,
+          dataSource: STAFF_DATA_SOURCES.server,
+          readOnly: true
+        };
+      }
+
+      return {
+        ok: true,
+        authenticated: true,
+        dataSource: STAFF_DATA_SOURCES.server,
+        readOnly: true,
+        internalNote: normalizeNullableString(result.internalNote),
+        order: adaptServerOrderForQueue(result.order)
+      };
+    }
+
     return {
       environment,
       checkAccess,
@@ -274,7 +312,8 @@
       loadOrders,
       loadTrays,
       assignTrayToOrder,
-      completeItemQuantity
+      completeItemQuantity,
+      updateInternalNote
     };
   }
 
@@ -405,6 +444,8 @@
       server_received_at: asTrimmedString(record && record.received_at) || null,
       server_payload_sha256: asTrimmedString(record && record.payload_sha256) || null,
       server_created: false,
+      internal_note: normalizeNullableString(record && record.internal_note),
+      has_internal_note: Boolean(record && record.has_internal_note) || normalizeNullableString(record && record.internal_note) !== null,
       production_status: productionStatus,
       current_tray_number: trayNumber,
       packed_at: null,

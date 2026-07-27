@@ -225,12 +225,21 @@ function loadForgeAppWithoutStaffModules() {
   finalReviewScreen.dataset.screen = 'final-review';
   const paymentHandoffScreen = createElement('section');
   paymentHandoffScreen.dataset.screen = 'payment-handoff';
+  const thankYouScreen = createElement('section');
+  thankYouScreen.dataset.screen = 'thank-you';
+  const finalReviewItems = createElement('div');
+  const finalReviewSummary = createElement('div');
+  const finalReviewCustomer = createElement('div');
+  const finalReviewDelivery = createElement('div');
+  const thankYouCopy = createElement('p');
+  const thankYouReference = createElement('div');
+  const thankYouDebugTools = createElement('div');
   const paymentMethodButtons = ['card_square', 'cash', 'venmo'].map((paymentMethod) => {
     const button = createElement('button');
     button.dataset.paymentMethod = paymentMethod;
     return button;
   });
-  const allScreens = [welcomeScreen, categoriesScreen, ornamentsScreen, finalReviewScreen, paymentHandoffScreen];
+  const allScreens = [welcomeScreen, categoriesScreen, ornamentsScreen, finalReviewScreen, paymentHandoffScreen, thankYouScreen];
   const appBody = createElement('body');
   const localStorageData = new Map();
   const documentListeners = new Map();
@@ -244,15 +253,22 @@ function loadForgeAppWithoutStaffModules() {
   env.registerSelector('[data-staff-actions="confirm"]', staffConfirmActions);
   env.registerSelector('[data-form="tree-ornament"]', treeForm);
   env.registerSelector('[data-final-review-status]', finalReviewStatus);
+  env.registerSelector('[data-final-review-items]', finalReviewItems);
+  env.registerSelector('[data-final-review-summary]', finalReviewSummary);
+  env.registerSelector('[data-final-review-customer]', finalReviewCustomer);
+  env.registerSelector('[data-final-review-delivery]', finalReviewDelivery);
   env.registerSelector('[data-payment-handoff-status]', paymentHandoffStatus);
   env.registerSelector('[data-payment-handoff-pin]', paymentHandoffPinInput);
   env.registerSelector('[data-payment-handoff-customer-name]', paymentHandoffCustomerName);
   env.registerSelector('[data-payment-handoff-summary]', paymentHandoffSummary);
   env.registerSelector('[data-payment-handoff-total]', paymentHandoffTotal);
   env.registerSelector('[data-payment-handoff-cancel-panel]', paymentHandoffCancelPanel);
+  env.registerSelector('[data-thank-you-copy]', thankYouCopy);
+  env.registerSelector('[data-thank-you-reference]', thankYouReference);
   env.registerSelector('[data-screen="ornaments"]', ornamentsScreen);
   env.registerSelector('[data-screen="final-review"]', finalReviewScreen);
   env.registerSelector('[data-screen="payment-handoff"]', paymentHandoffScreen);
+  env.registerSelector('[data-screen="thank-you"]', thankYouScreen);
   env.registerSelector('.app-shell', appShell);
 
   env.registerSelectorAll('[data-screen]', allScreens);
@@ -262,7 +278,7 @@ function loadForgeAppWithoutStaffModules() {
   env.registerSelectorAll('[data-action="back-ornaments"]', []);
   env.registerSelectorAll('[data-action="view-current-order-utility"]', []);
   env.registerSelectorAll('[data-discard-panel]', []);
-  env.registerSelectorAll('[data-debug-order-tools]', []);
+  env.registerSelectorAll('[data-debug-order-tools]', [thankYouDebugTools]);
   env.registerSelectorAll('[data-contact-choice]', []);
   env.registerSelectorAll('[data-fulfillment-choice]', []);
   env.registerSelectorAll('[data-staff-source-status], [data-ready-source-status]', []);
@@ -428,7 +444,13 @@ function loadForgeAppWithoutStaffModules() {
     paymentHandoffSummary,
     paymentHandoffTotal,
     paymentMethodButtons,
-    localStorageData
+    localStorageData,
+    finalReviewItems,
+    finalReviewSummary,
+    finalReviewCustomer,
+    finalReviewDelivery,
+    thankYouCopy,
+    thankYouReference
   };
 }
 
@@ -475,6 +497,7 @@ function loadForgeHostedStaffAppForTrayDetail() {
   let detailDialogHtml = '';
   let assignTrayButton = null;
   let completionButtons = [];
+  let internalNoteSaveCallCount = 0;
 
   welcomeScreen.dataset.screen = 'welcome';
   staffAccessScreen.dataset.screen = 'staff-access';
@@ -778,6 +801,21 @@ function loadForgeHostedStaffAppForTrayDetail() {
             order: structuredClone(sharedRecord),
             item: structuredClone(sharedRecord.payload.items[0])
           };
+        },
+        async updateInternalNote(orderUuid, internalNote) {
+          internalNoteSaveCallCount += 1;
+          assert.equal(orderUuid, 'shared-order-1');
+          sharedRecord.internal_note = internalNote && String(internalNote).trim() !== '' ? internalNote : null;
+          sharedRecord.has_internal_note = sharedRecord.internal_note !== null;
+          sharedRecord.updated_at = '2026-07-20T12:12:00Z';
+          return {
+            ok: true,
+            authenticated: true,
+            dataSource: 'server',
+            readOnly: true,
+            internalNote: sharedRecord.internal_note,
+            order: structuredClone(sharedRecord)
+          };
         }
       };
     }
@@ -846,6 +884,9 @@ function loadForgeHostedStaffAppForTrayDetail() {
     },
     getCompletionCallCount() {
       return completionCallCount;
+    },
+    getInternalNoteSaveCallCount() {
+      return internalNoteSaveCallCount;
     },
     setSharedRecord(overrides) {
       Object.assign(sharedRecord, structuredClone(overrides));
@@ -1537,6 +1578,110 @@ test('shared server order detail completion button binds to the rendered button 
   await context.openStaffOrderDetail('shared-order-1');
   completionButton = getCompletionButton();
   assert.equal(completionButton, null);
+});
+
+test('shared server order detail renders the internal notes section and note badge when a note exists', async () => {
+  const { context, detailDialog, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
+
+  setSharedRecord({
+    internal_note: 'Customer confirmed spelling.\nPaid cash at show.',
+    has_internal_note: true
+  });
+
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+
+  assert.match(String(detailDialog.innerHTML || ''), /Internal Notes/);
+  assert.match(String(detailDialog.innerHTML || ''), /Customer confirmed spelling\./);
+  assert.match(String(detailDialog.innerHTML || ''), /Paid cash at show\./);
+  assert.match(String(detailDialog.innerHTML || ''), />NOTE</);
+});
+
+test('shared server internal note save updates the note without leaving the order detail', async () => {
+  const { context, detailDialog, getInternalNoteSaveCallCount, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
+
+  setSharedRecord({
+    internal_note: null,
+    has_internal_note: false
+  });
+
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+
+  vm.runInContext(`
+    staffOrdersState.detailInternalNoteDraft = 'Customer confirmed spelling.\\nCall before shipping.';
+  `, context);
+  await context.submitStaffInternalNote('shared-order-1');
+
+  assert.equal(getInternalNoteSaveCallCount(), 1);
+  assert.match(String(detailDialog.innerHTML || ''), /Internal note saved\./);
+  assert.match(String(detailDialog.innerHTML || ''), /Customer confirmed spelling\./);
+  assert.match(String(detailDialog.innerHTML || ''), /Call before shipping\./);
+  assert.match(String(detailDialog.innerHTML || ''), /Close/);
+});
+
+test('customer final review and thank-you screens never render private internal notes', async () => {
+  const {
+    context,
+    finalReviewItems,
+    finalReviewCustomer,
+    finalReviewDelivery,
+    thankYouCopy,
+    thankYouReference
+  } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    customerDraft.fullName = 'Kyle Hemenway';
+    customerDraft.email = 'kyle@example.com';
+    customerDraft.phone = '(303) 507-1567';
+    customerDraft.preferredContact = 'Text';
+    customerDraft.fulfillmentMethod = 'Shipping';
+    customerDraft.addressLine1 = '123 Main Street';
+    customerDraft.city = 'Denver';
+    customerDraft.state = 'CO';
+    customerDraft.postalCode = '80202';
+    customerDraft.country = 'United States';
+    customerDraft.neededBy = '2026-12-01';
+    saveOrderItems([{
+      itemId: 'item-1',
+      line_id: 'line-1',
+      displayName: 'Tree Ornament',
+      quantity: 1,
+      unitPrice: 30,
+      internal_note: 'Paid cash at show.',
+      configurationSnapshot: {
+        size: 'Large',
+        treeColor: 'Green',
+        bowColor: 'Red',
+        familyName: 'Hemenway',
+        year: '2026'
+      },
+      orderedEntries: []
+    }]);
+    renderFinalReview();
+    appState.lastSubmittedOrderUuid = '123e4567-e89b-42d3-a456-426614174099';
+    orderStore.getOrder = async () => ({
+      forge_order_uuid: '123e4567-e89b-42d3-a456-426614174099',
+      forge_order_number: 1042,
+      internal_note: 'Paid cash at show.',
+      payload: {
+        customer: {
+          full_name: 'Kyle Hemenway'
+        }
+      }
+    });
+  `, context);
+
+  assert.doesNotMatch(String(finalReviewItems.innerHTML || ''), /Paid cash at show\./);
+  assert.doesNotMatch(String(finalReviewCustomer.innerHTML || ''), /Paid cash at show\./);
+  assert.doesNotMatch(String(finalReviewDelivery.innerHTML || ''), /Paid cash at show\./);
+
+  await context.renderThankYouScreen();
+
+  assert.equal(thankYouCopy.textContent, 'Kyle Hemenway has been safely saved on this device for the Hilltop Shop team.');
+  assert.match(String(thankYouReference.innerHTML || ''), /Order Reference/);
+  assert.doesNotMatch(String(thankYouCopy.textContent || ''), /Paid cash at show\./);
+  assert.doesNotMatch(String(thankYouReference.innerHTML || ''), /Paid cash at show\./);
 });
 
 test('localhost staff demo controls are available and hosted https keeps them unavailable', async () => {

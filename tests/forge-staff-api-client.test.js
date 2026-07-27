@@ -367,6 +367,43 @@ test('completeItemQuantity sends POST JSON and same-origin credentials with opti
   });
 });
 
+test('updateInternalNote sends POST JSON and same-origin credentials with the private note only', async () => {
+  const requests = [];
+  const client = staffApiClientModule.createForgeStaffApiClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return createJsonResponse(200, {
+        application: 'Forge',
+        api_version: '1',
+        status: 'ok',
+        data: {
+          internal_note: 'Customer confirmed spelling.\nPaid cash at show.',
+          order: {
+            forge_order_uuid: 'order-3',
+            internal_note: 'Customer confirmed spelling.\nPaid cash at show.',
+            has_internal_note: true,
+            payload: { items: [] }
+          }
+        }
+      });
+    }
+  });
+
+  const result = await client.updateInternalNote('order-3', 'Customer confirmed spelling.\nPaid cash at show.');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.internalNote, 'Customer confirmed spelling.\nPaid cash at show.');
+  assert.equal(result.order.internal_note, 'Customer confirmed spelling.\nPaid cash at show.');
+  assert.equal(requests[0].url, '/api/v1/staff/internal-note.php');
+  assert.equal(requests[0].options.method, 'POST');
+  assert.equal(requests[0].options.credentials, 'same-origin');
+  assert.equal(requests[0].options.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    forge_order_uuid: 'order-3',
+    internal_note: 'Customer confirmed spelling.\nPaid cash at show.'
+  });
+});
+
 test('401 responses are handled safely as unauthenticated results', async () => {
   const client = staffApiClientModule.createForgeStaffApiClient({
     fetchImpl: async (url) => {
@@ -400,6 +437,7 @@ test('401 responses are handled safely as unauthenticated results', async () => 
   const traysResult = await client.listTrays();
   const assignResult = await client.assignTray('order-1', 1);
   const completionResult = await client.completeItemQuantity('order-1', 'line-1', 0, 1);
+  const noteResult = await client.updateInternalNote('order-1', 'Private note');
 
   assert.deepEqual(sessionResult, { ok: false, authenticated: false, unauthenticated: true });
   assert.deepEqual(loginResult, { ok: false, authenticated: false, unauthenticated: true });
@@ -408,6 +446,7 @@ test('401 responses are handled safely as unauthenticated results', async () => 
   assert.deepEqual(traysResult, { ok: false, authenticated: false, unauthenticated: true, trays: [] });
   assert.deepEqual(assignResult, { ok: false, authenticated: false, unauthenticated: true });
   assert.deepEqual(completionResult, { ok: false, authenticated: false, unauthenticated: true });
+  assert.deepEqual(noteResult, { ok: false, authenticated: false, unauthenticated: true });
 });
 
 test('malformed or non-JSON responses produce a safe generic client error', async () => {
