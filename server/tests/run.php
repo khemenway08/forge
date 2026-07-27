@@ -3641,6 +3641,8 @@ $runner->run('internal note migration and endpoint stay staff-only and public en
     assertTrue(strpos($staffOrdersEndpointSource, 'internal_note') === false);
     assertTrue(strpos($publicOrdersEndpointSource, 'internal_note') === false);
     assertTrue(strpos($publicEventStatusEndpointSource, 'internal_note') === false);
+    assertTrue(strpos($publicEventStatusEndpointSource, "require_once __DIR__ . '/orders.php';") === false);
+    assertTrue(strpos($publicEventStatusEndpointSource, "require_once __DIR__ . '/_bootstrap.php';") !== false);
 });
 
 $runner->run('legacy cleanup migration endpoint and tombstones stay staff-only and cutoff-safe', static function (): void {
