@@ -2196,6 +2196,12 @@ h1 {
   gap: 18px;
 }
 
+[data-screen="staff-admin"] .staff-orders-shell {
+  min-height: auto;
+  align-content: start;
+  gap: 14px;
+}
+
 .staff-auth-shell {
   align-content: start;
 }
@@ -2216,16 +2222,30 @@ h1 {
   gap: 18px;
 }
 
+[data-screen="staff-admin"] .staff-orders-header {
+  padding: 14px 18px;
+  align-items: center;
+  gap: 14px 18px;
+}
+
 .staff-orders-brand {
   display: flex;
   align-items: flex-start;
   gap: 16px;
 }
 
+[data-screen="staff-admin"] .staff-orders-brand {
+  gap: 12px;
+}
+
 .staff-orders-logo {
   width: clamp(72px, 6.8vw, 100px);
   height: auto;
   object-fit: contain;
+}
+
+[data-screen="staff-admin"] .staff-orders-logo {
+  width: clamp(56px, 5vw, 78px);
 }
 
 .staff-orders-header h1,
@@ -2240,12 +2260,23 @@ h1 {
   letter-spacing: -.03em;
 }
 
+[data-screen="staff-admin"] .staff-orders-header h1 {
+  font-size: clamp(24px, 2.4vw, 32px);
+}
+
 .staff-orders-header .lead {
   margin: 4px 0 0;
   color: var(--staff-muted);
   font-size: clamp(15px, 1.5vw, 18px);
   line-height: 1.4;
   max-width: 42rem;
+}
+
+[data-screen="staff-admin"] .staff-orders-header .lead {
+  margin-top: 2px;
+  font-size: 15px;
+  line-height: 1.35;
+  max-width: 36rem;
 }
 
 .staff-orders-eyebrow {
@@ -2258,6 +2289,17 @@ h1 {
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+}
+
+[data-screen="staff-admin"] .staff-orders-header-actions {
+  justify-content: flex-end;
+  align-content: flex-start;
+  gap: 8px;
+}
+
+.staff-orders-header-actions .secondary-button[aria-current="page"] {
+  background: rgba(239,108,26,.16);
+  border-color: rgba(239,108,26,.34);
 }
 
 .staff-orders-screen .primary-button {
@@ -2274,6 +2316,22 @@ h1 {
   border-color: var(--staff-line);
   background: rgba(255,255,255,.04);
   color: var(--staff-text);
+}
+
+.staff-orders-screen .staff-orders-header .secondary-button,
+.staff-orders-screen .staff-panel-surface .primary-button,
+.staff-orders-screen .staff-panel-surface .secondary-button,
+.staff-orders-screen .staff-panel-surface .text-button {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.staff-orders-screen .staff-panel-surface .primary-button:disabled,
+.staff-orders-screen .staff-panel-surface .secondary-button:disabled,
+.staff-orders-screen .staff-panel-surface .text-button:disabled {
+  background: rgba(255,255,255,.06);
+  border-color: rgba(255,255,255,.12);
+  color: rgba(255,255,255,.62);
 }
 
 .staff-orders-screen .secondary-button:hover,
@@ -2403,6 +2461,152 @@ h1 {
   padding: 18px 20px;
   display: grid;
   gap: 14px;
+}
+
+.staff-admin-content {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+.staff-panel-surface--status {
+  padding: 14px 18px;
+}
+
+.staff-panel-surface--admin-primary,
+.staff-panel-surface--admin-tool {
+  align-content: start;
+}
+
+.staff-admin-status-strip {
+  display: grid;
+  grid-template-columns: minmax(220px, .95fr) minmax(0, 1.45fr);
+  grid-template-areas:
+    "summary metrics"
+    "actions actions";
+  gap: 12px 16px;
+  align-items: start;
+}
+
+.staff-admin-status-copy,
+.staff-admin-status-metric {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.staff-admin-status-copy {
+  grid-area: summary;
+}
+
+.staff-admin-status-copy h2 {
+  margin: 0;
+  font-size: clamp(22px, 2vw, 28px);
+}
+
+.staff-admin-status-copy p:last-child {
+  margin: 0;
+  color: var(--staff-muted);
+  line-height: 1.4;
+}
+
+.staff-admin-status-metrics {
+  grid-area: metrics;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(110px, 1fr));
+  gap: 10px;
+  min-width: 0;
+  align-self: stretch;
+}
+
+.staff-admin-status-metric {
+  padding: 10px 12px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 16px;
+  background: rgba(17, 20, 24, .42);
+}
+
+.staff-admin-status-metric span {
+  color: var(--staff-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.staff-admin-status-metric strong {
+  color: var(--staff-text);
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.staff-admin-status-actions-row {
+  grid-area: actions;
+  min-width: 0;
+  width: 100%;
+  display: block;
+}
+
+.staff-action-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.staff-action-group > * {
+  max-width: 100%;
+}
+
+.staff-orders-screen .staff-action-group .primary-button,
+.staff-orders-screen .staff-action-group .secondary-button,
+.staff-orders-screen .staff-order-card-actions .primary-button,
+.staff-orders-screen .staff-order-card-actions .secondary-button {
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
+}
+
+.staff-action-group--status {
+  width: 100%;
+  justify-content: flex-end;
+  align-self: start;
+}
+
+.staff-action-group--admin {
+  justify-content: flex-end;
+}
+
+.staff-admin-preview-notice {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px dashed rgba(239, 108, 26, .36);
+  border-radius: 16px;
+  background: rgba(239, 108, 26, .08);
+  color: var(--staff-text);
+}
+
+.staff-admin-preview-notice strong {
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.staff-admin-preview-notice span {
+  color: var(--staff-muted);
+  line-height: 1.45;
+}
+
+.staff-admin-tools-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
 }
 
 .staff-catalog-panel {
@@ -3760,8 +3964,21 @@ body.forge-catalog-image-viewer-open {
 
 .staff-orders-filters {
   display: grid;
+  gap: 12px;
+}
+
+.staff-orders-filters-row {
+  display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
+}
+
+.staff-orders-filters-row--expanded {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.staff-orders-filters-more[hidden] {
+  display: none;
 }
 
 .staff-filter-field {
@@ -3770,7 +3987,7 @@ body.forge-catalog-image-viewer-open {
 
 .staff-orders-grid {
   display: grid;
-  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
   gap: 18px;
   align-items: start;
 }
@@ -3792,6 +4009,42 @@ body.forge-catalog-image-viewer-open {
 .staff-orders-list {
   display: grid;
   gap: 12px;
+}
+
+.staff-order-card-meta-copy {
+  min-width: 0;
+}
+
+.staff-order-card-meta-copy strong {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.staff-order-card-meta--event-card {
+  grid-template-columns: minmax(0, 1.25fr) minmax(180px, .75fr);
+}
+
+.staff-order-card-actions--event-card {
+  align-items: stretch;
+  justify-content: flex-start;
+}
+
+.staff-order-card-actions--event-card .primary-button,
+.staff-order-card-actions--event-card .secondary-button {
+  flex: 1 1 180px;
+  max-width: 100%;
+}
+
+.staff-orders-filters--admin {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.staff-admin-event-list {
+  gap: 10px;
+}
+
+.staff-admin-event-card {
+  gap: 10px;
 }
 
 .staff-batch-sections,
@@ -3936,11 +4189,62 @@ body.forge-catalog-image-viewer-open {
   display: flex;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
 }
 
 .staff-order-card-header,
 .staff-order-detail-header {
   align-items: start;
+}
+
+.staff-order-card-actions {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+@media (max-width: 1220px) {
+  .staff-admin-status-strip {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "summary metrics"
+      "actions actions";
+  }
+
+  .staff-admin-status-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .staff-action-group--admin {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 940px) {
+  .staff-admin-tools-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .staff-admin-status-strip {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "summary"
+      "metrics"
+      "actions";
+  }
+
+  .staff-action-group--status {
+    justify-content: stretch;
+  }
+
+  .staff-action-group--status .primary-button,
+  .staff-action-group--status .secondary-button {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .staff-order-card-meta--event-card {
+    grid-template-columns: 1fr;
+  }
 }
 
 .staff-order-card-title,
@@ -4988,7 +5292,7 @@ body.forge-catalog-image-viewer-open {
   }
 
   .staff-orders-summary,
-  .staff-orders-filters,
+  .staff-orders-filters-row,
   .staff-orders-grid,
   .staff-ready-list,
   .staff-auth-actions,

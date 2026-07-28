@@ -193,7 +193,11 @@ function createDispatchTarget({ action = '', orderUuid = '', trayNumber = '' } =
   };
 }
 
-function loadForgeAppWithoutStaffModules() {
+function loadForgeAppWithoutStaffModules({
+  protocol = 'http:',
+  hostname = 'localhost',
+  includeHostedStaffModules = false
+} = {}) {
   const env = createQueryEnvironment();
   const startButton = attachActionDataset(createElement('button'), 'start');
   const ornamentCategoryButton = attachActionDataset(createElement('button'), 'browse-ornament-designs');
@@ -227,6 +231,12 @@ function loadForgeAppWithoutStaffModules() {
   paymentHandoffScreen.dataset.screen = 'payment-handoff';
   const thankYouScreen = createElement('section');
   thankYouScreen.dataset.screen = 'thank-you';
+  const staffOrdersScreen = createElement('section');
+  staffOrdersScreen.dataset.screen = 'staff-orders';
+  const readyToPackScreen = createElement('section');
+  readyToPackScreen.dataset.screen = 'ready-to-pack';
+  const staffAdminScreen = createElement('section');
+  staffAdminScreen.dataset.screen = 'staff-admin';
   const finalReviewItems = createElement('div');
   const finalReviewSummary = createElement('div');
   const finalReviewCustomer = createElement('div');
@@ -234,12 +244,26 @@ function loadForgeAppWithoutStaffModules() {
   const thankYouCopy = createElement('p');
   const thankYouReference = createElement('div');
   const thankYouDebugTools = createElement('div');
+  const staffOrdersSearch = createElement('input');
+  const staffOrdersFilters = createElement('div');
+  const staffBatchGroups = createElement('div');
+  const staffOrdersList = createElement('div');
+  const staffOrdersStatus = createElement('p');
+  const staffOrdersLead = createElement('p');
+  const readyToPackLead = createElement('p');
+  const readyToPackCount = createElement('p');
+  const readyToPackList = createElement('div');
+  const staffAdminLead = createElement('p');
+  const staffAdminContent = createElement('div');
+  const staffDemoControls = createElement('div');
+  staffDemoControls.hidden = true;
+  const staffEyebrowNode = createElement('p');
   const paymentMethodButtons = ['card_square', 'cash', 'venmo'].map((paymentMethod) => {
     const button = createElement('button');
     button.dataset.paymentMethod = paymentMethod;
     return button;
   });
-  const allScreens = [welcomeScreen, categoriesScreen, ornamentsScreen, finalReviewScreen, paymentHandoffScreen, thankYouScreen];
+  const allScreens = [welcomeScreen, categoriesScreen, ornamentsScreen, finalReviewScreen, paymentHandoffScreen, thankYouScreen, staffOrdersScreen, readyToPackScreen, staffAdminScreen];
   const appBody = createElement('body');
   const localStorageData = new Map();
   const documentListeners = new Map();
@@ -269,6 +293,21 @@ function loadForgeAppWithoutStaffModules() {
   env.registerSelector('[data-screen="final-review"]', finalReviewScreen);
   env.registerSelector('[data-screen="payment-handoff"]', paymentHandoffScreen);
   env.registerSelector('[data-screen="thank-you"]', thankYouScreen);
+  env.registerSelector('[data-screen="staff-orders"]', staffOrdersScreen);
+  env.registerSelector('[data-screen="ready-to-pack"]', readyToPackScreen);
+  env.registerSelector('[data-screen="staff-admin"]', staffAdminScreen);
+  env.registerSelector('[data-staff-orders-search]', staffOrdersSearch);
+  env.registerSelector('[data-staff-orders-filters]', staffOrdersFilters);
+  env.registerSelector('[data-staff-batch-groups]', staffBatchGroups);
+  env.registerSelector('[data-staff-orders-list]', staffOrdersList);
+  env.registerSelector('[data-staff-orders-status]', staffOrdersStatus);
+  env.registerSelector('[data-staff-orders-lead]', staffOrdersLead);
+  env.registerSelector('[data-ready-to-pack-lead]', readyToPackLead);
+  env.registerSelector('[data-ready-to-pack-count]', readyToPackCount);
+  env.registerSelector('[data-ready-to-pack-list]', readyToPackList);
+  env.registerSelector('[data-staff-admin-lead]', staffAdminLead);
+  env.registerSelector('[data-staff-admin-content]', staffAdminContent);
+  env.registerSelector('[data-staff-demo-controls]', staffDemoControls);
   env.registerSelector('.app-shell', appShell);
 
   env.registerSelectorAll('[data-screen]', allScreens);
@@ -283,6 +322,7 @@ function loadForgeAppWithoutStaffModules() {
   env.registerSelectorAll('[data-fulfillment-choice]', []);
   env.registerSelectorAll('[data-staff-source-status], [data-ready-source-status]', []);
   env.registerSelectorAll('[data-staff-logout-button]', []);
+  env.registerSelectorAll('[data-staff-eyebrow]', [staffEyebrowNode]);
   env.registerSelectorAll('[data-product]', []);
 
   appBody.insertAdjacentHTML = (_position, html) => {
@@ -348,7 +388,12 @@ function loadForgeAppWithoutStaffModules() {
       clipboard: { writeText: async () => {} },
       serviceWorker: { register: async () => ({}) }
     },
-    location: { protocol: 'http:', hostname: 'localhost', search: '', href: 'http://localhost:3016/' },
+    location: {
+      protocol,
+      hostname,
+      search: '',
+      href: `${protocol}//${hostname}${protocol === 'http:' ? ':3016' : ''}/`
+    },
     CustomEvent: function CustomEvent(type, init) { this.type = type; this.detail = init?.detail; },
     Event: function Event(type) { this.type = type; },
     Element: function Element() {},
@@ -362,6 +407,77 @@ function loadForgeAppWithoutStaffModules() {
     window: null,
     globalThis: null
   };
+
+  if (includeHostedStaffModules) {
+    context.ForgeStaffApiClient = {
+      createForgeStaffApiClient() {
+        return {};
+      }
+    };
+    context.ForgeStaffOrdersRuntime = {
+      createStaffOrdersRuntime() {
+        return {
+          environment: {
+            protocol,
+            hostname,
+            usesHostedServer: true,
+            requiresAuthentication: true,
+            dataSource: 'server'
+          },
+          async checkAccess() {
+            return {
+              ok: true,
+              authenticated: true,
+              requiresAuthentication: true,
+              nextScreen: 'staff-orders',
+              dataSource: 'server',
+              readOnly: true
+            };
+          },
+          async login() {
+            return {
+              ok: true,
+              authenticated: true,
+              requiresAuthentication: true,
+              nextScreen: 'staff-orders',
+              dataSource: 'server',
+              readOnly: true
+            };
+          },
+          async logout() {
+            return {
+              ok: true,
+              authenticated: false,
+              nextScreen: 'staff-access',
+              dataSource: 'server',
+              readOnly: true
+            };
+          },
+          async loadOrders() {
+            return {
+              ok: true,
+              authenticated: true,
+              dataSource: 'server',
+              readOnly: true,
+              records: []
+            };
+          },
+          async previewShippingExport() {
+            return { ok: true, preview: null };
+          },
+          async buildShippingExportDownload() {
+            return { ok: true, url: '/download.csv' };
+          },
+          async previewLegacyTestCleanup() {
+            return { ok: true, preview: null };
+          },
+          async applyLegacyTestCleanup() {
+            return { ok: true, deletedCount: 0 };
+          }
+        };
+      }
+    };
+  }
 
   context.document = {
     body: appBody,
@@ -1518,10 +1634,11 @@ test('an invalid event token never falls back to another active event', () => {
   assert.equal(headline.buttonDisabled, true);
 });
 
-test('staff event controls identify test-session links and expose the copy ordering link action', () => {
+test('admin tools identify test-session links and expose the copy ordering link action while staff orders stays order-focused', () => {
   const { context } = loadForgeAppWithoutStaffModules();
 
   vm.runInContext(`
+    staffOrdersState.dataSource = 'server';
     staffEventState.events = [{
       event_id: 'event-test',
       public_order_token: 'test-session-public-token',
@@ -1532,22 +1649,29 @@ test('staff event controls identify test-session links and expose the copy order
       event_location: 'Austin',
       event_status: 'scheduled'
     }];
-    renderStaffEventControls();
+    renderStaffOrdersQueue();
+    renderStaffAdminTools();
   `, context);
 
-  const controlsHtml = vm.runInContext('document.querySelector("[data-staff-event-controls]").innerHTML', context);
+  const ordersHtml = vm.runInContext('document.querySelector("[data-staff-orders-list]").innerHTML', context);
+  const controlsHtml = vm.runInContext('document.querySelector("[data-staff-admin-content]").innerHTML', context);
 
+  assert.doesNotMatch(String(ordersHtml), /Event Control|Forge System Status|Event Shipping CSV|Legacy Test Orders Before July 25/);
   assert.match(String(controlsHtml), /Checkout Test Session/);
   assert.match(String(controlsHtml), /TEST/);
   assert.match(String(controlsHtml), /Copy Ordering Link/);
   assert.match(String(controlsHtml), /\?event=test-session-public-token/);
   assert.match(String(controlsHtml), /Ending this event disables this exact link\./);
+  assert.match(String(controlsHtml), /staff-panel-surface--admin-primary/);
+  assert.match(String(controlsHtml), /staff-order-card-meta--event-card/);
+  assert.match(String(controlsHtml), /staff-order-card-actions--event-card/);
 });
 
-test('staff event controls render the shipping export preview workspace for the selected event', () => {
+test('admin tools render the shipping export preview workspace for the selected event', () => {
   const { context } = loadForgeAppWithoutStaffModules();
 
   vm.runInContext(`
+    staffOrdersState.dataSource = 'server';
     staffOrdersState.authenticated = true;
     staffOrdersState.records = [{
       forge_order_uuid: 'ship-1',
@@ -1608,16 +1732,279 @@ test('staff event controls render the shipping export preview workspace for the 
       }],
       excludedOrders: []
     };
-    renderStaffEventControls();
+    renderStaffAdminTools();
   `, context);
 
-  const controlsHtml = vm.runInContext('document.querySelector("[data-staff-event-controls]").innerHTML', context);
+  const controlsHtml = vm.runInContext('document.querySelector("[data-staff-admin-content]").innerHTML', context);
 
+  assert.match(String(controlsHtml), /Forge System Status/);
+  assert.match(String(controlsHtml), /staff-panel-surface--status/);
+  assert.match(String(controlsHtml), /Event Control/);
+  assert.match(String(controlsHtml), /staff-admin-tools-grid/);
   assert.match(String(controlsHtml), /Event Shipping CSV/);
+  assert.match(String(controlsHtml), /Legacy Test Orders Before July 25/);
   assert.match(String(controlsHtml), /Preview Shipping Export/);
   assert.match(String(controlsHtml), /Download CSV/);
   assert.match(String(controlsHtml), /Order 1101/);
   assert.match(String(controlsHtml), /123 Main Street/);
+  assert.match(String(controlsHtml), /data-action="staff-preview-legacy-cleanup"/);
+  assert.match(String(controlsHtml), /data-action="staff-preview-shipping-export"/);
+});
+
+test('admin tools status strip keeps metrics and actions in separate containers', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    staffOrdersState.dataSource = 'server';
+    staffOrdersState.authenticated = true;
+    syncStatusState.snapshot = {
+      label: 'Synced',
+      supportingText: 'Forge is reachable and orders are acknowledged.',
+      serverLabel: 'Reachable',
+      pendingUploadCount: 2,
+      uploadProblemCount: 1,
+      lastSuccessfulSyncAt: '2026-07-28T15:30:00Z',
+      isRetryingUploads: false,
+      isRecheckingConnection: false,
+      isChecking: false,
+      serverState: forgeSyncStatus.SERVER_STATES.connected
+    };
+    renderStaffAdminTools();
+  `, context);
+
+  const controlsHtml = vm.runInContext('document.querySelector("[data-staff-admin-content]").innerHTML', context);
+
+  assert.match(String(controlsHtml), /staff-admin-status-strip/);
+  assert.match(String(controlsHtml), /staff-admin-status-metrics/);
+  assert.match(String(controlsHtml), /data-staff-status-actions-row/);
+  assert.match(String(controlsHtml), /data-staff-status-actions/);
+  assert.match(String(controlsHtml), /Forge Server/);
+  assert.match(String(controlsHtml), /Pending Uploads/);
+  assert.match(String(controlsHtml), /Upload Problems/);
+  assert.match(String(controlsHtml), /Last Successful Sync/);
+  const statusHtml = String(controlsHtml);
+  const metricsIndex = statusHtml.indexOf('staff-admin-status-metrics');
+  const actionsRowIndex = statusHtml.indexOf('data-staff-status-actions-row');
+  const actionsIndex = statusHtml.indexOf('data-staff-status-actions>', actionsRowIndex + 1);
+  assert.notEqual(metricsIndex, -1);
+  assert.notEqual(actionsRowIndex, -1);
+  assert.notEqual(actionsIndex, -1);
+  assert.ok(actionsRowIndex > metricsIndex);
+  assert.ok(actionsIndex > actionsRowIndex);
+});
+
+test('admin tools localhost preview keeps hosted admin actions disabled with a compact notice', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    staffOrdersState.dataSource = 'local';
+    staffOrdersState.authenticated = false;
+    syncStatusState.snapshot = {
+      label: 'Server Unavailable',
+      supportingText: 'The Forge staff server returned an unexpected response.',
+      serverLabel: 'Unavailable',
+      pendingUploadCount: 0,
+      uploadProblemCount: 0,
+      lastSuccessfulSyncAt: null,
+      isRetryingUploads: false,
+      isRecheckingConnection: false,
+      isChecking: false,
+      serverState: forgeSyncStatus.SERVER_STATES.unreachable
+    };
+    staffEventState.events = [{
+      event_id: 'event-test',
+      public_order_token: 'test-session-public-token',
+      event_name: 'Checkout Test Session',
+      event_type: 'test_session',
+      start_date: '2026-07-27',
+      end_date: '2026-07-27',
+      event_location: 'Austin',
+      event_status: 'scheduled'
+    }];
+    renderStaffAdminTools();
+  `, context);
+
+  const controlsHtml = vm.runInContext('document.querySelector("[data-staff-admin-content]").innerHTML', context);
+
+  assert.match(String(controlsHtml), /Local Preview Only/);
+  assert.match(String(controlsHtml), /authenticated live staff workspace/);
+  assert.match(String(controlsHtml), /data-action="staff-recheck-connection" disabled/);
+  assert.match(String(controlsHtml), /data-action="staff-retry-uploads" disabled/);
+  assert.match(String(controlsHtml), /data-action="staff-toggle-event-form" disabled/);
+  assert.match(String(controlsHtml), /data-action="staff-preview-shipping-export" disabled/);
+  assert.match(String(controlsHtml), /data-action="staff-preview-legacy-cleanup" disabled/);
+  assert.match(String(controlsHtml), /data-action="staff-start-event"[^>]*disabled/);
+  assert.doesNotMatch(String(controlsHtml), /unexpected response/i);
+});
+
+test('localhost hosted-only admin actions do not invoke runtime or api methods', async () => {
+  const { context } = loadForgeAppWithoutStaffModules({
+    includeHostedStaffModules: true
+  });
+
+  const counts = await vm.runInContext(`
+    (async () => {
+      staffOrdersState.dataSource = 'local';
+      staffOrdersState.authenticated = false;
+      staffOrdersState.shippingExportSelectedEventId = 'event-live-1';
+      staffEventState.events = [{
+        event_id: 'event-test',
+        public_order_token: 'test-session-public-token',
+        event_name: 'Checkout Test Session',
+        event_type: 'test_session',
+        start_date: '2026-07-27',
+        end_date: '2026-07-27',
+        event_location: 'Austin',
+        event_status: 'scheduled'
+      }];
+      const counters = {
+        recheck: 0,
+        retry: 0,
+        listEvents: 0,
+        createEvent: 0,
+        startEvent: 0,
+        endEvent: 0,
+        previewShipping: 0,
+        downloadShipping: 0,
+        previewCleanup: 0,
+        applyCleanup: 0
+      };
+      syncStatusController.recheckConnection = async () => { counters.recheck += 1; return {}; };
+      syncStatusController.retryUploads = async () => { counters.retry += 1; return {}; };
+      staffApiClient.listEvents = async () => { counters.listEvents += 1; return { ok: true, events: [] }; };
+      staffApiClient.createEvent = async () => { counters.createEvent += 1; return { ok: true, event: {} }; };
+      staffApiClient.startEvent = async () => { counters.startEvent += 1; return { ok: true, event: {} }; };
+      staffApiClient.endEvent = async () => { counters.endEvent += 1; return { ok: true, event: {} }; };
+      staffRuntime.previewShippingExport = async () => { counters.previewShipping += 1; return { ok: true, preview: null }; };
+      staffRuntime.buildShippingExportDownload = async () => { counters.downloadShipping += 1; };
+      staffRuntime.previewLegacyTestCleanup = async () => { counters.previewCleanup += 1; return { ok: true, preview: null }; };
+      staffRuntime.applyLegacyTestCleanup = async () => { counters.applyCleanup += 1; return { ok: true, deletedCount: 0 }; };
+      await recheckStaffAdminConnection();
+      await retryStaffAdminUploads();
+      await loadStaffEvents();
+      await submitStaffEventForm();
+      await startStaffEvent('event-test');
+      await endStaffEvent('event-test');
+      await previewStaffShippingExport();
+      await previewLegacyTestCleanup();
+      return counters;
+    })()
+  `, context);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(counts)), {
+    recheck: 0,
+    retry: 0,
+    listEvents: 0,
+    createEvent: 0,
+    startEvent: 0,
+    endEvent: 0,
+    previewShipping: 0,
+    downloadShipping: 0,
+    previewCleanup: 0,
+    applyCleanup: 0
+  });
+});
+
+test('hosted authenticated admin actions remain enabled', () => {
+  const { context } = loadForgeAppWithoutStaffModules({
+    protocol: 'https:',
+    hostname: 'forge.thehilltopshop.com',
+    includeHostedStaffModules: true
+  });
+
+  vm.runInContext(`
+    staffOrdersState.dataSource = 'server';
+    staffOrdersState.authenticated = true;
+    staffApiClient.listEvents = async () => ({ ok: true, events: [] });
+    staffApiClient.createEvent = async () => ({ ok: true, event: {} });
+    staffApiClient.startEvent = async () => ({ ok: true, event: {} });
+    staffApiClient.endEvent = async () => ({ ok: true, event: {} });
+    staffRuntime.previewShippingExport = async () => ({ ok: true, preview: null });
+    staffRuntime.buildShippingExportDownload = async () => ({ ok: true, url: '/download.csv' });
+    staffRuntime.previewLegacyTestCleanup = async () => ({ ok: true, preview: null });
+    staffRuntime.applyLegacyTestCleanup = async () => ({ ok: true, deletedCount: 0 });
+    syncStatusState.snapshot = {
+      label: 'Synced',
+      supportingText: 'Forge is reachable and orders are acknowledged.',
+      serverLabel: 'Reachable',
+      pendingUploadCount: 2,
+      uploadProblemCount: 1,
+      lastSuccessfulSyncAt: '2026-07-28T15:30:00Z',
+      isRetryingUploads: false,
+      isRecheckingConnection: false,
+      isChecking: false,
+      serverState: forgeSyncStatus.SERVER_STATES.connected
+    };
+    staffEventState.events = [{
+      event_id: 'event-test',
+      public_order_token: 'test-session-public-token',
+      event_name: 'Checkout Test Session',
+      event_type: 'test_session',
+      start_date: '2026-07-27',
+      end_date: '2026-07-27',
+      event_location: 'Austin',
+      event_status: 'scheduled'
+    }];
+    staffOrdersState.shippingExportSelectedEventId = 'event-test';
+    renderStaffAdminTools();
+  `, context);
+
+  const controlsHtml = vm.runInContext('document.querySelector("[data-staff-admin-content]").innerHTML', context);
+
+  assert.doesNotMatch(String(controlsHtml), /data-action="staff-recheck-connection" disabled/);
+  assert.doesNotMatch(String(controlsHtml), /data-action="staff-retry-uploads" disabled/);
+  assert.doesNotMatch(String(controlsHtml), /data-action="staff-toggle-event-form" disabled/);
+  assert.doesNotMatch(String(controlsHtml), /data-action="staff-start-event"[^>]*disabled/);
+  assert.doesNotMatch(String(controlsHtml), /data-action="staff-preview-shipping-export" disabled/);
+  assert.doesNotMatch(String(controlsHtml), /data-action="staff-preview-legacy-cleanup" disabled/);
+});
+
+test('staff orders shows only the primary filters until More Filters is opened', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    staffOrdersState.enabled = true;
+    staffOrdersState.records = [{
+      forge_order_uuid: 'order-1',
+      submitted_at: '2026-07-27T16:00:00Z',
+      payload: {
+        customer: { full_name: 'Filter Customer' },
+        fulfillment: { method: 'shipping', shipping_address: null },
+        event: { event_id: 'event-live-1', event_name: 'Austin Market', event_type: 'live_event' },
+        items: [{ line_id: 'line-1', quantity: 1, product_type: 'tree_ornament', product_display_name: 'Tree Ornament' }],
+        forge_order_number: 1101
+      }
+    }];
+    staffOrdersState.showMoreFilters = false;
+    renderStaffOrdersQueue();
+  `, context);
+
+  const compactFiltersHtml = vm.runInContext('document.querySelector("[data-staff-orders-filters]").innerHTML', context);
+  const moreFiltersHidden = vm.runInContext(`
+    document.querySelector('[data-staff-orders-filters]')
+      .innerHTML.includes('class="staff-orders-filters-more" hidden')
+  `, context);
+  assert.match(String(compactFiltersHtml), /Scope/);
+  assert.match(String(compactFiltersHtml), /Event/);
+  assert.match(String(compactFiltersHtml), /Production Status/);
+  assert.equal(moreFiltersHidden, true);
+
+  vm.runInContext('staffOrdersState.showMoreFilters = true; renderStaffOrdersQueue();', context);
+  const expandedFiltersHtml = vm.runInContext('document.querySelector("[data-staff-orders-filters]").innerHTML', context);
+  const expandedMoreFiltersHidden = vm.runInContext(`
+    document.querySelector('[data-staff-orders-filters]')
+      .innerHTML.includes('class="staff-orders-filters-more" hidden')
+  `, context);
+  assert.match(String(expandedFiltersHtml), /Ornament Type/);
+  assert.match(String(expandedFiltersHtml), /Sync Status/);
+  assert.equal(expandedMoreFiltersHidden, false);
+});
+
+test('staff source eyebrow uses Forge Staff for hosted mode and Development Only for localhost', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+
+  assert.equal(vm.runInContext('staffOrdersState.dataSource = "server"; getStaffEnvironmentEyebrow();', context), 'Forge Staff');
+  assert.equal(vm.runInContext('staffOrdersState.dataSource = "local"; getStaffEnvironmentEyebrow();', context), 'Development Only');
 });
 
 test('shared server order detail assign tray button opens the tray picker after re-rendering', async () => {
@@ -2154,10 +2541,15 @@ test('staff orders remains the default protected destination and the catalog she
   const removedDashboardActionToken = 'staff-open-' + 'dashboard';
   assert.equal(indexSource.includes(`data-screen="${removedDashboardScreenToken}"`), false);
   assert.equal(indexSource.includes(`data-action="${removedDashboardActionToken}"`), false);
+  assert.match(indexSource, /data-screen="staff-admin"/);
   assert.match(indexSource, /data-screen="staff-catalog"/);
   assert.match(indexSource, /Hilltop Design Catalog/);
+  assert.match(indexSource, /Admin Tools/);
   assert.match(indexSource, /data-screen="staff-orders"[\s\S]*?data-action="staff-open-catalog">Hilltop Design Catalog<\/button>/);
-  assert.match(indexSource, /data-screen="staff-catalog"[\s\S]*?data-action="staff-open-orders">Back to Staff Orders<\/button>/);
+  assert.match(indexSource, /data-screen="staff-orders"[\s\S]*?data-action="staff-open-admin">Admin Tools<\/button>/);
+  assert.match(indexSource, /data-screen="staff-catalog"[\s\S]*?data-action="staff-open-orders">Staff Orders<\/button>/);
+  assert.match(indexSource, /data-screen="staff-admin"[\s\S]*?data-action="staff-open-orders">Staff Orders<\/button>/);
+  assert.match(indexSource, /data-action="staff-toggle-more-filters"[^>]*>More Filters<\/button>/);
   assert.match(indexSource, />Designs<\/button>/);
   assert.match(indexSource, />Hats<\/button>/);
   assert.match(indexSource, />Materials<\/button>/);

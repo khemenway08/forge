@@ -55,7 +55,6 @@ const staffAuthForm = document.querySelector('[data-staff-auth-form]');
 const staffAuthPinInput = document.querySelector('[data-staff-pin-input]');
 const staffAuthStatus = document.querySelector('[data-staff-auth-status]');
 const staffAuthDescription = document.querySelector('[data-staff-auth-description]');
-const staffOrdersSummary = document.querySelector('[data-staff-orders-summary]');
 const staffOrdersSearchInput = document.querySelector('[data-staff-orders-search]');
 const staffOrdersFilters = document.querySelector('[data-staff-orders-filters]');
 const staffDemoControls = document.querySelector('[data-staff-demo-controls]');
@@ -64,10 +63,13 @@ const staffOrdersList = document.querySelector('[data-staff-orders-list]');
 const staffOrdersStatus = document.querySelector('[data-staff-orders-status]');
 const staffOrdersLead = document.querySelector('[data-staff-orders-lead]');
 const readyToPackLead = document.querySelector('[data-ready-to-pack-lead]');
+const staffAdminLead = document.querySelector('[data-staff-admin-lead]');
 const staffCatalogContent = document.querySelector('[data-staff-catalog-content]');
+const staffAdminContent = document.querySelector('[data-staff-admin-content]');
 const staffCatalogTabs = [...document.querySelectorAll('[data-action="staff-catalog-section"]')];
 const staffSourceStatusNodes = [...document.querySelectorAll('[data-staff-source-status], [data-ready-source-status]')];
 const staffLogoutButtons = [...document.querySelectorAll('[data-staff-logout-button]')];
+const staffEyebrowNodes = [...document.querySelectorAll('[data-staff-eyebrow]')];
 const readyToPackCount = document.querySelector('[data-ready-to-pack-count]');
 const readyToPackList = document.querySelector('[data-ready-to-pack-list]');
 const addConfirmationBackdrop = document.querySelector('[data-add-confirmation-backdrop]');
@@ -84,7 +86,6 @@ const orderingTitle = document.querySelector('[data-ordering-title]');
 const orderingCopy = document.querySelector('[data-ordering-copy]');
 const orderingStatus = document.querySelector('[data-ordering-status]');
 const orderingStartButton = document.querySelector('[data-ordering-start-button]');
-const staffEventControls = document.querySelector('[data-staff-event-controls]');
 const contactChoiceButtons = [...document.querySelectorAll('[data-contact-choice]')];
 const fulfillmentChoiceButtons = [...document.querySelectorAll('[data-fulfillment-choice]')];
 const shippingFieldsContainer = document.querySelector('[data-shipping-fields]');
@@ -135,6 +136,7 @@ const staffOrdersState = {
   demoMode: false,
   demoRecords: [],
   searchTerm: '',
+  showMoreFilters: false,
   filters: {},
   error: '',
   notice: '',
@@ -2139,7 +2141,7 @@ function hasRestorableFinalReviewState() {
 
 function normalizeRestoredScreenState() {
   const completionReceipt = completionReceiptManager.getReceipt();
-  const restoredStaffScreen = ['staff-access', 'staff-orders', 'ready-to-pack', 'staff-catalog'].includes(appState.currentScreen);
+  const restoredStaffScreen = ['staff-access', 'staff-orders', 'ready-to-pack', 'staff-catalog', 'staff-admin'].includes(appState.currentScreen);
   const normalizedScreen = forgeOrderSubmission.resolveRestoredScreen({
     currentScreen: appState.currentScreen,
     hasUsableActiveOrder: hasRestorableFinalReviewState(),
@@ -2162,7 +2164,7 @@ function normalizeRestoredScreenState() {
     stateChanged = true;
   }
 
-  if (restoredStaffScreen && !['staff-access', 'staff-orders', 'ready-to-pack', 'staff-catalog'].includes(normalizedScreen)) {
+  if (restoredStaffScreen && !['staff-access', 'staff-orders', 'ready-to-pack', 'staff-catalog', 'staff-admin'].includes(normalizedScreen)) {
     appState.currentScreen = 'staff-access';
     stateChanged = true;
   }
@@ -2395,12 +2397,17 @@ function isStaffReadOnlyRecord(record) {
   return Boolean(record?.staff_read_only) || staffOrdersState.readOnly;
 }
 
+function getStaffEnvironmentEyebrow() {
+  return staffOrdersState.dataSource === 'server' ? 'Forge Staff' : 'Development Only';
+}
+
 function getStaffSourceConfig() {
   if (staffOrdersState.dataSource === 'server') {
     return {
       sourceBadge: 'Shared Server Orders',
       ordersLead: 'View authenticated shared server orders for Forge staff.',
       readyLead: 'View the shared read-only ready-to-pack queue for authenticated staff.',
+      adminLead: 'Use protected administrative tools without pushing active order cards lower on the screen.',
       loadingOrders: 'Loading shared server orders...',
       emptyOrdersHeading: 'No shared orders match these filters',
       emptyOrdersCopy: 'Adjust the search or clear filters to see the shared server orders available to staff.',
@@ -2425,6 +2432,7 @@ function getStaffSourceConfig() {
     sourceBadge: 'Local Development Orders',
     ordersLead: 'View durable local orders on this device and assign one production tray per active order.',
     readyLead: 'Completed orders waiting for packing verification.',
+    adminLead: 'Use local staff-only tools separately while testing Forge on this device.',
     loadingOrders: 'Loading durable local orders...',
     emptyOrdersHeading: 'No orders match these filters',
     emptyOrdersCopy: 'Adjust the search or clear filters to see the saved local orders on this device.',
@@ -2447,14 +2455,21 @@ function getStaffSourceConfig() {
 
 function renderStaffSourceUi() {
   const config = getStaffSourceConfig();
+  const eyebrow = getStaffEnvironmentEyebrow();
   if (staffOrdersLead) {
     staffOrdersLead.textContent = config.ordersLead;
   }
   if (readyToPackLead) {
     readyToPackLead.textContent = config.readyLead;
   }
+  if (staffAdminLead) {
+    staffAdminLead.textContent = config.adminLead;
+  }
   staffSourceStatusNodes.forEach((node) => {
     node.textContent = config.sourceBadge;
+  });
+  staffEyebrowNodes.forEach((node) => {
+    node.textContent = eyebrow;
   });
   staffLogoutButtons.forEach((button) => {
     button.hidden = !isHostedStaffMode();
@@ -2588,7 +2603,7 @@ function showUnauthenticatedStaffAccess() {
 }
 
 function getNormalizedStaffTargetScreen(screenName = 'staff-orders') {
-  return ['staff-orders', 'ready-to-pack', 'staff-catalog'].includes(screenName)
+  return ['staff-orders', 'ready-to-pack', 'staff-catalog', 'staff-admin'].includes(screenName)
     ? screenName
     : 'staff-orders';
 }
@@ -2751,6 +2766,10 @@ function openStaffCatalogScreen() {
   return openStaffAccessScreen('staff-catalog');
 }
 
+function openStaffAdminScreen() {
+  return openStaffAccessScreen('staff-admin');
+}
+
 function returnToWelcomeFromStaff() {
   staffOrdersState.notice = '';
   staffOrdersState.enabled = false;
@@ -2804,6 +2823,7 @@ async function openStaffAccessScreen(screenName = 'staff-orders') {
     renderStaffCatalog();
     renderStaffOrdersQueue();
     renderReadyToPackQueue();
+    renderStaffAdminTools();
     if (targetScreen === 'staff-orders' || targetScreen === 'ready-to-pack') {
       await loadStaffOrdersQueue();
     }
@@ -2815,6 +2835,7 @@ async function openStaffAccessScreen(screenName = 'staff-orders') {
     renderStaffCatalog();
     renderStaffOrdersQueue();
     renderReadyToPackQueue();
+    renderStaffAdminTools();
     if (targetScreen === 'staff-orders' || targetScreen === 'ready-to-pack') {
       await loadStaffOrdersQueue();
     }
@@ -2848,6 +2869,7 @@ async function openStaffAccessScreen(screenName = 'staff-orders') {
     renderStaffCatalog();
     renderStaffOrdersQueue();
     renderReadyToPackQueue();
+    renderStaffAdminTools();
     if (targetScreen === 'staff-orders' || targetScreen === 'ready-to-pack') {
       await loadStaffOrdersQueue();
     }
@@ -2958,6 +2980,7 @@ async function submitStaffPin() {
     renderStaffCatalog();
     renderStaffOrdersQueue();
     renderReadyToPackQueue();
+    renderStaffAdminTools();
     if (appState.currentScreen === 'staff-orders' || appState.currentScreen === 'ready-to-pack') {
       await loadStaffOrdersQueue();
     }
@@ -6219,11 +6242,11 @@ function renderStaffBatchDialog() {
 }
 
 function renderStaffOrdersQueue() {
-  if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled) || !staffOrdersSummary || !staffOrdersFilters || !staffBatchGroups || !staffOrdersList || !staffOrdersStatus) {
+  if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled) || !staffOrdersFilters || !staffBatchGroups || !staffOrdersList || !staffOrdersStatus) {
     return;
   }
 
-  renderStaffEventControls();
+  renderStaffAdminTools();
   renderStaffDemoControls();
   renderStaffSourceUi();
   const queueRecords = getCurrentStaffQueueRecords();
@@ -6233,7 +6256,6 @@ function renderStaffOrdersQueue() {
     staffOrdersState.filters,
     staffOrdersState.searchTerm
   );
-  const summary = forgeLocalOrdersQueue.summarizeLocalOrders(filteredRecords, staffOrdersState.filters);
   const availableFilters = forgeLocalOrdersQueue.getAvailableOrderFilters(queueRecords, {
     activeFilters: staffOrdersState.filters,
     searchTerm: staffOrdersState.searchTerm
@@ -6249,34 +6271,24 @@ function renderStaffOrdersQueue() {
   }
   staffOrdersState.batchSummary = batchSummary;
 
-  const syncSnapshot = getCurrentSyncSnapshot();
-  staffOrdersSummary.innerHTML = [
-    { label: sourceConfig.totalSummaryLabel, value: summary.totalOrders },
-    { label: sourceConfig.secondarySummaryLabel, value: sourceConfig.secondarySummaryValue || summary.pendingFutureSync },
-    { label: 'Orders With Open Flags', value: summary.ordersWithOpenFlags },
-    { label: 'Total Items', value: summary.totalItems }
-  ].map((card) => `
-    <article class="staff-summary-card">
-      <span>${escapeHtml(card.label)}</span>
-      <strong>${escapeHtml(String(card.value))}</strong>
-    </article>
-  `).join('') + buildStaffSystemStatusCardMarkup(syncSnapshot);
-
-  staffOrdersFilters.innerHTML = [
+  const primaryFilterFields = [
     { key: 'orderScope', label: 'Scope', options: availableFilters.orderScope },
+    { key: 'event', label: 'Event', options: availableFilters.event },
+    { key: 'productionStatus', label: 'Production Status', options: availableFilters.productionStatus }
+  ];
+  const moreFilterFields = [
     { key: 'product', label: 'Product', options: availableFilters.product },
     { key: 'ornamentType', label: 'Ornament Type', options: availableFilters.ornamentType },
     { key: 'size', label: 'Size', options: availableFilters.size },
     { key: 'treeColor', label: 'Tree Color', options: availableFilters.treeColor },
     { key: 'bowColor', label: 'Bow Color', options: availableFilters.bowColor },
     { key: 'year', label: 'Year', options: availableFilters.year },
-    { key: 'productionStatus', label: 'Production Status', options: availableFilters.productionStatus },
     { key: 'fulfillment', label: 'Fulfillment', options: availableFilters.fulfillment },
-    { key: 'event', label: 'Event', options: availableFilters.event },
     { key: 'openFlags', label: 'Open Flags', options: availableFilters.openFlags },
     { key: 'tray', label: 'Tray', options: availableFilters.tray },
     { key: 'syncStatus', label: 'Sync Status', options: availableFilters.syncStatus }
-  ].map((field) => `
+  ];
+  const renderStaffFilterFieldMarkup = (field) => `
     <div class="staff-filter-field">
       <label for="staff-filter-${escapeHtml(field.key)}">${escapeHtml(field.label)}</label>
       <select id="staff-filter-${escapeHtml(field.key)}" data-staff-filter="${escapeHtml(field.key)}">
@@ -6288,7 +6300,23 @@ function renderStaffOrdersQueue() {
         `).join('')}
       </select>
     </div>
-  `).join('');
+  `;
+
+  staffOrdersFilters.innerHTML = `
+    <div class="staff-orders-filters-row">
+      ${primaryFilterFields.map(renderStaffFilterFieldMarkup).join('')}
+    </div>
+    <div class="staff-orders-filters-more"${staffOrdersState.showMoreFilters ? '' : ' hidden'}>
+      <div class="staff-orders-filters-row staff-orders-filters-row--expanded">
+        ${moreFilterFields.map(renderStaffFilterFieldMarkup).join('')}
+      </div>
+    </div>
+  `;
+  const moreFiltersButton = document.querySelector('[data-screen="staff-orders"] [data-action="staff-toggle-more-filters"]');
+  if (moreFiltersButton instanceof HTMLButtonElement) {
+    moreFiltersButton.setAttribute('aria-expanded', staffOrdersState.showMoreFilters ? 'true' : 'false');
+    moreFiltersButton.textContent = staffOrdersState.showMoreFilters ? 'Fewer Filters' : 'More Filters';
+  }
 
   if (staffOrdersSearchInput && staffOrdersSearchInput.value !== staffOrdersState.searchTerm) {
     staffOrdersSearchInput.value = staffOrdersState.searchTerm;
@@ -6319,33 +6347,42 @@ function renderStaffOrdersQueue() {
 }
 
 function buildStaffSystemStatusCardMarkup(snapshot) {
-  const canRetryUploads = !snapshot.isRetryingUploads
+  const hostedAdminEnabled = canUseHostedAdminWorkspace();
+  const canRetryUploads = hostedAdminEnabled
+    && !snapshot.isRetryingUploads
     && !snapshot.isRecheckingConnection
     && !snapshot.isChecking
     && (snapshot.pendingUploadCount > 0 || snapshot.uploadProblemCount > 0);
-  const canRecheckConnection = !snapshot.isRetryingUploads && !snapshot.isRecheckingConnection;
+  const canRecheckConnection = hostedAdminEnabled && !snapshot.isRetryingUploads && !snapshot.isRecheckingConnection;
   const lastSuccessfulSyncCopy = snapshot.lastSuccessfulSyncAt
     ? formatReadableDateTime(snapshot.lastSuccessfulSyncAt)
     : 'Not yet';
+  const statusLabel = isLocalStaffAdminPreview() ? 'Local Preview Mode' : snapshot.label;
+  const statusSupportingText = sanitizeLocalAdminMessage(
+    snapshot.supportingText,
+    'Hosted admin actions require the authenticated live staff workspace.'
+  ) || 'Hosted admin actions require the authenticated live staff workspace.';
 
   return `
-    <article class="staff-summary-card staff-summary-card--wide">
-      <div class="staff-section-heading">
-        <div>
+    <article class="staff-panel-surface staff-panel-surface--status">
+      <div class="staff-admin-status-strip">
+        <div class="staff-admin-status-copy">
           <p class="eyebrow staff-orders-eyebrow">Forge System Status</p>
-          <h2>${escapeHtml(snapshot.label)}</h2>
-          <p>${escapeHtml(snapshot.supportingText)}</p>
+          <h2>${escapeHtml(statusLabel)}</h2>
+          <p>${escapeHtml(statusSupportingText)}</p>
         </div>
-        <div class="staff-order-card-actions">
-          <button class="secondary-button" type="button" data-action="staff-recheck-connection"${canRecheckConnection ? '' : ' disabled'}>${snapshot.isRecheckingConnection ? 'Checking...' : 'Recheck Connection'}</button>
-          <button class="primary-button" type="button" data-action="staff-retry-uploads"${canRetryUploads ? '' : ' disabled'}>${snapshot.isRetryingUploads ? 'Retrying...' : 'Retry Uploads'}</button>
+      <div class="staff-admin-status-metrics">
+          <div class="staff-admin-status-metric"><span>Forge Server</span><strong>${escapeHtml(snapshot.serverLabel)}</strong></div>
+          <div class="staff-admin-status-metric"><span>Pending Uploads</span><strong>${escapeHtml(String(snapshot.pendingUploadCount))}</strong></div>
+          <div class="staff-admin-status-metric"><span>Upload Problems</span><strong>${escapeHtml(String(snapshot.uploadProblemCount))}</strong></div>
+          <div class="staff-admin-status-metric"><span>Last Successful Sync</span><strong>${escapeHtml(lastSuccessfulSyncCopy)}</strong></div>
         </div>
-      </div>
-      <div class="staff-order-card-meta staff-order-card-meta--primary">
-        <div><span>Forge Server</span><strong>${escapeHtml(snapshot.serverLabel)}</strong></div>
-        <div><span>Pending Uploads</span><strong>${escapeHtml(String(snapshot.pendingUploadCount))}</strong></div>
-        <div><span>Upload Problems</span><strong>${escapeHtml(String(snapshot.uploadProblemCount))}</strong></div>
-        <div><span>Last Successful Sync</span><strong>${escapeHtml(lastSuccessfulSyncCopy)}</strong></div>
+        <div class="staff-admin-status-actions-row" data-staff-status-actions-row>
+          <div class="staff-action-group staff-action-group--status" data-staff-status-actions>
+            <button class="secondary-button" type="button" data-action="staff-recheck-connection"${canRecheckConnection ? '' : ' disabled'}>${snapshot.isRecheckingConnection ? 'Checking...' : 'Recheck Connection'}</button>
+            <button class="primary-button" type="button" data-action="staff-retry-uploads"${canRetryUploads ? '' : ' disabled'}>${snapshot.isRetryingUploads ? 'Retrying...' : 'Retry Uploads'}</button>
+          </div>
+        </div>
       </div>
     </article>
   `;
@@ -6540,13 +6577,48 @@ function getStaffEventStatusSummary() {
   };
 }
 
+function isLocalStaffAdminPreview() {
+  return staffOrdersState.dataSource !== 'server';
+}
+
+function buildStaffAdminPreviewNoticeMarkup() {
+  if (!isLocalStaffAdminPreview()) {
+    return '';
+  }
+
+  return `
+    <div class="staff-admin-preview-notice" role="status">
+      <strong>Local Preview Only</strong>
+      <span>Hosted admin actions require the authenticated live staff workspace. This localhost view keeps the controls visible for layout review, but the hosted actions stay disabled here.</span>
+    </div>
+  `;
+}
+
+function canUseHostedAdminWorkspace() {
+  return staffOrdersState.dataSource === 'server' && staffOrdersState.authenticated;
+}
+
+function getLocalAdminFallbackMessage(defaultMessage) {
+  return isLocalStaffAdminPreview() ? defaultMessage : '';
+}
+
+function sanitizeLocalAdminMessage(message, fallbackMessage = '') {
+  const normalized = sanitizeText(message);
+  if (!isLocalStaffAdminPreview()) {
+    return normalized;
+  }
+  if (/unexpected response/i.test(normalized)) {
+    return fallbackMessage;
+  }
+  return normalized || fallbackMessage;
+}
+
 function canManageLegacyTestCleanup() {
   return Boolean(
     staffRuntime
     && typeof staffRuntime.previewLegacyTestCleanup === 'function'
     && typeof staffRuntime.applyLegacyTestCleanup === 'function'
-    && staffOrdersState.authenticated
-    && staffOrdersState.dataSource === 'server'
+    && canUseHostedAdminWorkspace()
   );
 }
 
@@ -6555,7 +6627,7 @@ function canManageShippingExport() {
     staffRuntime
     && typeof staffRuntime.previewShippingExport === 'function'
     && typeof staffRuntime.buildShippingExportDownload === 'function'
-    && staffOrdersState.authenticated
+    && canUseHostedAdminWorkspace()
   );
 }
 
@@ -6675,21 +6747,21 @@ function buildShippingExportControlsMarkup() {
     || staffOrdersState.shippingExportDownloading;
 
   return `
-    <section class="staff-panel-surface">
+    <section class="staff-panel-surface staff-panel-surface--admin-tool">
       <div class="staff-section-heading">
         <div>
           <p class="eyebrow staff-orders-eyebrow">Shipping Export</p>
           <h2>Event Shipping CSV</h2>
           <p>Preview the shipping-ready orders for one event, review any missing addresses, then download the CSV for labels outside Forge.</p>
         </div>
-        <div class="staff-order-card-actions">
+        <div class="staff-action-group staff-action-group--admin">
           <button class="secondary-button" type="button" data-action="staff-preview-shipping-export"${disablePreview ? ' disabled' : ''}>${staffOrdersState.shippingExportLoading ? 'Loading Preview...' : 'Preview Shipping Export'}</button>
           <button class="primary-button" type="button" data-action="staff-download-shipping-export"${disableDownload ? ' disabled' : ''}>${staffOrdersState.shippingExportDownloading ? 'Preparing Download...' : 'Download CSV'}</button>
         </div>
       </div>
-      ${buildStaffNoticeMarkup(staffOrdersState.shippingExportError, 'error')}
+      ${buildStaffNoticeMarkup(sanitizeLocalAdminMessage(staffOrdersState.shippingExportError), 'error')}
       ${buildStaffNoticeMarkup(staffOrdersState.shippingExportNotice, staffOrdersState.shippingExportNoticeTone)}
-      ${!available ? '<p class="staff-orders-status">Shipping export becomes available after the staff workspace loads.</p>' : ''}
+      ${!available ? `<p class="staff-orders-status">${escapeHtml(isLocalStaffAdminPreview() ? 'Local preview only. Hosted shipping export requires the authenticated live staff workspace.' : 'Shipping export becomes available after the staff workspace loads.')}</p>` : ''}
       <div class="staff-orders-filters">
         <div class="staff-filter-field">
           <label for="staff-shipping-export-event">Event</label>
@@ -6792,20 +6864,20 @@ function buildLegacyCleanupControlsMarkup() {
     || staffOrdersState.legacyCleanupLoading;
 
   return `
-    <section class="staff-panel-surface">
+    <section class="staff-panel-surface staff-panel-surface--admin-tool">
       <div class="staff-section-heading">
         <div>
           <p class="eyebrow staff-orders-eyebrow">One-Time Cleanup</p>
           <h2>Legacy Test Orders Before July 25</h2>
           <p>Preview the confirmed historical test orders before deleting anything. July 25, 2026 orders stay protected.</p>
         </div>
-        <div class="staff-order-card-actions">
+        <div class="staff-action-group staff-action-group--admin">
           <button class="secondary-button" type="button" data-action="staff-preview-legacy-cleanup"${disablePreview ? ' disabled' : ''}>${staffOrdersState.legacyCleanupLoading ? 'Loading Preview...' : 'Preview Legacy Cleanup'}</button>
         </div>
       </div>
-      ${buildStaffNoticeMarkup(staffOrdersState.legacyCleanupError, 'error')}
+      ${buildStaffNoticeMarkup(sanitizeLocalAdminMessage(staffOrdersState.legacyCleanupError), 'error')}
       ${buildStaffNoticeMarkup(staffOrdersState.legacyCleanupNotice, staffOrdersState.legacyCleanupNoticeTone)}
-      ${!available ? '<p class="staff-orders-status">Legacy cleanup is available only from the authenticated hosted staff workspace.</p>' : ''}
+      ${!available ? `<p class="staff-orders-status">${escapeHtml(isLocalStaffAdminPreview() ? 'Local preview only. Hosted cleanup controls require the authenticated live staff workspace.' : 'Legacy cleanup is available only from the authenticated hosted staff workspace.')}</p>` : ''}
       ${preview ? `
         <div class="staff-order-card-meta staff-order-card-meta--primary">
           <div><span>Eligible Orders</span><strong>${escapeHtml(String(eligibleCount))}</strong></div>
@@ -6851,7 +6923,7 @@ function buildLegacyCleanupControlsMarkup() {
           >
         </div>
         <p class="staff-orders-status">Required: <strong>${escapeHtml(expectedConfirmation)}</strong></p>
-        <div class="staff-order-card-actions">
+        <div class="staff-action-group staff-action-group--admin">
           <button class="primary-button" type="button" data-action="staff-apply-legacy-cleanup"${disableApply ? ' disabled' : ''}>${staffOrdersState.legacyCleanupApplying ? 'Deleting Historical Test Orders...' : 'Delete Previewed Orders'}</button>
         </div>
       ` : ''}
@@ -6859,31 +6931,33 @@ function buildLegacyCleanupControlsMarkup() {
   `;
 }
 
-function renderStaffEventControls() {
-  if (!staffEventControls) {
-    return;
-  }
-
+function buildStaffEventControlsMarkup() {
   const eventStatus = getStaffEventStatusSummary();
   const activeEvent = getActiveStaffEvent();
-  const canManageEvents = Boolean(staffApiClient && typeof staffApiClient.listEvents === 'function');
+  const canManageEvents = Boolean(staffApiClient && typeof staffApiClient.listEvents === 'function' && canUseHostedAdminWorkspace());
   const scheduledEvents = staffEventState.events.filter((event) => event?.event_status === 'scheduled');
+  const eventMessage = sanitizeLocalAdminMessage(
+    staffEventState.error || staffEventState.notice || eventStatus.detail || (canManageEvents ? '' : 'Staff event controls are unavailable on this device.'),
+    getLocalAdminFallbackMessage('Hosted event controls require the authenticated live staff workspace.')
+  );
 
-  staffEventControls.innerHTML = `
-    <div class="staff-section-heading">
-      <div>
-        <p class="eyebrow staff-orders-eyebrow">Event Control</p>
-        <h2>${escapeHtml(eventStatus.title)}</h2>
-        <p>${escapeHtml(eventStatus.summary)}</p>
+  return `
+    <section class="staff-panel-surface staff-panel-surface--admin-primary">
+      <div class="staff-section-heading">
+        <div>
+          <p class="eyebrow staff-orders-eyebrow">Event Control</p>
+          <h2>${escapeHtml(eventStatus.title)}</h2>
+          <p>${escapeHtml(eventStatus.summary)}</p>
+        </div>
+        <div class="staff-action-group staff-action-group--admin">
+          <button class="secondary-button" type="button" data-action="staff-refresh-events"${canManageEvents ? '' : ' disabled'}>Refresh Events</button>
+          <button class="primary-button" type="button" data-action="staff-toggle-event-form"${canManageEvents ? '' : ' disabled'}>${staffEventState.formOpen ? 'Cancel' : 'Create Event'}</button>
+        </div>
       </div>
-      <div class="staff-order-card-actions">
-        <button class="secondary-button" type="button" data-action="staff-refresh-events"${canManageEvents ? '' : ' disabled'}>Refresh Events</button>
-        <button class="primary-button" type="button" data-action="staff-toggle-event-form"${canManageEvents ? '' : ' disabled'}>${staffEventState.formOpen ? 'Cancel' : 'Create Event'}</button>
-      </div>
-    </div>
-    <p class="staff-orders-status">${escapeHtml(staffEventState.error || staffEventState.notice || eventStatus.detail || (canManageEvents ? '' : 'Staff event controls are unavailable on this device.'))}</p>
+      ${buildStaffAdminPreviewNoticeMarkup()}
+      <p class="staff-orders-status">${escapeHtml(eventMessage)}</p>
     ${staffEventState.formOpen ? `
-      <div class="staff-orders-filters">
+      <div class="staff-orders-filters staff-orders-filters--admin">
         <div class="staff-filter-field">
           <label for="staff-event-name">Event Name</label>
           <input id="staff-event-name" type="text" data-staff-event-field="event_name" value="${escapeHtml(staffEventState.form.event_name)}">
@@ -6908,14 +6982,14 @@ function renderStaffEventControls() {
           <input id="staff-event-location" type="text" data-staff-event-field="event_location" value="${escapeHtml(staffEventState.form.event_location)}">
         </div>
       </div>
-      <div class="staff-order-card-actions">
+      <div class="staff-action-group staff-action-group--admin">
         <button class="primary-button" type="button" data-action="staff-submit-event"${staffEventState.formSubmitting ? ' disabled' : ''}>${staffEventState.formSubmitting ? 'Saving...' : 'Save Event'}</button>
       </div>
     ` : ''}
     ${scheduledEvents.length || activeEvent ? `
-      <div class="staff-orders-list">
+      <div class="staff-orders-list staff-admin-event-list">
         ${staffEventState.events.slice(0, 4).map((event) => `
-          <article class="staff-order-card">
+          <article class="staff-order-card staff-admin-event-card">
             <div class="staff-order-card-header">
               <div class="staff-order-card-title">
                 <div class="staff-order-ref">${escapeHtml(event.event_name)}</div>
@@ -6930,35 +7004,97 @@ function renderStaffEventControls() {
               <div><span>Location</span><strong>${escapeHtml(event.event_location || 'Not provided')}</strong></div>
               <div><span>Status</span><strong>${escapeHtml(event.event_status.replace('_', ' '))}</strong></div>
             </div>
-            <div class="staff-order-card-meta staff-order-card-meta--secondary">
-              <div><span>Ordering Link</span><strong>${event.public_order_token ? escapeHtml(buildPublicOrderingLink(event.public_order_token)) : 'Unavailable'}</strong></div>
+            <div class="staff-order-card-meta staff-order-card-meta--secondary staff-order-card-meta--event-card">
+              <div class="staff-order-card-meta-copy staff-order-card-meta-copy--link">
+                <span>Ordering Link</span>
+                <strong>${event.public_order_token ? escapeHtml(buildPublicOrderingLink(event.public_order_token)) : 'Unavailable'}</strong>
+              </div>
               <div><span>Link Rule</span><strong>Ending this event disables this exact link.</strong></div>
             </div>
-            <div class="staff-order-card-actions">
+            <div class="staff-action-group staff-order-card-actions staff-order-card-actions--event-card">
               ${event.public_order_token ? `<button class="secondary-button" type="button" data-action="staff-copy-ordering-link" data-event-token="${escapeHtml(event.public_order_token)}">Copy Ordering Link</button>` : ''}
-              ${event.event_status === 'scheduled' ? `<button class="primary-button" type="button" data-action="staff-start-event" data-event-id="${escapeHtml(event.event_id)}">Start Event</button>` : ''}
-              ${event.event_status === 'active' ? `<button class="secondary-button" type="button" data-action="staff-end-event" data-event-id="${escapeHtml(event.event_id)}">End Event</button>` : ''}
+              ${event.event_status === 'scheduled' ? `<button class="primary-button" type="button" data-action="staff-start-event" data-event-id="${escapeHtml(event.event_id)}"${canManageEvents ? '' : ' disabled'}>Start Event</button>` : ''}
+              ${event.event_status === 'active' ? `<button class="secondary-button" type="button" data-action="staff-end-event" data-event-id="${escapeHtml(event.event_id)}"${canManageEvents ? '' : ' disabled'}>End Event</button>` : ''}
             </div>
           </article>
         `).join('')}
       </div>
     ` : ''}
-    ${buildShippingExportControlsMarkup()}
-    ${buildLegacyCleanupControlsMarkup()}
+    </section>
   `;
 }
 
+function renderStaffAdminTools() {
+  if (!staffAdminContent) {
+    return;
+  }
+
+  const syncSnapshot = getCurrentSyncSnapshot();
+  staffAdminContent.innerHTML = `
+    ${buildStaffSystemStatusCardMarkup(syncSnapshot)}
+    ${buildStaffEventControlsMarkup()}
+    <div class="staff-admin-tools-grid">
+      ${buildShippingExportControlsMarkup()}
+      ${buildLegacyCleanupControlsMarkup()}
+    </div>
+  `;
+}
+
+function recheckStaffAdminConnection() {
+  if (!canUseHostedAdminWorkspace()) {
+    renderStaffAdminTools();
+    return Promise.resolve(null);
+  }
+
+  return syncStatusController.recheckConnection().then((snapshot) => {
+    staffOrdersState.notice = snapshot.serverState === forgeSyncStatus.SERVER_STATES.connected
+      ? 'Forge server connection refreshed.'
+      : 'Forge server is still unavailable.';
+    staffOrdersState.noticeTone = snapshot.serverState === forgeSyncStatus.SERVER_STATES.connected ? 'success' : 'muted';
+    renderStaffAdminTools();
+    return snapshot;
+  }).catch((error) => {
+    staffOrdersState.notice = 'Forge server could not be rechecked right now.';
+    staffOrdersState.noticeTone = 'error';
+    renderStaffAdminTools();
+    throw error;
+  });
+}
+
+function retryStaffAdminUploads() {
+  if (!canUseHostedAdminWorkspace()) {
+    renderStaffAdminTools();
+    return Promise.resolve(null);
+  }
+
+  return syncStatusController.retryUploads().then((snapshot) => {
+    staffOrdersState.notice = snapshot.uploadProblemCount > 0
+      ? 'Some saved orders still need staff attention.'
+      : (snapshot.pendingUploadCount > 0
+        ? 'Saved uploads were retried and are still in progress.'
+        : 'Saved uploads were retried successfully.');
+    staffOrdersState.noticeTone = snapshot.uploadProblemCount > 0 ? 'muted' : 'success';
+    renderStaffAdminTools();
+    return snapshot;
+  }).catch((error) => {
+    staffOrdersState.notice = 'Saved uploads could not be retried right now.';
+    staffOrdersState.noticeTone = 'error';
+    renderStaffAdminTools();
+    throw error;
+  });
+}
+
 async function loadStaffEvents() {
-  if (!staffApiClient || typeof staffApiClient.listEvents !== 'function') {
+  if (!canUseHostedAdminWorkspace() || !staffApiClient || typeof staffApiClient.listEvents !== 'function') {
     staffEventState.events = [];
     staffEventState.error = '';
-    renderStaffEventControls();
+    renderStaffAdminTools();
     return;
   }
 
   staffEventState.loading = true;
   staffEventState.error = '';
-  renderStaffEventControls();
+  renderStaffAdminTools();
 
   try {
     const result = await staffApiClient.listEvents();
@@ -6972,19 +7108,19 @@ async function loadStaffEvents() {
     staffEventState.error = error?.message || 'Staff event management is currently unavailable.';
   } finally {
     staffEventState.loading = false;
-    renderStaffEventControls();
+    renderStaffAdminTools();
   }
 }
 
 async function submitStaffEventForm() {
-  if (!staffApiClient || typeof staffApiClient.createEvent !== 'function' || staffEventState.formSubmitting) {
+  if (!canUseHostedAdminWorkspace() || !staffApiClient || typeof staffApiClient.createEvent !== 'function' || staffEventState.formSubmitting) {
     return;
   }
 
   staffEventState.formSubmitting = true;
   staffEventState.error = '';
   staffEventState.notice = '';
-  renderStaffEventControls();
+  renderStaffAdminTools();
 
   try {
     const result = await staffApiClient.createEvent({ ...staffEventState.form });
@@ -7007,13 +7143,13 @@ async function submitStaffEventForm() {
     console.error('Forge event creation failed', error);
     staffEventState.formSubmitting = false;
     staffEventState.error = error?.message || 'Staff event management is currently unavailable.';
-    renderStaffEventControls();
+    renderStaffAdminTools();
   }
 }
 
 async function startStaffEvent(eventId) {
   const event = staffEventState.events.find((candidate) => candidate?.event_id === eventId);
-  if (!event || !staffApiClient || typeof staffApiClient.startEvent !== 'function') {
+  if (!canUseHostedAdminWorkspace() || !event || !staffApiClient || typeof staffApiClient.startEvent !== 'function') {
     return;
   }
 
@@ -7036,13 +7172,13 @@ async function startStaffEvent(eventId) {
   } catch (error) {
     console.error('Forge event start failed', error);
     staffEventState.error = error?.message || 'That event could not be started.';
-    renderStaffEventControls();
+    renderStaffAdminTools();
   }
 }
 
 async function endStaffEvent(eventId) {
   const event = staffEventState.events.find((candidate) => candidate?.event_id === eventId);
-  if (!event || !staffApiClient || typeof staffApiClient.endEvent !== 'function') {
+  if (!canUseHostedAdminWorkspace() || !event || !staffApiClient || typeof staffApiClient.endEvent !== 'function') {
     return;
   }
 
@@ -7065,7 +7201,7 @@ async function endStaffEvent(eventId) {
   } catch (error) {
     console.error('Forge event end failed', error);
     staffEventState.error = error?.message || 'That event could not be ended.';
-    renderStaffEventControls();
+    renderStaffAdminTools();
   }
 }
 
@@ -7080,7 +7216,7 @@ async function copyStaffOrderingLink(publicOrderToken) {
       await navigator.clipboard.writeText(link);
       staffEventState.notice = 'Ordering link copied.';
       staffEventState.error = '';
-      renderStaffEventControls();
+      renderStaffAdminTools();
       return;
     }
   } catch (error) {
@@ -7090,7 +7226,7 @@ async function copyStaffOrderingLink(publicOrderToken) {
   window.prompt('Copy this ordering link:', link);
   staffEventState.notice = 'Ordering link ready to copy.';
   staffEventState.error = '';
-  renderStaffEventControls();
+  renderStaffAdminTools();
 }
 
 async function previewStaffShippingExport() {
@@ -7101,14 +7237,14 @@ async function previewStaffShippingExport() {
   const eventId = staffOrdersState.shippingExportSelectedEventId;
   if (!eventId) {
     staffOrdersState.shippingExportError = 'Choose an event before loading a shipping export preview.';
-    renderStaffEventControls();
+    renderStaffAdminTools();
     return;
   }
 
   staffOrdersState.shippingExportLoading = true;
   staffOrdersState.shippingExportError = '';
   staffOrdersState.shippingExportNotice = '';
-  renderStaffEventControls();
+  renderStaffAdminTools();
 
   try {
     const result = await staffRuntime.previewShippingExport(eventId);
@@ -7128,7 +7264,7 @@ async function previewStaffShippingExport() {
     staffOrdersState.shippingExportError = error?.message || 'Shipping export preview is currently unavailable.';
   } finally {
     staffOrdersState.shippingExportLoading = false;
-    renderStaffEventControls();
+    renderStaffAdminTools();
   }
 }
 
@@ -7140,14 +7276,14 @@ async function downloadStaffShippingExport() {
   const eventId = staffOrdersState.shippingExportSelectedEventId;
   if (!eventId) {
     staffOrdersState.shippingExportError = 'Choose an event before downloading a shipping export.';
-    renderStaffEventControls();
+    renderStaffAdminTools();
     return;
   }
 
   staffOrdersState.shippingExportDownloading = true;
   staffOrdersState.shippingExportError = '';
   staffOrdersState.shippingExportNotice = '';
-  renderStaffEventControls();
+  renderStaffAdminTools();
 
   try {
     const download = await staffRuntime.buildShippingExportDownload(eventId);
@@ -7177,7 +7313,7 @@ async function downloadStaffShippingExport() {
     staffOrdersState.shippingExportError = error?.message || 'Shipping export download is currently unavailable.';
   } finally {
     staffOrdersState.shippingExportDownloading = false;
-    renderStaffEventControls();
+    renderStaffAdminTools();
   }
 }
 
@@ -7236,7 +7372,7 @@ async function previewLegacyTestCleanup() {
   staffOrdersState.legacyCleanupLoading = true;
   staffOrdersState.legacyCleanupError = '';
   staffOrdersState.legacyCleanupNotice = '';
-  renderStaffEventControls();
+  renderStaffAdminTools();
 
   try {
     const result = await staffRuntime.previewLegacyTestCleanup();
@@ -7257,7 +7393,7 @@ async function previewLegacyTestCleanup() {
     staffOrdersState.legacyCleanupError = error?.message || 'Legacy test cleanup preview is currently unavailable.';
   } finally {
     staffOrdersState.legacyCleanupLoading = false;
-    renderStaffEventControls();
+    renderStaffAdminTools();
   }
 }
 
@@ -7270,7 +7406,7 @@ async function applyLegacyTestCleanup() {
   staffOrdersState.legacyCleanupApplying = true;
   staffOrdersState.legacyCleanupError = '';
   staffOrdersState.legacyCleanupNotice = '';
-  renderStaffEventControls();
+  renderStaffAdminTools();
 
   try {
     const result = await staffRuntime.applyLegacyTestCleanup(
@@ -7300,7 +7436,7 @@ async function applyLegacyTestCleanup() {
     staffOrdersState.legacyCleanupError = error?.message || 'Legacy test cleanup could not be completed.';
   } finally {
     staffOrdersState.legacyCleanupApplying = false;
-    renderStaffEventControls();
+    renderStaffAdminTools();
   }
 }
 
@@ -7413,7 +7549,7 @@ async function loadStaffOrdersQueue() {
     staffOrdersState.loading = false;
     renderStaffOrdersQueue();
     renderReadyToPackQueue();
-    renderStaffEventControls();
+    renderStaffAdminTools();
   }
 }
 
@@ -7516,7 +7652,7 @@ function renderStaffOrderDetail() {
     staffOrderDetailDialog.innerHTML = `
       <div class="staff-order-detail-header">
         <div>
-          <p class="eyebrow staff-orders-eyebrow">Development Only</p>
+          <p class="eyebrow staff-orders-eyebrow">${escapeHtml(getStaffEnvironmentEyebrow())}</p>
           <h2 id="staff-order-detail-title">Loading Order</h2>
         </div>
         <button class="text-button" type="button" data-action="close-staff-order-detail">Close</button>
@@ -7530,7 +7666,7 @@ function renderStaffOrderDetail() {
     staffOrderDetailDialog.innerHTML = `
       <div class="staff-order-detail-header">
         <div>
-          <p class="eyebrow staff-orders-eyebrow">Development Only</p>
+          <p class="eyebrow staff-orders-eyebrow">${escapeHtml(getStaffEnvironmentEyebrow())}</p>
           <h2 id="staff-order-detail-title">Order Unavailable</h2>
         </div>
         <button class="text-button" type="button" data-action="close-staff-order-detail">Close</button>
@@ -7575,7 +7711,7 @@ function renderStaffOrderDetail() {
   renderedDetailContainer.innerHTML = `
     <div class="staff-order-detail-header">
       <div class="staff-order-detail-heading">
-        <p class="eyebrow staff-orders-eyebrow">Development Only</p>
+        <p class="eyebrow staff-orders-eyebrow">${escapeHtml(getStaffEnvironmentEyebrow())}</p>
         <h2 id="staff-order-detail-title">${escapeHtml(getOrderDisplayReference(record))}</h2>
         <p class="staff-order-detail-customer">${escapeHtml(customer.full_name || 'Unknown customer')}</p>
         <div class="staff-order-detail-badges">
@@ -8851,7 +8987,7 @@ async function inspectSavedOrderRecord(forgeOrderUuid) {
 }
 
 function shouldShowCustomerSyncIndicator() {
-  return !['staff-access', 'staff-orders', 'ready-to-pack', 'staff-catalog'].includes(appState.currentScreen);
+  return !['staff-access', 'staff-orders', 'ready-to-pack', 'staff-catalog', 'staff-admin'].includes(appState.currentScreen);
 }
 
 function renderCustomerSyncIndicator() {
@@ -9520,7 +9656,7 @@ if (treeForm) {
   renderStaffOrdersQueue();
   renderReadyToPackQueue();
 
-  if (['staff-access', 'staff-orders', 'ready-to-pack', 'staff-catalog'].includes(appState.currentScreen)) {
+  if (['staff-access', 'staff-orders', 'ready-to-pack', 'staff-catalog', 'staff-admin'].includes(appState.currentScreen)) {
     openStaffAccessScreen(appState.currentScreen);
   } else if (appState.currentScreen === 'tree-customization') {
     showScreen('tree-customization');
@@ -10356,7 +10492,7 @@ if (treeForm) {
     if (target.matches('[data-staff-legacy-cleanup-confirmation]')) {
       staffOrdersState.legacyCleanupConfirmationText = target.value.slice(0, 200);
       staffOrdersState.legacyCleanupError = '';
-      renderStaffEventControls();
+      renderStaffAdminTools();
       return;
     }
     const eventField = target.dataset.staffEventField;
@@ -10373,7 +10509,7 @@ if (treeForm) {
         staffOrdersState.shippingExportError = '';
         staffOrdersState.shippingExportNotice = '';
         staffOrdersState.shippingExportPreview = null;
-        renderStaffEventControls();
+        renderStaffAdminTools();
         return;
       }
       const filterKey = target.dataset.staffFilter;
@@ -10403,32 +10539,18 @@ if (treeForm) {
     }
 
     if (action === 'staff-recheck-connection') {
-      syncStatusController.recheckConnection().then((snapshot) => {
-        staffOrdersState.notice = snapshot.serverState === forgeSyncStatus.SERVER_STATES.connected
-          ? 'Forge server connection refreshed.'
-          : 'Forge server is still unavailable.';
-        staffOrdersState.noticeTone = snapshot.serverState === forgeSyncStatus.SERVER_STATES.connected ? 'success' : 'muted';
+      recheckStaffAdminConnection().then(() => {
         renderStaffOrdersQueue();
       }).catch(() => {
-        staffOrdersState.notice = 'Forge server could not be rechecked right now.';
-        staffOrdersState.noticeTone = 'error';
         renderStaffOrdersQueue();
       });
       return;
     }
 
     if (action === 'staff-retry-uploads') {
-      syncStatusController.retryUploads().then((snapshot) => {
-        staffOrdersState.notice = snapshot.uploadProblemCount > 0
-          ? 'Some saved orders still need staff attention.'
-          : (snapshot.pendingUploadCount > 0
-            ? 'Saved uploads were retried and are still in progress.'
-            : 'Saved uploads were retried successfully.');
-        staffOrdersState.noticeTone = snapshot.uploadProblemCount > 0 ? 'muted' : 'success';
+      retryStaffAdminUploads().then(() => {
         renderStaffOrdersQueue();
       }).catch(() => {
-        staffOrdersState.notice = 'Saved uploads could not be retried right now.';
-        staffOrdersState.noticeTone = 'error';
         renderStaffOrdersQueue();
       });
       return;
@@ -10461,9 +10583,13 @@ if (treeForm) {
     }
 
     if (action === 'staff-toggle-event-form') {
+      if (!canUseHostedAdminWorkspace()) {
+        renderStaffAdminTools();
+        return;
+      }
       staffEventState.formOpen = !staffEventState.formOpen;
       staffEventState.error = '';
-      renderStaffEventControls();
+      renderStaffAdminTools();
       return;
     }
 
@@ -10493,6 +10619,12 @@ if (treeForm) {
       return;
     }
 
+    if (action === 'staff-open-admin') {
+      staffOrdersState.notice = '';
+      openStaffAdminScreen();
+      return;
+    }
+
     if (action === 'staff-open-ready-to-pack') {
       staffOrdersState.notice = '';
       openReadyToPackScreen();
@@ -10512,7 +10644,14 @@ if (treeForm) {
     if (action === 'staff-clear-order-filters') {
       staffOrdersState.notice = '';
       staffOrdersState.searchTerm = '';
+      staffOrdersState.showMoreFilters = false;
       staffOrdersState.filters = forgeLocalOrdersQueue.createEmptyOrderFilters();
+      renderStaffOrdersQueue();
+      return;
+    }
+
+    if (action === 'staff-toggle-more-filters') {
+      staffOrdersState.showMoreFilters = !staffOrdersState.showMoreFilters;
       renderStaffOrdersQueue();
       return;
     }
@@ -10573,6 +10712,16 @@ if (treeForm) {
       return;
     }
 
+    if (action === 'staff-open-catalog') {
+      openStaffCatalogScreen();
+      return;
+    }
+
+    if (action === 'staff-open-admin') {
+      openStaffAdminScreen();
+      return;
+    }
+
     if (action === 'staff-return-welcome') {
       returnToWelcomeFromStaff();
       return;
@@ -10594,9 +10743,153 @@ if (treeForm) {
       return;
     }
 
+    if (action === 'staff-open-ready-to-pack') {
+      openReadyToPackScreen();
+      return;
+    }
+
+    if (action === 'staff-open-admin') {
+      openStaffAdminScreen();
+      return;
+    }
+
     if (action === 'staff-catalog-section') {
       const section = event.target.closest('[data-catalog-section]')?.dataset.catalogSection || '';
       setStaffCatalogSection(section);
+      return;
+    }
+
+    if (action === 'staff-logout') {
+      logoutStaffAccess();
+      return;
+    }
+
+    if (action === 'staff-return-welcome') {
+      returnToWelcomeFromStaff();
+    }
+  });
+
+  document.querySelector('[data-screen="staff-admin"]')?.addEventListener('input', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) {
+      return;
+    }
+    if (target.matches('[data-staff-legacy-cleanup-confirmation]')) {
+      staffOrdersState.legacyCleanupConfirmationText = target.value.slice(0, 200);
+      staffOrdersState.legacyCleanupError = '';
+      renderStaffAdminTools();
+      return;
+    }
+    const eventField = target.dataset.staffEventField;
+    if (eventField) {
+      staffEventState.form[eventField] = target.value;
+    }
+  });
+
+  document.querySelector('[data-screen="staff-admin"]')?.addEventListener('change', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement)) {
+      return;
+    }
+    if (target.matches('[data-staff-shipping-export-event]')) {
+      staffOrdersState.shippingExportSelectedEventId = String(target.value || '');
+      staffOrdersState.shippingExportError = '';
+      staffOrdersState.shippingExportNotice = '';
+      staffOrdersState.shippingExportPreview = null;
+      renderStaffAdminTools();
+      return;
+    }
+    const eventField = target.dataset.staffEventField;
+    if (eventField) {
+      staffEventState.form[eventField] = String(target.value || '');
+    }
+  });
+
+  document.querySelector('[data-screen="staff-admin"]')?.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    if (!action) {
+      return;
+    }
+
+    if (action === 'staff-recheck-connection') {
+      recheckStaffAdminConnection().catch(() => {});
+      return;
+    }
+
+    if (action === 'staff-retry-uploads') {
+      retryStaffAdminUploads().catch(() => {});
+      return;
+    }
+
+    if (action === 'staff-refresh-events') {
+      staffEventState.notice = '';
+      loadStaffEvents();
+      return;
+    }
+
+    if (action === 'staff-preview-shipping-export') {
+      previewStaffShippingExport();
+      return;
+    }
+
+    if (action === 'staff-download-shipping-export') {
+      downloadStaffShippingExport();
+      return;
+    }
+
+    if (action === 'staff-preview-legacy-cleanup') {
+      previewLegacyTestCleanup();
+      return;
+    }
+
+    if (action === 'staff-apply-legacy-cleanup') {
+      applyLegacyTestCleanup();
+      return;
+    }
+
+    if (action === 'staff-toggle-event-form') {
+      if (!canUseHostedAdminWorkspace()) {
+        renderStaffAdminTools();
+        return;
+      }
+      staffEventState.formOpen = !staffEventState.formOpen;
+      staffEventState.error = '';
+      renderStaffAdminTools();
+      return;
+    }
+
+    if (action === 'staff-submit-event') {
+      submitStaffEventForm();
+      return;
+    }
+
+    if (action === 'staff-copy-ordering-link') {
+      copyStaffOrderingLink(event.target.closest('[data-event-token]')?.dataset.eventToken || '');
+      return;
+    }
+
+    if (action === 'staff-start-event') {
+      startStaffEvent(event.target.closest('[data-event-id]')?.dataset.eventId || '');
+      return;
+    }
+
+    if (action === 'staff-end-event') {
+      endStaffEvent(event.target.closest('[data-event-id]')?.dataset.eventId || '');
+      return;
+    }
+
+    if (action === 'staff-open-orders') {
+      openStaffOrdersScreen();
+      return;
+    }
+
+    if (action === 'staff-open-ready-to-pack') {
+      openReadyToPackScreen();
+      return;
+    }
+
+    if (action === 'staff-open-catalog') {
+      openStaffCatalogScreen();
       return;
     }
 
