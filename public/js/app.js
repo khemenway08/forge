@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260728-38';
+const FORGE_BUILD_VERSION = '20260728-39';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
 
@@ -5543,6 +5543,47 @@ function buildStaffDestructiveErrorMarkup(message) {
   `;
 }
 
+function getLegacyCleanupExpectedConfirmationText() {
+  return staffOrdersState.legacyCleanupPreview?.confirmationText || '';
+}
+
+function getLegacyCleanupConfirmationMatches() {
+  const expectedConfirmation = getLegacyCleanupExpectedConfirmationText();
+  return expectedConfirmation !== '' && staffOrdersState.legacyCleanupConfirmationText === expectedConfirmation;
+}
+
+function buildLegacyCleanupFeedbackMarkup() {
+  return `
+    ${buildStaffNoticeMarkup(sanitizeLocalAdminMessage(staffOrdersState.legacyCleanupError), 'error')}
+    ${buildStaffNoticeMarkup(staffOrdersState.legacyCleanupNotice, staffOrdersState.legacyCleanupNoticeTone)}
+  `;
+}
+
+function updateLegacyCleanupConfirmationUi() {
+  if (!staffAdminContent || !staffOrdersState.legacyCleanupPreview) {
+    return;
+  }
+
+  const confirmationField = staffAdminContent.querySelector('[data-staff-legacy-cleanup-confirmation]');
+  const applyButton = staffAdminContent.querySelector('[data-action="staff-apply-legacy-cleanup"]');
+  const feedbackContainer = staffAdminContent.querySelector('[data-staff-legacy-cleanup-feedback]');
+
+  if (confirmationField) {
+    confirmationField.disabled = Boolean(staffOrdersState.legacyCleanupApplying);
+  }
+  if (applyButton) {
+    applyButton.disabled = !canManageLegacyTestCleanup()
+      || !staffOrdersState.legacyCleanupPreview
+      || (staffOrdersState.legacyCleanupPreview?.eligibleCount || 0) <= 0
+      || !getLegacyCleanupConfirmationMatches()
+      || staffOrdersState.legacyCleanupApplying
+      || staffOrdersState.legacyCleanupLoading;
+  }
+  if (feedbackContainer) {
+    feedbackContainer.innerHTML = buildLegacyCleanupFeedbackMarkup();
+  }
+}
+
 function updateStaffDeleteTestOrderConfirmationUi() {
   if (!staffOrderDetailDialog || staffOrdersState.detailDestructiveAction !== 'delete_test_order') {
     return;
@@ -6752,8 +6793,8 @@ function buildLegacyCleanupControlsMarkup() {
   const available = canManageLegacyTestCleanup();
   const preview = staffOrdersState.legacyCleanupPreview;
   const eligibleCount = Number.isInteger(preview?.eligibleCount) ? preview.eligibleCount : 0;
-  const expectedConfirmation = preview?.confirmationText || '';
-  const confirmationMatches = expectedConfirmation !== '' && staffOrdersState.legacyCleanupConfirmationText === expectedConfirmation;
+  const expectedConfirmation = getLegacyCleanupExpectedConfirmationText();
+  const confirmationMatches = getLegacyCleanupConfirmationMatches();
   const disablePreview = !available || staffOrdersState.legacyCleanupLoading || staffOrdersState.legacyCleanupApplying;
   const disableApply = !available
     || !preview
@@ -6774,8 +6815,9 @@ function buildLegacyCleanupControlsMarkup() {
           <button class="secondary-button" type="button" data-action="staff-preview-legacy-cleanup"${disablePreview ? ' disabled' : ''}>${staffOrdersState.legacyCleanupLoading ? 'Loading Preview...' : 'Preview Legacy Cleanup'}</button>
         </div>
       </div>
-      ${buildStaffNoticeMarkup(sanitizeLocalAdminMessage(staffOrdersState.legacyCleanupError), 'error')}
-      ${buildStaffNoticeMarkup(staffOrdersState.legacyCleanupNotice, staffOrdersState.legacyCleanupNoticeTone)}
+      <div data-staff-legacy-cleanup-feedback>
+        ${buildLegacyCleanupFeedbackMarkup()}
+      </div>
       ${!available ? `<p class="staff-orders-status">${escapeHtml(isLocalStaffAdminPreview() ? 'Local preview only. Hosted cleanup controls require the authenticated live staff workspace.' : 'Legacy cleanup is available only from the authenticated hosted staff workspace.')}</p>` : ''}
       ${preview ? `
         <div class="staff-order-card-meta staff-order-card-meta--primary">
@@ -6937,6 +6979,7 @@ function renderStaffAdminTools() {
       ${buildLegacyCleanupControlsMarkup()}
     </div>
   `;
+  updateLegacyCleanupConfirmationUi();
 }
 
 function recheckStaffAdminConnection() {
@@ -10310,7 +10353,7 @@ if (treeForm) {
     if (target.matches('[data-staff-legacy-cleanup-confirmation]')) {
       staffOrdersState.legacyCleanupConfirmationText = target.value.slice(0, 200);
       staffOrdersState.legacyCleanupError = '';
-      renderStaffAdminTools();
+      updateLegacyCleanupConfirmationUi();
       return;
     }
     const eventField = target.dataset.staffEventField;
@@ -10595,7 +10638,7 @@ if (treeForm) {
     if (target.matches('[data-staff-legacy-cleanup-confirmation]')) {
       staffOrdersState.legacyCleanupConfirmationText = target.value.slice(0, 200);
       staffOrdersState.legacyCleanupError = '';
-      renderStaffAdminTools();
+      updateLegacyCleanupConfirmationUi();
       return;
     }
     const eventField = target.dataset.staffEventField;

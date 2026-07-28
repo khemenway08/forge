@@ -258,6 +258,12 @@ function loadForgeAppWithoutStaffModules({
   const readyToPackList = createElement('div');
   const staffAdminLead = createElement('p');
   const staffAdminContent = createElement('div');
+  let staffAdminContentHtml = '';
+  let legacyCleanupConfirmationInput = null;
+  let legacyCleanupApplyButton = null;
+  let legacyCleanupPreviewButton = null;
+  let legacyCleanupFeedback = null;
+  let staffAdminRenderCount = 0;
   const staffDemoControls = createElement('div');
   staffDemoControls.hidden = true;
   const staffEyebrowNode = createElement('p');
@@ -347,6 +353,77 @@ function loadForgeAppWithoutStaffModules({
       env.registerSelector('[data-staff-packing-backdrop]', createElement('div'));
       env.registerSelector('[data-staff-packing-dialog]', createElement('div'));
     }
+  };
+
+  Object.defineProperty(staffAdminContent, 'innerHTML', {
+    configurable: true,
+    get() {
+      return staffAdminContentHtml;
+    },
+    set(value) {
+      staffAdminRenderCount += 1;
+      staffAdminContentHtml = String(value);
+
+      if (staffAdminContentHtml.includes('data-staff-legacy-cleanup-confirmation')) {
+        legacyCleanupConfirmationInput = createElement('input');
+        Object.setPrototypeOf(legacyCleanupConfirmationInput, context.HTMLInputElement.prototype);
+        legacyCleanupConfirmationInput.dataset.staffLegacyCleanupConfirmation = '';
+        legacyCleanupConfirmationInput.matches = (selector) => selector === '[data-staff-legacy-cleanup-confirmation]';
+        legacyCleanupConfirmationInput.selectionStart = 0;
+        legacyCleanupConfirmationInput.selectionEnd = 0;
+        legacyCleanupConfirmationInput.focus = () => {
+          context.document.activeElement = legacyCleanupConfirmationInput;
+        };
+        legacyCleanupConfirmationInput.setSelectionRange = (start, end) => {
+          legacyCleanupConfirmationInput.selectionStart = start;
+          legacyCleanupConfirmationInput.selectionEnd = end;
+        };
+
+        legacyCleanupApplyButton = createElement('button');
+        legacyCleanupApplyButton.dataset.action = 'staff-apply-legacy-cleanup';
+        legacyCleanupApplyButton.disabled = /data-action="staff-apply-legacy-cleanup"[^>]*disabled/.test(staffAdminContentHtml);
+        legacyCleanupApplyButton.closest = (selector) => {
+          if (selector === '[data-action]') {
+            return legacyCleanupApplyButton;
+          }
+          return null;
+        };
+
+        legacyCleanupPreviewButton = createElement('button');
+        legacyCleanupPreviewButton.dataset.action = 'staff-preview-legacy-cleanup';
+        legacyCleanupPreviewButton.disabled = /data-action="staff-preview-legacy-cleanup"[^>]*disabled/.test(staffAdminContentHtml);
+        legacyCleanupPreviewButton.closest = (selector) => {
+          if (selector === '[data-action]') {
+            return legacyCleanupPreviewButton;
+          }
+          return null;
+        };
+
+        legacyCleanupFeedback = createElement('div');
+        legacyCleanupFeedback.dataset.staffLegacyCleanupFeedback = '';
+      } else {
+        legacyCleanupConfirmationInput = null;
+        legacyCleanupApplyButton = null;
+        legacyCleanupPreviewButton = null;
+        legacyCleanupFeedback = null;
+      }
+    }
+  });
+
+  staffAdminContent.querySelector = (selector) => {
+    if (selector === '[data-staff-legacy-cleanup-confirmation]') {
+      return legacyCleanupConfirmationInput;
+    }
+    if (selector === '[data-action="staff-apply-legacy-cleanup"]') {
+      return legacyCleanupApplyButton;
+    }
+    if (selector === '[data-action="staff-preview-legacy-cleanup"]') {
+      return legacyCleanupPreviewButton;
+    }
+    if (selector === '[data-staff-legacy-cleanup-feedback]') {
+      return legacyCleanupFeedback;
+    }
+    return null;
   };
 
   const context = {
@@ -570,12 +647,16 @@ function loadForgeAppWithoutStaffModules({
     finalReviewStatus,
     finalReviewActionsCard,
     finalReviewCancelPanel,
+    staffAdminContent,
     finalReviewItems,
     finalReviewSummary,
     finalReviewCustomer,
     finalReviewDelivery,
     thankYouCopy,
-    thankYouReference
+    thankYouReference,
+    getStaffAdminRenderCount() {
+      return staffAdminRenderCount;
+    }
   };
 }
 
@@ -2178,6 +2259,140 @@ test('legacy cleanup typed confirmation behavior remains unchanged', () => {
   assert.match(String(controlsHtml), /data-action="staff-apply-legacy-cleanup"[^>]*disabled/);
 });
 
+test('legacy cleanup confirmation preserves input identity and focus while typing', () => {
+  const {
+    context,
+    staffAdminContent,
+    getStaffAdminRenderCount
+  } = loadForgeAppWithoutStaffModules({
+    protocol: 'https:',
+    hostname: 'forge.thehilltopshop.com',
+    includeHostedStaffModules: true
+  });
+
+  vm.runInContext(`
+    staffOrdersState.dataSource = 'server';
+    staffOrdersState.authenticated = true;
+    staffOrdersState.legacyCleanupPreview = {
+      eligibleCount: 9,
+      cutoffLocal: 'July 25, 2026 at 12:00 AM America/Chicago',
+      confirmationText: 'DELETE 9 ORDERS BEFORE JULY 25',
+      eligibleOrders: [],
+      protectedOrders: []
+    };
+    renderStaffAdminTools();
+  `, context);
+
+  const input = staffAdminContent.querySelector('[data-staff-legacy-cleanup-confirmation]');
+  const adminScreen = context.document.querySelector('[data-screen="staff-admin"]');
+  const renderCountBefore = getStaffAdminRenderCount();
+
+  input.focus();
+  input.value = 'DELETE 9';
+  input.selectionStart = 8;
+  input.selectionEnd = 8;
+  adminScreen.dispatchEvent({
+    type: 'input',
+    target: input,
+    currentTarget: adminScreen,
+    preventDefault() {},
+    stopPropagation() {}
+  });
+
+  assert.equal(staffAdminContent.querySelector('[data-staff-legacy-cleanup-confirmation]'), input);
+  assert.equal(context.document.activeElement, input);
+  assert.equal(input.selectionStart, 8);
+  assert.equal(input.selectionEnd, 8);
+  assert.equal(getStaffAdminRenderCount(), renderCountBefore);
+  assert.equal(staffAdminContent.querySelector('[data-action="staff-apply-legacy-cleanup"]').disabled, true);
+
+  input.value = 'DELETE 9 ORDERS BEFORE JULY 25';
+  input.selectionStart = input.value.length;
+  input.selectionEnd = input.value.length;
+  adminScreen.dispatchEvent({
+    type: 'input',
+    target: input,
+    currentTarget: adminScreen,
+    preventDefault() {},
+    stopPropagation() {}
+  });
+
+  assert.equal(staffAdminContent.querySelector('[data-staff-legacy-cleanup-confirmation]'), input);
+  assert.equal(context.document.activeElement, input);
+  assert.equal(getStaffAdminRenderCount(), renderCountBefore);
+  assert.equal(staffAdminContent.querySelector('[data-action="staff-apply-legacy-cleanup"]').disabled, false);
+
+  input.value = 'DELETE 9 ORDERS BEFORE JULY 2';
+  adminScreen.dispatchEvent({
+    type: 'input',
+    target: input,
+    currentTarget: adminScreen,
+    preventDefault() {},
+    stopPropagation() {}
+  });
+
+  assert.equal(staffAdminContent.querySelector('[data-action="staff-apply-legacy-cleanup"]').disabled, true);
+});
+
+test('legacy cleanup typing does not rerun preview and cleanup invocation occurs exactly once', async () => {
+  const {
+    context,
+    staffAdminContent
+  } = loadForgeAppWithoutStaffModules({
+    protocol: 'https:',
+    hostname: 'forge.thehilltopshop.com',
+    includeHostedStaffModules: true
+  });
+
+  const counts = await vm.runInContext(`
+    (async () => {
+  const counters = { preview: 0, apply: 0 };
+      staffOrdersState.dataSource = 'server';
+      staffOrdersState.authenticated = true;
+      staffOrdersState.legacyCleanupPreview = {
+        previewSignature: 'preview-signature',
+        eligibleCount: 9,
+        cutoffLocal: 'July 25, 2026 at 12:00 AM America/Chicago',
+        confirmationText: 'DELETE 9 ORDERS BEFORE JULY 25',
+        eligibleOrders: [],
+        protectedOrders: []
+      };
+      staffRuntime.previewLegacyTestCleanup = async () => {
+        counters.preview += 1;
+        return { ok: true, preview: staffOrdersState.legacyCleanupPreview };
+      };
+      staffRuntime.applyLegacyTestCleanup = async () => {
+        counters.apply += 1;
+        return { ok: true, deletedCount: 0, releasedTrayNumbers: [] };
+      };
+      renderStaffAdminTools();
+      globalThis.__legacyCleanupCounters = counters;
+      return counters;
+    })()
+  `, context);
+  void counts;
+
+  const input = staffAdminContent.querySelector('[data-staff-legacy-cleanup-confirmation]');
+  const adminScreen = context.document.querySelector('[data-screen="staff-admin"]');
+  input.value = 'DELETE 9 ORDERS BEFORE JULY 25';
+  adminScreen.dispatchEvent({
+    type: 'input',
+    target: input,
+    currentTarget: adminScreen,
+    preventDefault() {},
+    stopPropagation() {}
+  });
+
+  const previewCountAfterTyping = vm.runInContext('globalThis.__legacyCleanupCounters.preview', context);
+  assert.equal(previewCountAfterTyping, 0);
+
+  await vm.runInContext('applyLegacyTestCleanup()', context);
+
+  const finalCounts = vm.runInContext('globalThis.__legacyCleanupCounters', context);
+  assert.equal(JSON.parse(JSON.stringify(finalCounts)).preview, 0);
+  assert.equal(JSON.parse(JSON.stringify(finalCounts)).apply, 1);
+});
+
 test('hosted authenticated admin actions remain enabled', () => {
   const { context } = loadForgeAppWithoutStaffModules({
     protocol: 'https:',
@@ -2935,7 +3150,7 @@ test('staff orders remains the default protected destination and the catalog she
   assert.match(indexSource, />Shortlist<\/button>/);
   assert.match(
     indexSource,
-    /<script src="js\/forge-staff-api-client\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-catalog-ordering\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-catalog-image-viewer\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260728-38"><\/script>/
+    /<script src="js\/forge-staff-api-client\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-catalog-ordering\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-catalog-image-viewer\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260728-39"><\/script>/
   );
   assert.doesNotMatch(indexSource, /data-category="staff-catalog"/);
 });
