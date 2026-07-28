@@ -17,6 +17,18 @@ The server-side order-storage foundation reads database configuration only from:
 - `FORGE_DB_PASSWORD`
 - `FORGE_STAFF_PIN_HASH`
 - `FORGE_TRAY_NUMBERS`
+- `FORGE_EMAIL_ENABLED`
+- `FORGE_EMAIL_TRANSPORT`
+- `FORGE_EMAIL_HOST`
+- `FORGE_EMAIL_PORT`
+- `FORGE_EMAIL_ENCRYPTION`
+- `FORGE_EMAIL_USERNAME`
+- `FORGE_EMAIL_PASSWORD`
+- `FORGE_EMAIL_FROM_ADDRESS`
+- `FORGE_EMAIL_FROM_NAME`
+- `FORGE_EMAIL_REPLY_TO`
+- `FORGE_EMAIL_CONNECT_TIMEOUT`
+- `FORGE_EMAIL_SEND_TIMEOUT`
 
 No credentials belong in Git.
 
@@ -29,10 +41,59 @@ Private config placeholder:
 ```php
 'FORGE_STAFF_PIN_HASH' => '$2y$...replace-with-password-hash...',
 'FORGE_TRAY_NUMBERS' => '1,2,3,4,5,6,7,8,9,10,11,12',
+'FORGE_EMAIL_ENABLED' => false,
+'FORGE_EMAIL_TRANSPORT' => 'smtp',
+'FORGE_EMAIL_HOST' => 'smtp.example.com',
+'FORGE_EMAIL_PORT' => 587,
+'FORGE_EMAIL_ENCRYPTION' => 'tls',
+'FORGE_EMAIL_USERNAME' => 'smtp-login@example.com',
+'FORGE_EMAIL_PASSWORD' => 'SMTP_ACCOUNT_PASSWORD',
+'FORGE_EMAIL_FROM_ADDRESS' => 'orders@thehilltopshop.com',
+'FORGE_EMAIL_FROM_NAME' => 'The Hilltop Shop',
+'FORGE_EMAIL_REPLY_TO' => 'orders@thehilltopshop.com',
+'FORGE_EMAIL_CONNECT_TIMEOUT' => 10,
+'FORGE_EMAIL_SEND_TIMEOUT' => 20,
 ```
 
 For manual shared-hosting deployment, a private `config.php` fallback is also supported.
 Environment variables take precedence over `config.php` values.
+
+Outbound customer email uses authenticated SMTP through PHPMailer and must remain private. Composer dependencies belong only in the private runtime package and must never be deployed into `public_html`.
+
+## SMTP Notes
+
+- `FORGE_EMAIL_USERNAME` is the SMTP authentication login and may differ from the visible `FORGE_EMAIL_FROM_ADDRESS`.
+- `FORGE_EMAIL_FROM_ADDRESS` may differ from `FORGE_EMAIL_REPLY_TO`.
+- `FORGE_EMAIL_ENABLED` defaults to `false` when omitted.
+- SMTP credentials, Apple Account information, and app-specific passwords must remain in private environment variables or the private `config.php` only.
+- Missing or incorrect SMTP configuration must never block order creation; the order still saves and the delivery record is marked with a safe staff-visible failure.
+
+### iCloud+ Custom Email Domain Example
+
+Use placeholders only:
+
+```php
+'FORGE_EMAIL_ENABLED' => false,
+'FORGE_EMAIL_TRANSPORT' => 'smtp',
+'FORGE_EMAIL_HOST' => 'smtp.mail.me.com',
+'FORGE_EMAIL_PORT' => 587,
+'FORGE_EMAIL_ENCRYPTION' => 'tls',
+'FORGE_EMAIL_USERNAME' => 'PRIMARY_ICLOUD_MAIL_ADDRESS',
+'FORGE_EMAIL_PASSWORD' => 'APPLE_APP_SPECIFIC_PASSWORD',
+'FORGE_EMAIL_FROM_ADDRESS' => 'orders@thehilltopshop.com',
+'FORGE_EMAIL_FROM_NAME' => 'The Hilltop Shop',
+'FORGE_EMAIL_REPLY_TO' => 'orders@thehilltopshop.com',
+```
+
+For iCloud+ Custom Email Domain setups, the SMTP username may be the primary iCloud Mail address associated with the Apple Account, while the visible `From` and `Reply-To` addresses may remain `orders@thehilltopshop.com`. Apple requires an app-specific password for SMTP authentication.
+
+## Email Rollout Sequence
+
+1. Deploy with `FORGE_EMAIL_ENABLED=false`.
+2. Configure the private SMTP credentials and visible `From` / `Reply-To` addresses.
+3. Run `php server/cli/smoke-test-email.php --to TEST_RECIPIENT@example.com` from PHP CLI on the private host.
+4. Set `FORGE_EMAIL_ENABLED=true`.
+5. Verify health, then confirm new staff orders begin showing `Sent`, `Pending`, `Failed`, or `Skipped/Test` as expected.
 
 ## Document Root
 
@@ -77,7 +138,7 @@ This phase does not create WooCommerce orders and does not connect browser submi
 
 ## Configure Production Trays
 
-Set `FORGE_TRAY_NUMBERS` in the private Hostinger environment or private `config.php` using a comma-separated list of positive tray numbers:
+Set `FORGE_TRAY_NUMBERS` in the private hosting environment or private `config.php` using a comma-separated list of positive tray numbers:
 
 ```php
 'FORGE_TRAY_NUMBERS' => '1,2,3,4,5,6,7,8,9,10,11,12',
@@ -133,9 +194,9 @@ Authenticated staff endpoints currently include:
 
 The staff orders endpoint is intentionally not public and always requires an authenticated session.
 
-## Safe Hostinger Hash Generation
+## Safe Shared-Hosting Hash Generation
 
-Generate the staff PIN hash interactively on Hostinger without placing the chosen PIN directly into shell history:
+Generate the staff PIN hash interactively on the private host without placing the chosen PIN directly into shell history:
 
 ```bash
 read -s -p "Staff PIN: " FORGE_PIN; echo

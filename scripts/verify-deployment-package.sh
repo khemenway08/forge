@@ -67,8 +67,13 @@ required_paths=(
   "public_html/forge/api/v1/health.php"
   "public_html/forge/api/v1/orders.php"
   "private/forge_server/bootstrap.php"
+  "private/forge_server/cli/smoke-test-email.php"
   "private/forge_server/lib/database.php"
+  "private/forge_server/lib/email-smoke-test.php"
+  "private/forge_server/lib/email-service.php"
   "private/forge_server/lib/order-repository.php"
+  "private/forge_server/vendor/autoload.php"
+  "private/forge_server/vendor/phpmailer/phpmailer/src/PHPMailer.php"
   "private/forge_server/lib/staff-order-repository.php"
 )
 
@@ -81,6 +86,7 @@ for forbidden_pattern in \
   '(^|/)tests($|/)' \
   '(^|/)docs($|/)' \
   '(^|/)config\.php$' \
+  '(^|/)auth\.json$' \
   '(^|/)\.env$' \
   '(^|/)uploads($|/)' \
   '(^|/)logs($|/)' \
@@ -98,6 +104,9 @@ done
 grep -Fxq "public_html/forge/api/health.php" "${MANIFEST_NORMALIZED_PATH}" || deployment_fail "Legacy health endpoint is missing from the package."
 grep -Fxq "BUILD-METADATA.txt" "${MANIFEST_NORMALIZED_PATH}" || deployment_fail "BUILD-METADATA.txt is missing from the package."
 grep -Fxq "DEPLOYMENT-INSTRUCTIONS.txt" "${MANIFEST_NORMALIZED_PATH}" || deployment_fail "DEPLOYMENT-INSTRUCTIONS.txt is missing from the package."
+if grep -Eq '^public_html/forge/vendor/' "${MANIFEST_NORMALIZED_PATH}"; then
+  deployment_fail "Composer vendor files must not be exposed in the public runtime."
+fi
 
 FILE_COUNT="$(wc -l < "${MANIFEST_NORMALIZED_PATH}" | awk '{print $1}')"
 ZIP_SIZE="$(du -h "${ZIP_PATH}" | awk '{print $1}')"

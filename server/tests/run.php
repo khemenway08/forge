@@ -98,6 +98,72 @@ final class DatabaseTimestampOrderRepository implements OrderRepositoryInterface
     }
 }
 
+final class FakePhpMailer
+{
+    public bool $smtpMode = false;
+    public ?string $Host = null;
+    public ?int $Port = null;
+    public ?bool $SMTPAuth = null;
+    public ?string $Username = null;
+    public ?string $Password = null;
+    public ?int $Timeout = null;
+    public ?int $Timelimit = null;
+    public ?string $CharSet = null;
+    public ?string $SMTPSecure = null;
+    /** @var array{address: string, name: string, auto: bool}|null */
+    public ?array $from = null;
+    /** @var array<int, string> */
+    public array $to = [];
+    /** @var array<int, string> */
+    public array $replyTo = [];
+    public bool $htmlEnabled = false;
+    public ?string $Subject = null;
+    public ?string $Body = null;
+    public ?string $AltBody = null;
+    private ?\Throwable $sendFailure = null;
+
+    public function isSMTP(): void
+    {
+        $this->smtpMode = true;
+    }
+
+    public function setFrom(string $address, string $name = '', bool $auto = true): void
+    {
+        $this->from = [
+            'address' => $address,
+            'name' => $name,
+            'auto' => $auto,
+        ];
+    }
+
+    public function addAddress(string $address): void
+    {
+        $this->to[] = $address;
+    }
+
+    public function addReplyTo(string $address): void
+    {
+        $this->replyTo[] = $address;
+    }
+
+    public function isHTML(bool $value): void
+    {
+        $this->htmlEnabled = $value;
+    }
+
+    public function send(): void
+    {
+        if ($this->sendFailure !== null) {
+            throw $this->sendFailure;
+        }
+    }
+
+    public function failOnSend(\Throwable $failure): void
+    {
+        $this->sendFailure = $failure;
+    }
+}
+
 final class InMemoryEventRepository
 {
     /** @var array<string, array<string, mixed>> */
@@ -374,6 +440,7 @@ function createHandler(?OrderRepositoryInterface $repository = null, ?callable $
     $repository = $repository ?? new InMemoryOrderRepository();
     $handler = new OrderHandler(
         $repository,
+        null,
         static function (): DateTimeImmutable {
             return new DateTimeImmutable('2026-07-17T12:30:00+00:00');
         },
@@ -381,6 +448,47 @@ function createHandler(?OrderRepositoryInterface $repository = null, ?callable $
     );
 
     return [$handler, $repository];
+}
+
+function createEmailEnabledHandler(
+    ?OrderRepositoryInterface $repository = null,
+    ?\Forge\Server\EmailService $emailService = null,
+    ?callable $unexpectedExceptionReporter = null
+): array {
+    $repository = $repository ?? new InMemoryOrderRepository();
+    $emailService = $emailService ?? new \Forge\Server\EmailService(
+        new \Forge\Server\PdoOutboundMessageRepository(createOutboundMessageTestPdo()),
+        new \Forge\Server\RecordingEmailTransport(),
+        new \Forge\Server\EmailRenderer(),
+        [
+            'FORGE_EMAIL_ENABLED' => true,
+            'FORGE_EMAIL_TRANSPORT' => 'smtp',
+            'FORGE_EMAIL_HOST' => 'smtp.mail.me.com',
+            'FORGE_EMAIL_PORT' => 587,
+            'FORGE_EMAIL_ENCRYPTION' => 'tls',
+            'FORGE_EMAIL_USERNAME' => 'primary-icloud@example.com',
+            'FORGE_EMAIL_PASSWORD' => 'APPLE_APP_SPECIFIC_PASSWORD',
+            'FORGE_EMAIL_FROM_ADDRESS' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_FROM_NAME' => 'The Hilltop Shop',
+            'FORGE_EMAIL_REPLY_TO' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_CONNECT_TIMEOUT' => 10,
+            'FORGE_EMAIL_SEND_TIMEOUT' => 20,
+        ],
+        static function (): DateTimeImmutable {
+            return new DateTimeImmutable('2026-07-28T13:00:00+00:00');
+        }
+    );
+
+    $handler = new OrderHandler(
+        $repository,
+        $emailService,
+        static function (): DateTimeImmutable {
+            return new DateTimeImmutable('2026-07-28T13:00:00+00:00');
+        },
+        $unexpectedExceptionReporter
+    );
+
+    return [$handler, $repository, $emailService];
 }
 
 $runner = new TestRunner();
@@ -664,6 +772,447 @@ $runner->run('identical UUID and payload returns created false', static function
     assertSame(200, $second['statusCode']);
     assertSame(false, $second['body']['data']['created']);
     assertSame($first['body']['data']['forge_order_number'], $second['body']['data']['forge_order_number']);
+});
+
+$runner->run('a new real order creates exactly one outbound message and marks it sent after persistence', static function (): void {
+    $outboundPdo = createOutboundMessageTestPdo();
+    $transport = new \Forge\Server\RecordingEmailTransport();
+    $emailService = new \Forge\Server\EmailService(
+        new \Forge\Server\PdoOutboundMessageRepository($outboundPdo),
+        $transport,
+        new \Forge\Server\EmailRenderer(),
+        [
+            'FORGE_EMAIL_ENABLED' => true,
+            'FORGE_EMAIL_TRANSPORT' => 'smtp',
+            'FORGE_EMAIL_HOST' => 'smtp.mail.me.com',
+            'FORGE_EMAIL_PORT' => 587,
+            'FORGE_EMAIL_ENCRYPTION' => 'tls',
+            'FORGE_EMAIL_USERNAME' => 'primary-icloud@example.com',
+            'FORGE_EMAIL_PASSWORD' => 'APPLE_APP_SPECIFIC_PASSWORD',
+            'FORGE_EMAIL_FROM_ADDRESS' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_FROM_NAME' => 'The Hilltop Shop',
+            'FORGE_EMAIL_REPLY_TO' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_CONNECT_TIMEOUT' => 10,
+            'FORGE_EMAIL_SEND_TIMEOUT' => 20,
+        ],
+        static function (): DateTimeImmutable {
+            return new DateTimeImmutable('2026-07-28T13:00:00+00:00');
+        }
+    );
+    [$handler, $repository] = createEmailEnabledHandler(new InMemoryOrderRepository(), $emailService);
+
+    $response = $handler->handleRequest(
+        'POST',
+        'application/json',
+        json_encode(createValidPayload([
+            'external_payment_method' => 'cash',
+            'payment_confirmed_at' => '2026-07-28T12:58:00+00:00',
+        ]), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+    );
+
+    $messageCount = (int) $outboundPdo->query('SELECT COUNT(*) FROM forge_outbound_messages')->fetchColumn();
+    $status = (string) $outboundPdo->query('SELECT status FROM forge_outbound_messages LIMIT 1')->fetchColumn();
+    $renderContextJson = (string) $outboundPdo->query('SELECT render_context_json FROM forge_outbound_messages LIMIT 1')->fetchColumn();
+    $renderContext = json_decode($renderContextJson, true, 512, JSON_THROW_ON_ERROR);
+    assertSame(201, $response['statusCode']);
+    assertSame(1, $messageCount);
+    assertSame('sent', $status);
+    assertSame('customer@example.com', $transport->messages()[0]->toAddress);
+    assertSame(null, $repository->getStoredPayload('123e4567-e89b-42d3-a456-426614174000')['forge_order_number']);
+    assertSame(1001, $renderContext['order']['forge_order_number']);
+});
+
+$runner->run('outbound message scheduling happens only after order persistence succeeds', static function (): void {
+    $outboundPdo = createOutboundMessageTestPdo();
+    $repository = new InMemoryOrderRepository();
+    $repository->failOnce(new StorageUnavailableException('Storage unavailable'));
+    $emailService = new \Forge\Server\EmailService(
+        new \Forge\Server\PdoOutboundMessageRepository($outboundPdo),
+        new \Forge\Server\RecordingEmailTransport(),
+        new \Forge\Server\EmailRenderer(),
+        [
+            'FORGE_EMAIL_ENABLED' => true,
+        ]
+    );
+    [$handler] = createEmailEnabledHandler($repository, $emailService);
+
+    $response = $handler->handleRequest(
+        'POST',
+        'application/json',
+        json_encode(createValidPayload(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+    );
+
+    $messageCount = (int) $outboundPdo->query('SELECT COUNT(*) FROM forge_outbound_messages')->fetchColumn();
+    assertSame(503, $response['statusCode']);
+    assertSame(0, $messageCount);
+});
+
+$runner->run('duplicate order sync creates no second logical message and sends no duplicate email', static function (): void {
+    $outboundPdo = createOutboundMessageTestPdo();
+    $transport = new \Forge\Server\RecordingEmailTransport();
+    $emailService = new \Forge\Server\EmailService(
+        new \Forge\Server\PdoOutboundMessageRepository($outboundPdo),
+        $transport,
+        new \Forge\Server\EmailRenderer(),
+        [
+            'FORGE_EMAIL_ENABLED' => true,
+            'FORGE_EMAIL_TRANSPORT' => 'smtp',
+            'FORGE_EMAIL_HOST' => 'smtp.mail.me.com',
+            'FORGE_EMAIL_PORT' => 587,
+            'FORGE_EMAIL_ENCRYPTION' => 'tls',
+            'FORGE_EMAIL_USERNAME' => 'primary-icloud@example.com',
+            'FORGE_EMAIL_PASSWORD' => 'APPLE_APP_SPECIFIC_PASSWORD',
+            'FORGE_EMAIL_FROM_ADDRESS' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_FROM_NAME' => 'The Hilltop Shop',
+            'FORGE_EMAIL_REPLY_TO' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_CONNECT_TIMEOUT' => 10,
+            'FORGE_EMAIL_SEND_TIMEOUT' => 20,
+        ]
+    );
+    [$handler] = createEmailEnabledHandler(new InMemoryOrderRepository(), $emailService);
+    $body = json_encode(createValidPayload(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+    $first = $handler->handleRequest('POST', 'application/json', $body);
+    $second = $handler->handleRequest('POST', 'application/json', $body);
+
+    $messageCount = (int) $outboundPdo->query('SELECT COUNT(*) FROM forge_outbound_messages')->fetchColumn();
+    assertSame(201, $first['statusCode']);
+    assertSame(200, $second['statusCode']);
+    assertSame(1, $messageCount);
+    assertSame(1, count($transport->messages()));
+});
+
+$runner->run('test session orders are recorded as skipped_test and never attempt smtp', static function (): void {
+    $outboundPdo = createOutboundMessageTestPdo();
+    $transport = new \Forge\Server\RecordingEmailTransport();
+    $emailService = new \Forge\Server\EmailService(
+        new \Forge\Server\PdoOutboundMessageRepository($outboundPdo),
+        $transport,
+        new \Forge\Server\EmailRenderer(),
+        [
+            'FORGE_EMAIL_ENABLED' => true,
+            'FORGE_EMAIL_TRANSPORT' => 'smtp',
+            'FORGE_EMAIL_HOST' => 'smtp.mail.me.com',
+            'FORGE_EMAIL_PORT' => 587,
+            'FORGE_EMAIL_ENCRYPTION' => 'tls',
+            'FORGE_EMAIL_USERNAME' => 'primary-icloud@example.com',
+            'FORGE_EMAIL_PASSWORD' => 'APPLE_APP_SPECIFIC_PASSWORD',
+            'FORGE_EMAIL_FROM_ADDRESS' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_FROM_NAME' => 'The Hilltop Shop',
+            'FORGE_EMAIL_REPLY_TO' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_CONNECT_TIMEOUT' => 10,
+            'FORGE_EMAIL_SEND_TIMEOUT' => 20,
+        ]
+    );
+    [$handler] = createEmailEnabledHandler(new InMemoryOrderRepository(), $emailService);
+    $payload = createValidPayload([
+        'event' => array_merge(createValidPayload()['event'], [
+            'event_type' => 'test_session',
+        ]),
+    ]);
+
+    $response = $handler->handleRequest(
+        'POST',
+        'application/json',
+        json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+    );
+
+    $status = (string) $outboundPdo->query('SELECT status FROM forge_outbound_messages LIMIT 1')->fetchColumn();
+    $attemptCount = (int) $outboundPdo->query('SELECT attempt_count FROM forge_outbound_messages LIMIT 1')->fetchColumn();
+    assertSame(201, $response['statusCode']);
+    assertSame('skipped_test', $status);
+    assertSame(0, $attemptCount);
+    assertSame(0, count($transport->messages()));
+});
+
+$runner->run('smtp delivery failure preserves the saved order and marks the message failed with a sanitized error', static function (): void {
+    $outboundPdo = createOutboundMessageTestPdo();
+    $transport = new \Forge\Server\RecordingEmailTransport();
+    $transport->failOnce(new \Forge\Server\EmailDeliveryException('SMTP password rejected for customer@example.com at smtp.mail.me.com'));
+    $emailService = new \Forge\Server\EmailService(
+        new \Forge\Server\PdoOutboundMessageRepository($outboundPdo),
+        $transport,
+        new \Forge\Server\EmailRenderer(),
+        [
+            'FORGE_EMAIL_ENABLED' => true,
+            'FORGE_EMAIL_TRANSPORT' => 'smtp',
+            'FORGE_EMAIL_HOST' => 'smtp.mail.me.com',
+            'FORGE_EMAIL_PORT' => 587,
+            'FORGE_EMAIL_ENCRYPTION' => 'tls',
+            'FORGE_EMAIL_USERNAME' => 'primary-icloud@example.com',
+            'FORGE_EMAIL_PASSWORD' => 'APPLE_APP_SPECIFIC_PASSWORD',
+            'FORGE_EMAIL_FROM_ADDRESS' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_FROM_NAME' => 'The Hilltop Shop',
+            'FORGE_EMAIL_REPLY_TO' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_CONNECT_TIMEOUT' => 10,
+            'FORGE_EMAIL_SEND_TIMEOUT' => 20,
+        ]
+    );
+    $repository = new InMemoryOrderRepository();
+    [$handler] = createEmailEnabledHandler($repository, $emailService);
+
+    $response = $handler->handleRequest(
+        'POST',
+        'application/json',
+        json_encode(createValidPayload(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+    );
+
+    $failedRow = $outboundPdo->query('SELECT status, last_error_safe, attempt_count FROM forge_outbound_messages LIMIT 1')->fetch(PDO::FETCH_ASSOC);
+    assertSame(201, $response['statusCode']);
+    assertTrue(is_array($repository->getStoredPayload('123e4567-e89b-42d3-a456-426614174000')));
+    assertSame('failed', $failedRow['status']);
+    assertSame(1, (int) $failedRow['attempt_count']);
+    assertNotContains('customer@example.com', (string) $failedRow['last_error_safe']);
+    assertNotContains('smtp.mail.me.com', (string) $failedRow['last_error_safe']);
+});
+
+$runner->run('missing email configuration cannot break order creation and marks the message failed safely', static function (): void {
+    $outboundPdo = createOutboundMessageTestPdo();
+    $repository = new InMemoryOrderRepository();
+    $emailService = new \Forge\Server\EmailService(
+        new \Forge\Server\PdoOutboundMessageRepository($outboundPdo),
+        new \Forge\Server\NullEmailTransport(),
+        new \Forge\Server\EmailRenderer(),
+        [
+            'FORGE_EMAIL_ENABLED' => true,
+        ]
+    );
+    [$handler] = createEmailEnabledHandler($repository, $emailService);
+
+    $response = $handler->handleRequest(
+        'POST',
+        'application/json',
+        json_encode(createValidPayload(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+    );
+
+    $row = $outboundPdo->query('SELECT status, last_error_safe FROM forge_outbound_messages LIMIT 1')->fetch(PDO::FETCH_ASSOC);
+    assertSame(201, $response['statusCode']);
+    assertSame('failed', $row['status']);
+    assertSame('Email transport is not configured.', $row['last_error_safe']);
+    assertTrue(is_array($repository->getStoredPayload('123e4567-e89b-42d3-a456-426614174000')));
+});
+
+$runner->run('missing email enabled flag defaults to false', static function (): void {
+    assertSame(false, \Forge\Server\normalizePrivateEmailEnabledFlag(null));
+    assertSame(false, \Forge\Server\normalizePrivateEmailEnabledFlag(''));
+    assertSame(false, \Forge\Server\normalizePrivateEmailEnabledFlag('false'));
+    assertSame(true, \Forge\Server\normalizePrivateEmailEnabledFlag('true'));
+});
+
+$runner->run('disabled automatic email creates no outbound message makes no transport call and does not affect order creation', static function (): void {
+    $outboundPdo = createOutboundMessageTestPdo();
+    $transport = new \Forge\Server\RecordingEmailTransport();
+    $repository = new InMemoryOrderRepository();
+    $emailService = new \Forge\Server\EmailService(
+        new \Forge\Server\PdoOutboundMessageRepository($outboundPdo),
+        $transport,
+        new \Forge\Server\EmailRenderer(),
+        [
+            'FORGE_EMAIL_ENABLED' => false,
+            'FORGE_EMAIL_TRANSPORT' => 'smtp',
+            'FORGE_EMAIL_HOST' => 'smtp.mail.me.com',
+            'FORGE_EMAIL_PORT' => 587,
+            'FORGE_EMAIL_ENCRYPTION' => 'tls',
+            'FORGE_EMAIL_USERNAME' => 'primary-icloud@example.com',
+            'FORGE_EMAIL_PASSWORD' => 'APPLE_APP_SPECIFIC_PASSWORD',
+            'FORGE_EMAIL_FROM_ADDRESS' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_FROM_NAME' => 'The Hilltop Shop',
+            'FORGE_EMAIL_REPLY_TO' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_CONNECT_TIMEOUT' => 10,
+            'FORGE_EMAIL_SEND_TIMEOUT' => 20,
+        ]
+    );
+    [$handler] = createEmailEnabledHandler($repository, $emailService);
+
+    $response = $handler->handleRequest(
+        'POST',
+        'application/json',
+        json_encode(createValidPayload(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+    );
+
+    assertSame(201, $response['statusCode']);
+    assertSame(0, (int) $outboundPdo->query('SELECT COUNT(*) FROM forge_outbound_messages')->fetchColumn());
+    assertSame(0, count($transport->messages()));
+    assertTrue(is_array($repository->getStoredPayload('123e4567-e89b-42d3-a456-426614174000')));
+});
+
+$runner->run('smtp username from address and reply-to may differ and the visible custom-domain headers are preserved', static function (): void {
+    $fakeMailer = new FakePhpMailer();
+    $transport = new \Forge\Server\PhpMailerSmtpEmailTransport(
+        [
+            'FORGE_EMAIL_TRANSPORT' => 'smtp',
+            'FORGE_EMAIL_HOST' => 'smtp.mail.me.com',
+            'FORGE_EMAIL_PORT' => 587,
+            'FORGE_EMAIL_ENCRYPTION' => 'tls',
+            'FORGE_EMAIL_USERNAME' => 'primary-icloud@example.com',
+            'FORGE_EMAIL_PASSWORD' => 'APPLE_APP_SPECIFIC_PASSWORD',
+            'FORGE_EMAIL_FROM_ADDRESS' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_FROM_NAME' => 'The Hilltop Shop',
+            'FORGE_EMAIL_REPLY_TO' => 'support@thehilltopshop.com',
+            'FORGE_EMAIL_CONNECT_TIMEOUT' => 10,
+            'FORGE_EMAIL_SEND_TIMEOUT' => 20,
+        ],
+        static function () use ($fakeMailer): FakePhpMailer {
+            return $fakeMailer;
+        }
+    );
+
+    $transport->send(new \Forge\Server\EmailMessage(
+        'recipient@example.com',
+        'Subject',
+        '<p>Hello</p>',
+        'Hello',
+        'orders@thehilltopshop.com',
+        'The Hilltop Shop',
+        'support@thehilltopshop.com'
+    ));
+
+    assertSame(true, $fakeMailer->smtpMode);
+    assertSame('primary-icloud@example.com', $fakeMailer->Username);
+    assertSame('orders@thehilltopshop.com', $fakeMailer->from['address']);
+    assertSame('support@thehilltopshop.com', $fakeMailer->replyTo[0]);
+    assertSame(false, $fakeMailer->from['auto']);
+});
+
+$runner->run('tls port 587 smtp configuration is passed to PHPMailer as STARTTLS-safe settings', static function (): void {
+    $fakeMailer = new FakePhpMailer();
+    $transport = new \Forge\Server\PhpMailerSmtpEmailTransport(
+        [
+            'FORGE_EMAIL_TRANSPORT' => 'smtp',
+            'FORGE_EMAIL_HOST' => 'smtp.mail.me.com',
+            'FORGE_EMAIL_PORT' => 587,
+            'FORGE_EMAIL_ENCRYPTION' => 'tls',
+            'FORGE_EMAIL_USERNAME' => 'primary-icloud@example.com',
+            'FORGE_EMAIL_PASSWORD' => 'APPLE_APP_SPECIFIC_PASSWORD',
+            'FORGE_EMAIL_FROM_ADDRESS' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_FROM_NAME' => 'The Hilltop Shop',
+            'FORGE_EMAIL_REPLY_TO' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_CONNECT_TIMEOUT' => 12,
+            'FORGE_EMAIL_SEND_TIMEOUT' => 34,
+        ],
+        static function () use ($fakeMailer): FakePhpMailer {
+            return $fakeMailer;
+        }
+    );
+
+    $transport->send(new \Forge\Server\EmailMessage(
+        'recipient@example.com',
+        'Subject',
+        '<p>Hello</p>',
+        'Hello',
+        'orders@thehilltopshop.com',
+        'The Hilltop Shop',
+        'orders@thehilltopshop.com'
+    ));
+
+    assertSame('smtp.mail.me.com', $fakeMailer->Host);
+    assertSame(587, $fakeMailer->Port);
+    assertSame('tls', $fakeMailer->SMTPSecure);
+    assertSame(true, $fakeMailer->SMTPAuth);
+    assertSame(12, $fakeMailer->Timeout);
+    assertSame(34, $fakeMailer->Timelimit);
+});
+
+$runner->run('transport sanitizes smtp authentication failures before they reach staff-visible storage', static function (): void {
+    $fakeMailer = new FakePhpMailer();
+    $fakeMailer->failOnSend(new \PHPMailer\PHPMailer\Exception(
+        '535 5.7.8 Username primary-icloud@example.com password APPLE_APP_SPECIFIC_PASSWORD rejected by smtp.mail.me.com for orders@thehilltopshop.com'
+    ));
+    $transport = new \Forge\Server\PhpMailerSmtpEmailTransport(
+        [
+            'FORGE_EMAIL_TRANSPORT' => 'smtp',
+            'FORGE_EMAIL_HOST' => 'smtp.mail.me.com',
+            'FORGE_EMAIL_PORT' => 587,
+            'FORGE_EMAIL_ENCRYPTION' => 'tls',
+            'FORGE_EMAIL_USERNAME' => 'primary-icloud@example.com',
+            'FORGE_EMAIL_PASSWORD' => 'APPLE_APP_SPECIFIC_PASSWORD',
+            'FORGE_EMAIL_FROM_ADDRESS' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_FROM_NAME' => 'The Hilltop Shop',
+            'FORGE_EMAIL_REPLY_TO' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_CONNECT_TIMEOUT' => 10,
+            'FORGE_EMAIL_SEND_TIMEOUT' => 20,
+        ],
+        static function () use ($fakeMailer): FakePhpMailer {
+            return $fakeMailer;
+        }
+    );
+
+    assertThrows(
+        static function () use ($transport): void {
+            $transport->send(new \Forge\Server\EmailMessage(
+                'recipient@example.com',
+                'Subject',
+                '<p>Hello</p>',
+                'Hello',
+                'orders@thehilltopshop.com',
+                'The Hilltop Shop',
+                'orders@thehilltopshop.com'
+            ));
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof \Forge\Server\EmailDeliveryException);
+            assertNotContains('primary-icloud@example.com', $exception->getMessage());
+            assertNotContains('APPLE_APP_SPECIFIC_PASSWORD', $exception->getMessage());
+            assertNotContains('smtp.mail.me.com', $exception->getMessage());
+            assertNotContains('orders@thehilltopshop.com', $exception->getMessage());
+        }
+    );
+});
+
+$runner->run('cli smoke-test rejects non-cli execution and never touches smtp for invalid contexts', static function (): void {
+    $transport = new \Forge\Server\RecordingEmailTransport();
+    $result = \Forge\Server\runEmailSmokeTest(
+        ['server/cli/smoke-test-email.php', '--to', 'test@example.com'],
+        $transport,
+        [
+            'FORGE_EMAIL_TRANSPORT' => 'smtp',
+            'FORGE_EMAIL_HOST' => 'smtp.mail.me.com',
+            'FORGE_EMAIL_PORT' => 587,
+            'FORGE_EMAIL_ENCRYPTION' => 'tls',
+            'FORGE_EMAIL_USERNAME' => 'primary-icloud@example.com',
+            'FORGE_EMAIL_PASSWORD' => 'APPLE_APP_SPECIFIC_PASSWORD',
+            'FORGE_EMAIL_FROM_ADDRESS' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_FROM_NAME' => 'The Hilltop Shop',
+            'FORGE_EMAIL_REPLY_TO' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_CONNECT_TIMEOUT' => 10,
+            'FORGE_EMAIL_SEND_TIMEOUT' => 20,
+            'FORGE_EMAIL_ENABLED' => false,
+        ],
+        'fpm-fcgi'
+    );
+
+    assertSame(1, $result['exit_code']);
+    assertSame('This command may only run from PHP CLI.', $result['output']);
+    assertSame(0, count($transport->messages()));
+});
+
+$runner->run('cli smoke-test uses the injected transport without touching order records or outbound queues', static function (): void {
+    $transport = new \Forge\Server\RecordingEmailTransport();
+    $result = \Forge\Server\runEmailSmokeTest(
+        ['server/cli/smoke-test-email.php', '--to=qa-recipient@example.com'],
+        $transport,
+        [
+            'FORGE_EMAIL_TRANSPORT' => 'smtp',
+            'FORGE_EMAIL_HOST' => 'smtp.mail.me.com',
+            'FORGE_EMAIL_PORT' => 587,
+            'FORGE_EMAIL_ENCRYPTION' => 'tls',
+            'FORGE_EMAIL_USERNAME' => 'primary-icloud@example.com',
+            'FORGE_EMAIL_PASSWORD' => 'APPLE_APP_SPECIFIC_PASSWORD',
+            'FORGE_EMAIL_FROM_ADDRESS' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_FROM_NAME' => 'The Hilltop Shop',
+            'FORGE_EMAIL_REPLY_TO' => 'orders@thehilltopshop.com',
+            'FORGE_EMAIL_CONNECT_TIMEOUT' => 10,
+            'FORGE_EMAIL_SEND_TIMEOUT' => 20,
+            'FORGE_EMAIL_ENABLED' => false,
+        ],
+        'cli'
+    );
+
+    assertSame(0, $result['exit_code']);
+    assertSame('SMTP smoke test sent successfully.', $result['output']);
+    assertSame(1, count($transport->messages()));
+    assertSame('qa-recipient@example.com', $transport->messages()[0]->toAddress);
+    assertSame('orders@thehilltopshop.com', $transport->messages()[0]->fromAddress);
 });
 
 $runner->run('identical retry returns the original received_at value and leaves the stored record unchanged', static function (): void {
@@ -1263,6 +1812,7 @@ $runner->run('stored staff order records normalize payload JSON and UTC timestam
     assertSame('123e4567-e89b-42d3-a456-426614174000', $record['payload']['forge_order_uuid']);
     assertSame(null, $record['forge_order_number']);
     assertSame(false, array_key_exists('forge_order_number', $record['payload']));
+    assertSame('Not Scheduled', $record['confirmation_email_status']);
 });
 
 $runner->run('stored staff order records default missing production fields to submitted with no tray', static function (): void {
@@ -1495,6 +2045,161 @@ $runner->run('stored staff order records surface the private internal note separ
     assertSame(true, $record['has_internal_note']);
     assertSame(false, array_key_exists('internal_note', $record['payload']));
     assertSame('Meagan Smith', $record['payload']['customer']['full_name']);
+});
+
+$runner->run('stored staff order records expose staff-visible outbound email delivery labels safely', static function (): void {
+    $sent = \Forge\Server\normalizeStoredStaffOrderRecord([
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174403',
+        'forge_order_number' => 1044,
+        'record_version' => '1.0',
+        'source' => 'customer_kiosk',
+        'submitted_at' => '2026-07-19 10:00:00.123456',
+        'received_at' => '2026-07-19 10:05:00.123456',
+        'updated_at' => '2026-07-19 10:06:00.123456',
+        'payload_json' => json_encode(createValidPayload(), JSON_THROW_ON_ERROR),
+        'payload_sha256' => str_repeat('c', 64),
+        'production_status' => 'submitted',
+    ], [], \Forge\Server\OutboundMessageStatus::SENT);
+    $skipped = \Forge\Server\normalizeStoredStaffOrderRecord([
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174404',
+        'forge_order_number' => 1045,
+        'record_version' => '1.0',
+        'source' => 'customer_kiosk',
+        'submitted_at' => '2026-07-19 10:00:00.123456',
+        'received_at' => '2026-07-19 10:05:00.123456',
+        'updated_at' => '2026-07-19 10:06:00.123456',
+        'payload_json' => json_encode(createValidPayload(), JSON_THROW_ON_ERROR),
+        'payload_sha256' => str_repeat('d', 64),
+        'production_status' => 'submitted',
+    ], [], \Forge\Server\OutboundMessageStatus::SKIPPED_TEST);
+
+    assertSame('Sent', $sent['confirmation_email_status']);
+    assertSame('Skipped/Test', $skipped['confirmation_email_status']);
+});
+
+$runner->run('staff repository lists historical orders as Not Scheduled and new outbound statuses when present', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174501',
+        'forge_order_number' => 1051,
+    ]);
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174502',
+        'forge_order_number' => 1052,
+    ]);
+    seedOutboundMessage($pdo, [
+        'message_id' => 'msg-sent',
+        'entity_uuid' => '123e4567-e89b-42d3-a456-426614174502',
+        'status' => \Forge\Server\OutboundMessageStatus::SENT,
+    ]);
+
+    $repository = new \Forge\Server\PdoStaffOrderRepository(
+        $pdo,
+        [],
+        new \Forge\Server\PdoOutboundMessageRepository($pdo)
+    );
+    $orders = $repository->listOrders();
+
+    $statuses = [];
+    foreach ($orders as $order) {
+        $statuses[$order['forge_order_uuid']] = $order['confirmation_email_status'];
+    }
+
+    assertSame('Not Scheduled', $statuses['123e4567-e89b-42d3-a456-426614174501']);
+    assertSame('Sent', $statuses['123e4567-e89b-42d3-a456-426614174502']);
+});
+
+$runner->run('email renderer includes the approved order details and excludes staff-only fields', static function (): void {
+    $payload = createValidPayload([
+        'forge_order_number' => 1099,
+        'external_payment_method' => 'card_square',
+        'payment_confirmed_at' => '2026-07-28T12:58:00+00:00',
+        'fulfillment' => [
+            'method' => 'shipping',
+            'shipping_address' => [
+                'recipient' => 'Kyle Hemenway',
+                'address_1' => '123 Main Street',
+                'address_2' => 'Apartment 4',
+                'city' => 'Austin',
+                'state' => 'TX',
+                'postal_code' => '78701',
+                'country' => 'US',
+            ],
+        ],
+        'internal_note' => 'never render this',
+        'items' => [
+            [
+                'line_id' => 'line-1',
+                'line_number' => 1,
+                'quantity' => 2,
+                'product_definition_id' => 'tree_ornament',
+                'product_display_name' => 'Tree Ornament',
+                'product_category' => 'ornament',
+                'product_definition_version' => '1.0',
+                'pricing' => [
+                    'mode' => 'fixed',
+                    'line_total_cents' => 5200,
+                    'final_unit_price_cents' => 2600,
+                ],
+                'configuration_snapshot' => [
+                    'familyName' => 'Hemenway',
+                    'year' => '2026',
+                ],
+                'personalization_order' => [
+                    ['position' => 1, 'type' => 'person', 'name' => 'Kyle'],
+                    ['position' => 2, 'type' => 'pet', 'name' => 'Scout', 'icon' => 'paw'],
+                ],
+                'structured_attributes' => [],
+                'open_flags' => [],
+                'customer_note' => 'Please double check spelling',
+                'production_note' => 'private production detail',
+                'current_tray_number' => 8,
+            ],
+        ],
+        'pricing' => [
+            'estimated_total_cents' => 5200,
+        ],
+    ]);
+    $renderer = new \Forge\Server\EmailRenderer();
+    $html = $renderer->renderOrderConfirmationHtml($payload, 'orders@thehilltopshop.com');
+    $text = $renderer->renderOrderConfirmationText($payload, 'orders@thehilltopshop.com');
+
+    assertTrue(strpos($html, 'The Hilltop Shop') !== false);
+    assertTrue(strpos($html, '#1099') !== false);
+    assertTrue(strpos($html, 'Kyle Hemenway') !== false);
+    assertTrue(strpos($html, 'Tree Ornament') !== false);
+    assertTrue(strpos($html, 'Kyle') !== false);
+    assertTrue(strpos($html, 'Scout') !== false);
+    assertTrue(strpos($html, 'Card / Square') !== false);
+    assertTrue(strpos($html, 'Shipping') !== false);
+    assertTrue(strpos($html, '123 Main Street') !== false);
+    assertTrue(strpos($text, 'Order total: $52.00') !== false);
+    assertTrue(strpos($text, 'Please review your order details carefully.') !== false);
+    assertNotContains('never render this', $html);
+    assertNotContains('private production detail', $html);
+    assertNotContains('Tray', $html);
+});
+
+$runner->run('outbound message repository enforces unique idempotency keys for logical order confirmations', static function (): void {
+    $pdo = createOutboundMessageTestPdo();
+    $repository = new \Forge\Server\PdoOutboundMessageRepository($pdo);
+    $payload = createValidPayload([
+        'forge_order_number' => 1055,
+        'external_payment_method' => 'venmo',
+        'payment_confirmed_at' => '2026-07-28T12:58:00+00:00',
+    ]);
+
+    $first = $repository->createOrderConfirmationMessage($payload);
+    $second = $repository->createOrderConfirmationMessage($payload);
+    $count = (int) $pdo->query('SELECT COUNT(*) FROM forge_outbound_messages')->fetchColumn();
+
+    assertSame(true, $first->created);
+    assertSame(false, $second->created);
+    assertSame(1, $count);
+    assertSame(
+        \Forge\Server\buildOrderConfirmationIdempotencyKey($payload['forge_order_uuid']),
+        $second->record->idempotencyKey
+    );
 });
 
 $runner->run('internal order notes preserve quotes apostrophes and line breaks safely', static function (): void {
@@ -2208,11 +2913,17 @@ $runner->run('private bootstrap normalization preserves both staff auth and tray
         'FORGE_DB_PASSWORD' => 'secret',
         'FORGE_STAFF_PIN_HASH' => '$2y$example',
         'FORGE_TRAY_NUMBERS' => '1,2,3',
+        'FORGE_EMAIL_ENABLED' => false,
+        'FORGE_EMAIL_HOST' => 'smtp.mail.me.com',
+        'FORGE_EMAIL_FROM_NAME' => 'The Hilltop Shop',
         'IGNORED_KEY' => 'ignored',
     ]);
 
     assertSame('$2y$example', $normalized['FORGE_STAFF_PIN_HASH']);
     assertSame('1,2,3', $normalized['FORGE_TRAY_NUMBERS']);
+    assertSame(false, $normalized['FORGE_EMAIL_ENABLED']);
+    assertSame('smtp.mail.me.com', $normalized['FORGE_EMAIL_HOST']);
+    assertSame('The Hilltop Shop', $normalized['FORGE_EMAIL_FROM_NAME']);
     assertTrue(!array_key_exists('IGNORED_KEY', $normalized));
 });
 
@@ -3752,6 +4463,31 @@ $runner->run('legacy cleanup migration endpoint and tombstones stay staff-only a
     assertTrue(strpos($orderRepositorySource, 'hasCleanupTombstone') !== false);
 });
 
+$runner->run('customer email foundation sources stay private use composer dependencies and keep outbound message storage reusable', static function (): void {
+    $composerSource = file_get_contents(dirname(__DIR__, 2) . '/composer.json');
+    $bootstrapSource = file_get_contents(dirname(__DIR__) . '/bootstrap.php');
+    $buildScriptSource = file_get_contents(dirname(__DIR__, 2) . '/scripts/build-deployment-package.sh');
+    $verifyScriptSource = file_get_contents(dirname(__DIR__, 2) . '/scripts/verify-deployment-package.sh');
+    $migrationSource = file_get_contents(dirname(__DIR__) . '/migrations/014_create_forge_outbound_messages.sql');
+    $ordersEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/orders.php');
+
+    assertTrue(is_string($composerSource));
+    assertTrue(is_string($bootstrapSource));
+    assertTrue(is_string($buildScriptSource));
+    assertTrue(is_string($verifyScriptSource));
+    assertTrue(is_string($migrationSource));
+    assertTrue(is_string($ordersEndpointSource));
+    assertTrue(strpos($composerSource, '"phpmailer/phpmailer"') !== false);
+    assertTrue(strpos($bootstrapSource, "require_once __DIR__ . '/lib/email-service.php';") !== false);
+    assertTrue(strpos($bootstrapSource, "if (is_file(__DIR__ . '/vendor/autoload.php'))") !== false);
+    assertTrue(strpos($buildScriptSource, 'COMPOSER_VENDOR_DIR="${PRIVATE_STAGE}/vendor"') !== false);
+    assertTrue(strpos($verifyScriptSource, 'private/forge_server/vendor/phpmailer/phpmailer/src/PHPMailer.php') !== false);
+    assertTrue(strpos($migrationSource, 'CREATE TABLE IF NOT EXISTS forge_outbound_messages') !== false);
+    assertTrue(strpos($migrationSource, 'UNIQUE KEY ux_forge_outbound_messages_idempotency_key') !== false);
+    assertTrue(strpos($ordersEndpointSource, "require_once __DIR__ . '/_bootstrap.php';") !== false);
+    assertTrue(strpos($ordersEndpointSource, 'PHPMailer') === false);
+});
+
 $runner->run('order cancellation and Test Session deletion stay staff-only and use the dedicated migration safely', static function (): void {
     $migrationSource = file_get_contents(dirname(__DIR__) . '/migrations/013_add_cancelled_at_to_forge_orders.sql');
     $cancelEndpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/cancel-order.php');
@@ -3949,6 +4685,33 @@ function createMaterialCatalogTestPdo(): PDO
     return $pdo;
 }
 
+function createOutboundMessageTestPdo(): PDO
+{
+    $pdo = new PDO('sqlite::memory:');
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+    $pdo->exec(
+        'CREATE TABLE forge_outbound_messages (
+            message_id TEXT PRIMARY KEY,
+            entity_type TEXT NOT NULL,
+            entity_uuid TEXT NOT NULL,
+            message_type TEXT NOT NULL,
+            recipient_email TEXT NOT NULL,
+            status TEXT NOT NULL,
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            last_attempt_at TEXT DEFAULT NULL,
+            sent_at TEXT DEFAULT NULL,
+            last_error_safe TEXT DEFAULT NULL,
+            idempotency_key TEXT NOT NULL UNIQUE,
+            render_context_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )'
+    );
+
+    return $pdo;
+}
+
 function seedFinishedHatCatalogLinkTables(PDO $pdo): void
 {
     $pdo->exec("INSERT INTO forge_catalog_designs (id, design_name) VALUES ('123e4567-e89b-42d3-a456-426614174101', 'Texas Flag')");
@@ -4086,6 +4849,24 @@ function createStaffOrderRepositoryTestPdo(bool $includeCleanupTombstones = true
             end_date TEXT NOT NULL,
             event_location TEXT DEFAULT NULL,
             event_status TEXT NOT NULL
+        )'
+    );
+    $pdo->exec(
+        'CREATE TABLE forge_outbound_messages (
+            message_id TEXT PRIMARY KEY,
+            entity_type TEXT NOT NULL,
+            entity_uuid TEXT NOT NULL,
+            message_type TEXT NOT NULL,
+            recipient_email TEXT NOT NULL,
+            status TEXT NOT NULL,
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            last_attempt_at TEXT DEFAULT NULL,
+            sent_at TEXT DEFAULT NULL,
+            last_error_safe TEXT DEFAULT NULL,
+            idempotency_key TEXT NOT NULL UNIQUE,
+            render_context_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
         )'
     );
 
@@ -4298,6 +5079,69 @@ function seedStaffOrderRepositoryTestOrder(PDO $pdo, array $options = []): void
             ':assigned_at' => $trayTimestamp,
         ]);
     }
+}
+
+function seedOutboundMessage(PDO $pdo, array $options = []): void
+{
+    $messageId = (string) ($options['message_id'] ?? 'msg-1');
+    $entityUuid = (string) ($options['entity_uuid'] ?? '123e4567-e89b-42d3-a456-426614174599');
+    $status = (string) ($options['status'] ?? \Forge\Server\OutboundMessageStatus::PENDING);
+    $renderContext = $options['render_context'] ?? [
+        'order' => createValidPayload([
+            'forge_order_uuid' => $entityUuid,
+            'forge_order_number' => 1042,
+        ]),
+    ];
+
+    $statement = $pdo->prepare(
+        'INSERT INTO forge_outbound_messages (
+            message_id,
+            entity_type,
+            entity_uuid,
+            message_type,
+            recipient_email,
+            status,
+            attempt_count,
+            last_attempt_at,
+            sent_at,
+            last_error_safe,
+            idempotency_key,
+            render_context_json,
+            created_at,
+            updated_at
+        ) VALUES (
+            :message_id,
+            :entity_type,
+            :entity_uuid,
+            :message_type,
+            :recipient_email,
+            :status,
+            :attempt_count,
+            :last_attempt_at,
+            :sent_at,
+            :last_error_safe,
+            :idempotency_key,
+            :render_context_json,
+            :created_at,
+            :updated_at
+        )'
+    );
+    $statement->execute([
+        ':message_id' => $messageId,
+        ':entity_type' => (string) ($options['entity_type'] ?? \Forge\Server\OutboundMessageEntityType::FORGE_ORDER),
+        ':entity_uuid' => $entityUuid,
+        ':message_type' => (string) ($options['message_type'] ?? \Forge\Server\OutboundMessageType::ORDER_CONFIRMATION),
+        ':recipient_email' => (string) ($options['recipient_email'] ?? 'customer@example.com'),
+        ':status' => $status,
+        ':attempt_count' => (int) ($options['attempt_count'] ?? 0),
+        ':last_attempt_at' => $options['last_attempt_at'] ?? null,
+        ':sent_at' => $options['sent_at'] ?? null,
+        ':last_error_safe' => $options['last_error_safe'] ?? null,
+        ':idempotency_key' => (string) ($options['idempotency_key'] ?? \Forge\Server\buildOrderConfirmationIdempotencyKey($entityUuid)),
+        ':render_context_json' => json_encode($renderContext, JSON_THROW_ON_ERROR),
+        ':created_at' => (string) ($options['created_at'] ?? '2026-07-28 12:00:00.000000'),
+        ':updated_at' => (string) ($options['updated_at'] ?? '2026-07-28 12:00:00.000000'),
+    ]);
 }
 
 $runner->finish();

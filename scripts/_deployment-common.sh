@@ -31,6 +31,28 @@ deployment_require_command() {
   done
 }
 
+deployment_run_composer() {
+  local repo_root
+  repo_root="$(deployment_repo_root)"
+
+  if command -v composer >/dev/null 2>&1; then
+    composer "$@"
+    return 0
+  fi
+
+  if [[ -f "${repo_root}/.deploy/composer.phar" ]]; then
+    php "${repo_root}/.deploy/composer.phar" "$@"
+    return 0
+  fi
+
+  if [[ -f "${repo_root}/composer.phar" ]]; then
+    php "${repo_root}/composer.phar" "$@"
+    return 0
+  fi
+
+  deployment_fail "Composer is required. Install composer or place composer.phar at the repository root or .deploy/composer.phar."
+}
+
 deployment_assert_repo_root() {
   local repo_root
   repo_root="$(deployment_repo_root)"

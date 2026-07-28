@@ -53,6 +53,7 @@ class OrderConflictException extends \RuntimeException
 final class OrderHandler
 {
     private OrderRepositoryInterface $repository;
+    private ?EmailService $emailService;
     /** @var callable */
     private $clock;
     /** @var null|callable */
@@ -60,11 +61,13 @@ final class OrderHandler
 
     public function __construct(
         OrderRepositoryInterface $repository,
+        ?EmailService $emailService = null,
         ?callable $clock = null,
         ?callable $unexpectedExceptionReporter = null
     )
     {
         $this->repository = $repository;
+        $this->emailService = $emailService;
         $this->clock = $clock ?? static function (): \DateTimeImmutable {
             return new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
         };
@@ -85,6 +88,10 @@ final class OrderHandler
             $payloadSha256 = OrderPayload::hashCanonicalPayload($payload);
             $receivedAt = $this->currentUtcIso8601();
             $result = $this->repository->storeOrder($payload, $canonicalJson, $payloadSha256, $receivedAt);
+            $storedPayload = $this->buildStoredOrderPayload($payload, $result->forgeOrderNumber);
+            if ($result->created) {
+                $this->attemptOrderConfirmation($storedPayload);
+            }
 
             return [
                 'statusCode' => $result->created ? 201 : 200,
@@ -131,6 +138,37 @@ final class OrderHandler
                     'The Forge server could not store this order.'
                 ),
             ];
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    private function buildStoredOrderPayload(array $payload, ?int $forgeOrderNumber): array
+    {
+        if ($forgeOrderNumber === null) {
+            unset($payload['forge_order_number']);
+            return $payload;
+        }
+
+        $payload['forge_order_number'] = $forgeOrderNumber;
+        return $payload;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function attemptOrderConfirmation(array $payload): void
+    {
+        if ($this->emailService === null) {
+            return;
+        }
+
+        try {
+            $this->emailService->scheduleOrderConfirmation($payload);
+        } catch (Throwable $exception) {
+            $this->reportUnexpectedException($exception);
         }
     }
 

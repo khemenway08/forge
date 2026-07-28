@@ -97,14 +97,16 @@ final class PdoStaffOrderRepository
     private PDO $pdo;
     /** @var array{FORGE_TRAY_NUMBERS?: mixed} */
     private array $trayConfig;
+    private ?PdoOutboundMessageRepository $outboundMessageRepository;
 
     /**
      * @param array{FORGE_TRAY_NUMBERS?: mixed} $trayConfig
      */
-    public function __construct(PDO $pdo, array $trayConfig = [])
+    public function __construct(PDO $pdo, array $trayConfig = [], ?PdoOutboundMessageRepository $outboundMessageRepository = null)
     {
         $this->pdo = $pdo;
         $this->trayConfig = $trayConfig;
+        $this->outboundMessageRepository = $outboundMessageRepository;
     }
 
     /**
@@ -161,9 +163,14 @@ final class PdoStaffOrderRepository
         }
 
         $itemProductionRowsByOrder = $this->loadItemProductionRowsForOrders($orderUuids);
+        $emailStatusesByOrderUuid = $this->loadOrderConfirmationStatuses($orderUuids);
         $normalized = [];
         foreach ($recordsByOrderUuid as $orderUuid => $record) {
-            $normalized[] = normalizeStoredStaffOrderRecord($record, $itemProductionRowsByOrder[$orderUuid] ?? []);
+            $normalized[] = normalizeStoredStaffOrderRecord(
+                $record,
+                $itemProductionRowsByOrder[$orderUuid] ?? [],
+                $emailStatusesByOrderUuid[$orderUuid] ?? null
+            );
         }
 
         return $normalized;
@@ -226,7 +233,11 @@ final class PdoStaffOrderRepository
             return null;
         }
 
-        return normalizeStoredStaffOrderRecord($record, $this->loadItemProductionRowsForOrder($orderUuid));
+        return normalizeStoredStaffOrderRecord(
+            $record,
+            $this->loadItemProductionRowsForOrder($orderUuid),
+            $this->loadOrderConfirmationStatuses([$orderUuid])[$orderUuid] ?? null
+        );
     }
 
     /**
@@ -1636,6 +1647,19 @@ final class PdoStaffOrderRepository
         }
         $statement->execute();
     }
+
+    /**
+     * @param array<int, string> $orderUuids
+     * @return array<string, string>
+     */
+    private function loadOrderConfirmationStatuses(array $orderUuids): array
+    {
+        if ($this->outboundMessageRepository === null) {
+            return [];
+        }
+
+        return $this->outboundMessageRepository->listLatestOrderConfirmationStatusesByOrderUuid($orderUuids);
+    }
 }
 
 function normalizeStaffOrderLimit(int $limit): int
@@ -1652,7 +1676,7 @@ function normalizeStaffOrderLimit(int $limit): int
  * @param array<int, array<string, mixed>> $itemProductionRows
  * @return array<string, mixed>
  */
-function normalizeStoredStaffOrderRecord($record, array $itemProductionRows = []): array
+function normalizeStoredStaffOrderRecord($record, array $itemProductionRows = [], ?string $confirmationEmailStatus = null): array
 {
     if (!is_array($record)) {
         throw new \InvalidArgumentException('A valid stored staff order record is required.');
@@ -1714,7 +1738,19 @@ function normalizeStoredStaffOrderRecord($record, array $itemProductionRows = []
         'ready_to_pack_at' => $readyToPackAt,
         'cancelled_at' => normalizeNullableDatabaseDateTime($record['cancelled_at'] ?? null),
         'has_open_flags' => $hasOpenFlags,
+        'confirmation_email_status' => deriveStaffOrderConfirmationEmailStatusLabel($confirmationEmailStatus),
     ];
+}
+
+function deriveStaffOrderConfirmationEmailStatusLabel(?string $status): string
+{
+    return match ($status) {
+        OutboundMessageStatus::SENT => 'Sent',
+        OutboundMessageStatus::PENDING => 'Pending',
+        OutboundMessageStatus::FAILED => 'Failed',
+        OutboundMessageStatus::SKIPPED_TEST => 'Skipped/Test',
+        default => 'Not Scheduled',
+    };
 }
 
 /**

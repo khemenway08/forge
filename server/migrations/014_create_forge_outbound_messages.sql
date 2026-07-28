@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS forge_outbound_messages (
+    message_id CHAR(36) NOT NULL,
+    entity_type VARCHAR(32) NOT NULL,
+    entity_uuid CHAR(36) NOT NULL,
+    message_type VARCHAR(32) NOT NULL,
+    recipient_email VARCHAR(320) NOT NULL,
+    status VARCHAR(24) NOT NULL,
+    attempt_count INT UNSIGNED NOT NULL DEFAULT 0,
+    last_attempt_at DATETIME(6) NULL,
+    sent_at DATETIME(6) NULL,
+    last_error_safe VARCHAR(200) NULL,
+    idempotency_key VARCHAR(191) NOT NULL,
+    render_context_json JSON NOT NULL,
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (message_id),
+    UNIQUE KEY ux_forge_outbound_messages_idempotency_key (idempotency_key),
+    KEY idx_forge_outbound_messages_entity (entity_type, entity_uuid),
+    KEY idx_forge_outbound_messages_status (status),
+    KEY idx_forge_outbound_messages_message_type (message_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

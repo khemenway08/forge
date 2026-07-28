@@ -1,0 +1,14 @@
+{
+  "name": "khemenway08/forge",
+  "description": "Private server dependencies for The Hilltop Shop Forge runtime",
+  "type": "project",
+  "license": "proprietary",
+  "require": {
+    "php": "^8.1",
+    "phpmailer/phpmailer": "^7.0"
+  },
+  "config": {
+    "vendor-dir": "server/vendor",
+    "sort-packages": true
+  }
+}

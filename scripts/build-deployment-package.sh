@@ -46,8 +46,10 @@ MANIFEST_PATH="${BUILD_ROOT}/forge-deployment.manifest.txt"
 ZIP_PATH="${BUILD_ROOT}/forge-deployment-${TIMESTAMP}.zip"
 METADATA_PATH="${BUILD_ROOT}/forge-deployment.metadata.txt"
 INSTRUCTIONS_PATH="${BUILD_ROOT}/forge-deployment.instructions.txt"
+COMPOSER_CACHE_DIR_PATH="${PWD}/.deploy/composer-cache"
 
 mkdir -p "${PUBLIC_STAGE}" "${PRIVATE_STAGE}"
+mkdir -p "${COMPOSER_CACHE_DIR_PATH}"
 
 deployment_note "Running required verification before building the deployment package..."
 php server/tests/run.php
@@ -63,6 +65,18 @@ deployment_note "Staging private server runtime files..."
 rsync -a --prune-empty-dirs \
   --exclude-from="${SCRIPT_DIR}/deployment-excludes.txt" \
   server/ "${PRIVATE_STAGE}/"
+
+deployment_note "Installing private Composer dependencies into the staged runtime..."
+deployment_run_composer validate --no-check-publish
+COMPOSER_CACHE_DIR="${COMPOSER_CACHE_DIR_PATH}" \
+COMPOSER_VENDOR_DIR="${PRIVATE_STAGE}/vendor" \
+  deployment_run_composer install \
+  --no-dev \
+  --prefer-dist \
+  --optimize-autoloader \
+  --no-interaction \
+  --no-progress \
+  --working-dir "$(pwd)"
 
 cat > "${PACKAGE_ROOT}/BUILD-METADATA.txt" <<EOF
 Forge deployment build metadata
