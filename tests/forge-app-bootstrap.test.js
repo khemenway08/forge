@@ -897,6 +897,7 @@ function loadForgeHostedStaffAppForTrayDetail() {
 
   let trayLoadCount = 0;
   let completionCallCount = 0;
+  let completeItemHandler = null;
   const sharedRecord = {
     forge_order_uuid: 'shared-order-1',
     forge_order_number: 1001,
@@ -1046,7 +1047,10 @@ function loadForgeHostedStaffAppForTrayDetail() {
         async assignTrayToOrder() {
           throw new Error('assignTrayToOrder should not be called in this click-path test');
         },
-        async completeItemQuantity(orderUuid, lineId) {
+        async completeItemQuantity(orderUuid, lineId, expectedCompletedQuantity, targetCompletedQuantity) {
+          if (typeof completeItemHandler === 'function') {
+            return completeItemHandler(orderUuid, lineId, expectedCompletedQuantity, targetCompletedQuantity);
+          }
           completionCallCount += 1;
           assert.equal(orderUuid, 'shared-order-1');
           assert.equal(lineId, 'shared-tree-line');
@@ -1197,11 +1201,17 @@ function loadForgeHostedStaffAppForTrayDetail() {
     getCompletionButton() {
       return completionButtons[0] || null;
     },
+    getCompletionButtons() {
+      return completionButtons.slice();
+    },
     getTrayLoadCount() {
       return trayLoadCount;
     },
     getCompletionCallCount() {
       return completionCallCount;
+    },
+    setCompleteItemHandler(handler) {
+      completeItemHandler = typeof handler === 'function' ? handler : null;
     },
     getInternalNoteSaveCallCount() {
       return internalNoteSaveCallCount;
@@ -2602,6 +2612,131 @@ test('shared server order detail completion button binds to the rendered button 
   assert.equal(completionButton, null);
 });
 
+test('shared server two-item order detail reopens and completes the second hosted ornament without losing staff access', async () => {
+  const {
+    context,
+    detailDialog,
+    getCompletionButtons,
+    setCompleteItemHandler,
+    setSharedRecord
+  } = loadForgeHostedStaffAppForTrayDetail();
+
+  setSharedRecord({
+    production_status: 'in_production',
+    current_tray_number: 7,
+    total_item_count: 2,
+    completed_item_count: 1,
+    staff_can_assign_tray: false,
+    staff_can_complete_items: true,
+    payload: {
+      forge_order_number: 1001,
+      customer: { full_name: 'Kyle Hemenway' },
+      fulfillment: { method: 'shipping' },
+      items: [
+        {
+          line_id: 'shared-first-line',
+          line_number: 1,
+          product_display_name: 'Antler Ornament',
+          quantity: 1,
+          completed_quantity: 1,
+          production_status: 'complete',
+          completed_at: '2026-07-20T12:05:00Z',
+          pricing: { final_unit_price_cents: 2600, line_total_cents: 2600 },
+          open_flags: []
+        },
+        {
+          line_id: 'shared-second-line',
+          line_number: 2,
+          product_display_name: 'Antler Ornament',
+          quantity: 1,
+          completed_quantity: 0,
+          production_status: 'pending',
+          pricing: { final_unit_price_cents: 2600, line_total_cents: 2600 },
+          open_flags: []
+        }
+      ]
+    }
+  });
+  let hostedTwoItemCompletionCallCount = 0;
+  setCompleteItemHandler((orderUuid, lineId, expectedCompletedQuantity, targetCompletedQuantity) => {
+    assert.equal(orderUuid, 'shared-order-1');
+    assert.equal(lineId, 'shared-second-line');
+    assert.equal(expectedCompletedQuantity, 0);
+    assert.equal(targetCompletedQuantity, 1);
+    hostedTwoItemCompletionCallCount += 1;
+
+    const completedSharedRecord = {
+      production_status: 'ready_to_pack',
+      current_tray_number: 7,
+      total_item_count: 2,
+      completed_item_count: 2,
+      staff_can_assign_tray: false,
+      staff_can_complete_items: false,
+      ready_to_pack_at: '2026-07-20T12:10:00Z',
+      payload: {
+        forge_order_number: 1001,
+        customer: { full_name: 'Kyle Hemenway' },
+        fulfillment: { method: 'shipping' },
+        items: [
+          {
+            line_id: 'shared-first-line',
+            line_number: 1,
+            product_display_name: 'Antler Ornament',
+            quantity: 1,
+            completed_quantity: 1,
+            production_status: 'complete',
+            completed_at: '2026-07-20T12:05:00Z',
+            pricing: { final_unit_price_cents: 2600, line_total_cents: 2600 },
+            open_flags: []
+          },
+          {
+            line_id: 'shared-second-line',
+            line_number: 2,
+            product_display_name: 'Antler Ornament',
+            quantity: 1,
+            completed_quantity: 1,
+            production_status: 'complete',
+            completed_at: '2026-07-20T12:10:00Z',
+            pricing: { final_unit_price_cents: 2600, line_total_cents: 2600 },
+            open_flags: []
+          }
+        ]
+      }
+    };
+    setSharedRecord(completedSharedRecord);
+
+    return {
+      ok: true,
+      authenticated: true,
+      dataSource: 'server',
+      readOnly: true,
+      alreadyApplied: false,
+      order: structuredClone(completedSharedRecord)
+    };
+  });
+
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+  assert.match(String(detailDialog.innerHTML || ''), /1 of 2 Complete/);
+
+  const initialButtons = getCompletionButtons();
+  assert.equal(initialButtons.length, 1);
+  assert.equal(initialButtons[0].dataset.lineId, 'shared-second-line');
+  initialButtons[0].dispatchEvent(new MockMouseEvent('click', { bubbles: true, cancelable: true }));
+  assert.match(String(detailDialog.innerHTML || ''), /Saving\.\.\./);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(hostedTwoItemCompletionCallCount, 1);
+  assert.match(String(detailDialog.innerHTML || ''), /Item completion saved\./);
+  assert.match(String(detailDialog.innerHTML || ''), /2 of 2 Complete/);
+  assert.match(String(detailDialog.innerHTML || ''), /Ready to Pack/);
+
+  await context.openStaffOrderDetail('shared-order-1');
+  assert.match(String(detailDialog.innerHTML || ''), /2 of 2 Complete/);
+  assert.equal(getCompletionButtons().length, 0);
+  assert.doesNotMatch(String(detailDialog.innerHTML || ''), /Unable to open this order/);
+});
+
 test('shared server order detail renders the internal notes section and note badge when a note exists', async () => {
   const { context, detailDialog, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
 
@@ -3150,7 +3285,7 @@ test('staff orders remains the default protected destination and the catalog she
   assert.match(indexSource, />Shortlist<\/button>/);
   assert.match(
     indexSource,
-    /<script src="js\/forge-staff-api-client\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-catalog-ordering\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-catalog-image-viewer\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260728-39"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260728-39"><\/script>/
+    /<script src="js\/forge-staff-api-client\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-catalog-ordering\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-catalog-image-viewer\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260728-40"><\/script>/
   );
   assert.doesNotMatch(indexSource, /data-category="staff-catalog"/);
 });
