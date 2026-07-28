@@ -1574,6 +1574,87 @@ $runner->run('legacy cleanup preview signatures change when the eligible record 
     );
 });
 
+$runner->run('previewLegacyTestCleanup returns normalized eligible and protected orders without deleting anything', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    seedStaffOrderRepositoryTestEvent($pdo, [
+        'event_id' => 'event-test-cleanup',
+        'event_name' => 'Checkout Test Session',
+        'event_type' => 'test_session',
+        'event_status' => 'ended',
+    ]);
+
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174523',
+        'forge_order_number' => 1201,
+        'submitted_at' => '2026-07-24 23:30:00.000000',
+        'current_tray_number' => 5,
+        'payload' => createValidPayload([
+            'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174523',
+            'forge_order_number' => 1201,
+            'customer' => [
+                'full_name' => 'Historical Test Customer',
+                'email' => 'historical@example.com',
+                'phone' => '555-111-2222',
+            ],
+            'event' => [
+                'event_id' => 'event-test-cleanup',
+                'event_name' => 'Checkout Test Session',
+                'event_type' => 'test_session',
+            ],
+        ]),
+    ]);
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174524',
+        'forge_order_number' => 1202,
+        'submitted_at' => '2026-07-25 05:00:00.000000',
+        'payload' => createValidPayload([
+            'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174524',
+            'forge_order_number' => 1202,
+            'customer' => [
+                'full_name' => 'Protected Real Customer',
+                'email' => 'protected@example.com',
+                'phone' => '555-333-4444',
+            ],
+            'event' => null,
+        ]),
+    ]);
+
+    $repository = new \Forge\Server\PdoStaffOrderRepository($pdo, [
+        'FORGE_TRAY_NUMBERS' => '1,2,3,4,5,6,7,8',
+    ]);
+
+    $orderCountBefore = (int) $pdo->query('SELECT COUNT(*) FROM forge_orders')->fetchColumn();
+    $tombstoneCountBefore = (int) $pdo->query('SELECT COUNT(*) FROM forge_order_cleanup_tombstones')->fetchColumn();
+
+    $preview = $repository->previewLegacyTestCleanup();
+
+    assertSame(1, $preview['eligible_count']);
+    assertSame('DELETE 1 ORDERS BEFORE JULY 25', $preview['confirmation_text']);
+    assertSame('America/Chicago', $preview['cutoff_timezone']);
+    assertSame('2026-07-25T00:00:00-05:00', $preview['cutoff_local']);
+    assertSame(1, count($preview['eligible_orders']));
+    assertSame(1, count($preview['protected_orders']));
+
+    $eligibleOrder = $preview['eligible_orders'][0];
+    assertSame('Order 1201', $eligibleOrder['order_reference']);
+    assertSame('Historical Test Customer', $eligibleOrder['customer_name']);
+    assertSame('Checkout Test Session', $eligibleOrder['event_label']);
+    assertSame(5, $eligibleOrder['tray_number']);
+    assertTrue(!array_key_exists('payload_json', $eligibleOrder));
+
+    $protectedOrder = $preview['protected_orders'][0];
+    assertSame('Order 1202', $protectedOrder['order_reference']);
+    assertSame('Protected Real Customer', $protectedOrder['customer_name']);
+    assertSame(null, $protectedOrder['event_label']);
+    assertSame(null, $protectedOrder['tray_number']);
+    assertTrue(!array_key_exists('payload_json', $protectedOrder));
+
+    $orderCountAfter = (int) $pdo->query('SELECT COUNT(*) FROM forge_orders')->fetchColumn();
+    $tombstoneCountAfter = (int) $pdo->query('SELECT COUNT(*) FROM forge_order_cleanup_tombstones')->fetchColumn();
+    assertSame($orderCountBefore, $orderCountAfter);
+    assertSame($tombstoneCountBefore, $tombstoneCountAfter);
+});
+
 $runner->run('staff cancellation stores cancelled state safely and releases any assigned tray while preserving order data', static function (): void {
     $pdo = createStaffOrderRepositoryTestPdo();
     seedStaffOrderRepositoryTestOrder($pdo, [
@@ -3657,12 +3738,16 @@ $runner->run('legacy cleanup migration endpoint and tombstones stay staff-only a
     assertTrue(is_string($orderRepositorySource));
     assertTrue(strpos($migrationSource, 'CREATE TABLE IF NOT EXISTS forge_order_cleanup_tombstones') !== false);
     assertTrue(strpos($endpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($endpointSource, "if (\$method === 'GET')") !== false);
+    assertTrue(strpos($endpointSource, "'preview' => \$repository->previewLegacyTestCleanup(),") !== false);
+    assertTrue(strpos($endpointSource, 'ApiResponse::send(') !== false);
     assertTrue(strpos($endpointSource, 'previewLegacyTestCleanup') !== false);
     assertTrue(strpos($endpointSource, 'applyLegacyTestCleanup') !== false);
     assertTrue(strpos($repositorySource, 'America/Chicago') !== false);
     assertTrue(strpos($repositorySource, 'DELETE %d ORDERS BEFORE JULY 25') !== false);
     assertTrue(strpos($repositorySource, '$comparison = $eligible ? \'<\' : \'>=\';') !== false);
     assertTrue(strpos($repositorySource, ':cutoff_submitted_at') !== false);
+    assertTrue(strpos($repositorySource, "__NAMESPACE__ . '\\\\normalizeLegacyTestCleanupPreviewRow'") !== false);
     assertTrue(strpos($orderRepositorySource, 'forge_order_cleanup_tombstones') !== false);
     assertTrue(strpos($orderRepositorySource, 'hasCleanupTombstone') !== false);
 });

@@ -982,8 +982,8 @@ final class PdoStaffOrderRepository
             'eligible_count' => $eligibleCount,
             'confirmation_text' => buildLegacyTestCleanupConfirmationText($eligibleCount),
             'preview_signature' => buildLegacyTestCleanupPreviewSignature($eligibleRows),
-            'eligible_orders' => array_map('normalizeLegacyTestCleanupPreviewRow', $eligibleRows),
-            'protected_orders' => array_map('normalizeLegacyTestCleanupPreviewRow', $protectedRows),
+            'eligible_orders' => array_map(__NAMESPACE__ . '\\normalizeLegacyTestCleanupPreviewRow', $eligibleRows),
+            'protected_orders' => array_map(__NAMESPACE__ . '\\normalizeLegacyTestCleanupPreviewRow', $protectedRows),
         ];
     }
 
