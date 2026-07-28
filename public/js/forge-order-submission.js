@@ -315,9 +315,16 @@
     const hasUsableActiveOrder = Boolean(options.hasUsableActiveOrder);
     const hasCompletedReceipt = Boolean(options.hasCompletedReceipt);
 
-    if (currentScreen === 'final-review' || currentScreen === 'payment-handoff') {
+    if (currentScreen === 'final-review') {
       if (hasUsableActiveOrder) {
         return currentScreen;
+      }
+      return hasCompletedReceipt ? 'thank-you' : 'welcome';
+    }
+
+    if (currentScreen === 'payment-handoff') {
+      if (hasUsableActiveOrder) {
+        return 'final-review';
       }
       return hasCompletedReceipt ? 'thank-you' : 'welcome';
     }

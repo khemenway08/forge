@@ -502,7 +502,7 @@ test('unfinished active drafts still restore their final review screen normally'
     currentScreen: 'payment-handoff',
     hasUsableActiveOrder: true,
     hasCompletedReceipt: false
-  }), 'payment-handoff');
+  }), 'final-review');
 });
 
 test('failed save does not create a completion receipt', async () => {

@@ -685,67 +685,31 @@
             <div class="order-summary-card final-review-summary" data-final-review-summary></div>
             <div class="order-summary-card final-review-customer" data-final-review-customer></div>
             <div class="order-summary-card final-review-delivery" data-final-review-delivery></div>
-            <div class="order-summary-card final-review-actions-card">
+            <div class="order-summary-card final-review-actions-card" data-final-review-actions-card>
               <h3>Submit Order</h3>
-              <p class="final-review-copy">We will validate everything one more time before choosing the payment method and saving your order.</p>
+              <p class="final-review-copy">Choose how the customer paid, then submit the order.</p>
+              <div class="payment-handoff-methods final-review-payment-methods">
+                <p class="summary-label payment-handoff-section-label">Payment Method</p>
+                <div class="choice-grid payment-handoff-choice-grid" data-final-review-payment-method-grid>
+                  <button class="choice-card" type="button" data-payment-method="card_square" aria-pressed="false">Card / Square</button>
+                  <button class="choice-card" type="button" data-payment-method="cash" aria-pressed="false">Cash</button>
+                  <button class="choice-card" type="button" data-payment-method="venmo" aria-pressed="false">Venmo</button>
+                </div>
+              </div>
               <p class="form-status final-review-status" data-final-review-status role="alert" aria-live="polite" tabindex="-1"></p>
+              <div class="payment-handoff-cancel-panel" data-final-review-cancel-panel hidden>
+                <p>Cancel this order and start over? This will clear the current draft and customer information.</p>
+                <div class="payment-handoff-cancel-actions">
+                  <button class="secondary-button" type="button" data-action="final-review-cancel-dismiss">Keep Editing</button>
+                  <button class="primary-button" type="button" data-action="final-review-cancel-confirm">Cancel Order and Start Over</button>
+                </div>
+              </div>
               <div class="review-actions final-review-actions">
-                <button class="primary-button" type="button" data-action="place-order-development">Submit Order</button>
+                <button class="primary-button" type="button" data-action="place-order-development" disabled>Payment Received — Submit Order</button>
+                <button class="text-button" type="button" data-action="final-review-cancel">Cancel Order and Start Over</button>
               </div>
             </div>
           </aside>
-        </div>
-      </section>
-
-      <section class="screen" data-screen="payment-handoff">
-        <div class="hero">
-          <div class="hero-card payment-handoff-card">
-            <div class="payment-handoff-copy">
-              <p class="eyebrow">Payment Method &amp; Submit Order</p>
-              <h1>Payment Method &amp; Submit Order</h1>
-              <p class="lead payment-handoff-lead">Choose how you paid, then submit your order.</p>
-            </div>
-
-            <div class="payment-handoff-summary">
-              <div class="payment-handoff-summary-card">
-                <span class="summary-label">Customer</span>
-                <strong data-payment-handoff-customer-name>Customer name unavailable</strong>
-              </div>
-              <div class="payment-handoff-summary-card">
-                <span class="summary-label">Order Summary</span>
-                <div data-payment-handoff-summary></div>
-              </div>
-              <div class="payment-handoff-summary-card">
-                <span class="summary-label">Order Total</span>
-                <strong data-payment-handoff-total>$0.00</strong>
-              </div>
-            </div>
-
-            <div class="payment-handoff-methods">
-              <p class="summary-label payment-handoff-section-label">Payment Method</p>
-              <div class="choice-grid payment-handoff-choice-grid" data-payment-method-grid>
-                <button class="choice-card" type="button" data-payment-method="card_square" aria-pressed="false">Card / Square</button>
-                <button class="choice-card" type="button" data-payment-method="cash" aria-pressed="false">Cash</button>
-                <button class="choice-card" type="button" data-payment-method="venmo" aria-pressed="false">Venmo</button>
-              </div>
-            </div>
-
-            <p class="form-status payment-handoff-status" data-payment-handoff-status role="alert" aria-live="polite" tabindex="-1"></p>
-
-            <div class="payment-handoff-cancel-panel" data-payment-handoff-cancel-panel hidden>
-              <p>Cancel this order and start over? This will clear the current draft and customer information.</p>
-              <div class="payment-handoff-cancel-actions">
-                <button class="secondary-button" type="button" data-action="payment-handoff-cancel-dismiss">Keep Editing</button>
-                <button class="primary-button" type="button" data-action="payment-handoff-cancel-confirm">Cancel Order and Start Over</button>
-              </div>
-            </div>
-
-            <div class="payment-handoff-actions">
-              <button class="primary-button" type="button" data-action="payment-handoff-submit">Submit Order</button>
-              <button class="secondary-button" type="button" data-action="payment-handoff-back">Back to Edit</button>
-              <button class="text-button" type="button" data-action="payment-handoff-cancel">Cancel Order and Start Over</button>
-            </div>
-          </div>
         </div>
       </section>
 

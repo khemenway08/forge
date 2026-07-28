@@ -212,6 +212,9 @@ function loadForgeAppWithoutStaffModules({
   const paymentHandoffTotal = createElement('strong');
   const paymentHandoffCancelPanel = createElement('div');
   paymentHandoffCancelPanel.hidden = true;
+  const finalReviewActionsCard = createElement('div');
+  const finalReviewCancelPanel = createElement('div');
+  finalReviewCancelPanel.hidden = true;
   const finalReviewStatus = createElement('p');
   const staffPanel = createElement('div');
   staffPanel.hidden = true;
@@ -276,6 +279,8 @@ function loadForgeAppWithoutStaffModules({
   env.registerSelector('[data-staff-actions="default"]', staffDefaultActions);
   env.registerSelector('[data-staff-actions="confirm"]', staffConfirmActions);
   env.registerSelector('[data-form="tree-ornament"]', treeForm);
+  env.registerSelector('[data-final-review-actions-card]', finalReviewActionsCard);
+  env.registerSelector('[data-final-review-cancel-panel]', finalReviewCancelPanel);
   env.registerSelector('[data-final-review-status]', finalReviewStatus);
   env.registerSelector('[data-final-review-items]', finalReviewItems);
   env.registerSelector('[data-final-review-summary]', finalReviewSummary);
@@ -562,6 +567,9 @@ function loadForgeAppWithoutStaffModules({
     paymentHandoffTotal,
     paymentMethodButtons,
     localStorageData,
+    finalReviewStatus,
+    finalReviewActionsCard,
+    finalReviewCancelPanel,
     finalReviewItems,
     finalReviewSummary,
     finalReviewCustomer,
@@ -1428,13 +1436,11 @@ test('customer category hero continues into the existing ornaments flow', () => 
   assert.equal(vm.runInContext('appState.currentScreen', context), 'ornaments');
 });
 
-test('Submit Order relabels the final review action and opening the payment handoff creates no submission context or completion receipt', () => {
+test('final review keeps the customer on one checkout screen and creates no submission context before submit', () => {
   const {
     context,
     placeOrderButton,
-    paymentHandoffCustomerName,
-    paymentHandoffSummary,
-    paymentHandoffTotal,
+    finalReviewStatus,
     localStorageData
   } = loadForgeAppWithoutStaffModules();
 
@@ -1449,67 +1455,60 @@ test('Submit Order relabels the final review action and opening the payment hand
     appState.currentScreen = 'final-review';
   `, context);
 
-  context.openPaymentHandoff();
+  vm.runInContext('renderFinalReview();', context);
 
-  assert.equal(placeOrderButton.textContent, 'Submit Order');
-  assert.equal(vm.runInContext('appState.currentScreen', context), 'payment-handoff');
-  assert.equal(paymentHandoffCustomerName.textContent, 'Kyle Hemenway');
-  assert.match(String(paymentHandoffSummary.innerHTML || ''), /Tree Ornament/);
-  assert.equal(paymentHandoffTotal.textContent, '$30.00');
+  assert.equal(placeOrderButton.textContent, 'Payment Received — Submit Order');
+  assert.equal(placeOrderButton.disabled, true);
+  assert.equal(vm.runInContext('appState.currentScreen', context), 'final-review');
+  assert.equal(finalReviewStatus.textContent, '');
   assert.equal(localStorageData.has('forge-order-submission-context'), false);
   assert.equal(localStorageData.has('forge-order-completion-receipt'), false);
 });
 
-test('payment handoff requires a payment method before submit and leaves the draft unsaved', () => {
+test('final review submit stays disabled until a payment method is selected', () => {
   const {
     context,
     placeOrderButton,
-    paymentHandoffSubmitButton,
-    paymentHandoffStatus,
-    localStorageData
+    paymentMethodButtons
   } = loadForgeAppWithoutStaffModules();
 
-  context.__testValidateFinalReviewDraft = () => ({ isValid: true, issues: [] });
-  context.__testGetOrderItems = () => [{ quantity: 1, displayName: 'Tree Ornament' }];
-  context.__testGetCurrentOrderStats = () => ({ itemCount: 1, subtotal: 3000 });
-  context.__testSubmitCurrentOrder = async () => {
-    throw new Error('submit should not be called');
-  };
   vm.runInContext(`
-    validateFinalReviewDraft = globalThis.__testValidateFinalReviewDraft;
-    getOrderItems = globalThis.__testGetOrderItems;
-    getCurrentOrderStats = globalThis.__testGetCurrentOrderStats;
-    submitCurrentOrder = globalThis.__testSubmitCurrentOrder;
+    validateFinalReviewDraft = () => ({ isValid: true, issues: [] });
+    getOrderItems = () => [{ quantity: 1, displayName: 'Tree Ornament' }];
+    getCurrentOrderStats = () => ({ itemCount: 1, subtotal: 3000 });
     customerDraft.fullName = 'Kyle Hemenway';
     appState.currentScreen = 'final-review';
+    renderFinalReview();
   `, context);
 
-  context.document.dispatchEvent({
-    type: 'click',
-    target: placeOrderButton,
-    currentTarget: context.document,
-    preventDefault() {},
-    stopPropagation() {}
-  });
-  context.document.querySelector('[data-screen="payment-handoff"]').dispatchEvent({
-    type: 'click',
-    target: paymentHandoffSubmitButton,
-    currentTarget: context.document.querySelector('[data-screen="payment-handoff"]'),
-    preventDefault() {},
-    stopPropagation() {}
-  });
+  assert.equal(placeOrderButton.disabled, true);
 
-  assert.match(paymentHandoffStatus.textContent, /Select a payment method before continuing\./);
-  assert.equal(localStorageData.has('forge-order-submission-context'), false);
-  assert.equal(localStorageData.has('forge-order-completion-receipt'), false);
+  const expected = [
+    ['card_square', 'Card / Square'],
+    ['cash', 'Cash'],
+    ['venmo', 'Venmo']
+  ];
+
+  expected.forEach(([value, label], index) => {
+    paymentMethodButtons[index].dispatchEvent({
+      type: 'click',
+      target: paymentMethodButtons[index],
+      currentTarget: paymentMethodButtons[index],
+      preventDefault() {},
+      stopPropagation() {}
+    });
+    assert.equal(vm.runInContext('finalReviewState.selectedMethod', context), value);
+    assert.equal(placeOrderButton.disabled, false, `${label} should enable submit`);
+  });
 });
 
 test('no customer screen renders a staff PIN field', () => {
   assert.doesNotMatch(indexSource, /data-payment-handoff-pin/);
   assert.doesNotMatch(indexSource, /payment-handoff-pin/);
+  assert.doesNotMatch(indexSource, /data-screen="payment-handoff"/);
 });
 
-test('customer submission works without a PIN for kiosk and token event flows', async () => {
+test('customer submission works without a PIN for kiosk and token event flows from final review only', async () => {
   const scenarios = [
     {
       search: '',
@@ -1525,7 +1524,7 @@ test('customer submission works without a PIN for kiosk and token event flows', 
     const {
       context,
       placeOrderButton,
-      paymentHandoffSubmitButton
+      paymentMethodButtons
     } = loadForgeAppWithoutStaffModules();
 
     vm.runInContext(`
@@ -1539,7 +1538,7 @@ test('customer submission works without a PIN for kiosk and token event flows', 
         globalThis.__submitCallCount += 1;
         globalThis.__submittedPaymentMethod = paymentConfirmation.externalPaymentMethod;
         globalThis.__submittedToken = customerEventState.activeEvent ? customerEventState.activeEvent.public_order_token : '';
-        paymentHandoffState.processing = false;
+        finalReviewState.savingOrder = false;
       };
       window.location.search = ${JSON.stringify(scenario.search)};
       customerDraft.fullName = 'Kyle Hemenway';
@@ -1551,25 +1550,21 @@ test('customer submission works without a PIN for kiosk and token event flows', 
         event_status: 'active'
       };
       appState.currentScreen = 'final-review';
+      renderFinalReview();
     `, context);
 
-    context.document.dispatchEvent({
+    paymentMethodButtons[1].dispatchEvent({
       type: 'click',
-      target: placeOrderButton,
-      currentTarget: context.document,
+      target: paymentMethodButtons[1],
+      currentTarget: paymentMethodButtons[1],
       preventDefault() {},
       stopPropagation() {}
     });
 
-    vm.runInContext(`
-      paymentHandoffState.selectedMethod = 'cash';
-      renderPaymentHandoff();
-    `, context);
-
-    context.document.querySelector('[data-screen="payment-handoff"]').dispatchEvent({
+    context.document.querySelector('[data-screen="final-review"]').dispatchEvent({
       type: 'click',
-      target: paymentHandoffSubmitButton,
-      currentTarget: context.document.querySelector('[data-screen="payment-handoff"]'),
+      target: placeOrderButton,
+      currentTarget: context.document.querySelector('[data-screen="final-review"]'),
       preventDefault() {},
       stopPropagation() {}
     });
@@ -1584,6 +1579,7 @@ test('customer submission works without a PIN for kiosk and token event flows', 
     assert.equal(parsed.submitCallCount, 1);
     assert.equal(parsed.submittedPaymentMethod, 'cash');
     assert.equal(parsed.submittedToken, scenario.token);
+    assert.equal(vm.runInContext('appState.currentScreen', context), 'final-review');
   }
 });
 
@@ -1591,7 +1587,7 @@ test('duplicate customer submit is prevented while a submission is already in pr
   const {
     context,
     placeOrderButton,
-    paymentHandoffSubmitButton
+    paymentMethodButtons
   } = loadForgeAppWithoutStaffModules();
 
   vm.runInContext(`
@@ -1601,37 +1597,96 @@ test('duplicate customer submit is prevented while a submission is already in pr
     getCurrentOrderStats = () => ({ itemCount: 1, subtotal: 3000 });
     submitCurrentOrder = async () => {
       submitCallCount += 1;
+      finalReviewState.savingOrder = true;
     };
     customerDraft.fullName = 'Kyle Hemenway';
     appState.currentScreen = 'final-review';
+    renderFinalReview();
   `, context);
 
-  context.document.dispatchEvent({
+  paymentMethodButtons[2].dispatchEvent({
     type: 'click',
-    target: placeOrderButton,
-    currentTarget: context.document,
+    target: paymentMethodButtons[2],
+    currentTarget: paymentMethodButtons[2],
     preventDefault() {},
     stopPropagation() {}
   });
 
-  vm.runInContext(`
-    paymentHandoffState.selectedMethod = 'venmo';
-    renderPaymentHandoff();
-  `, context);
-
-  const paymentScreen = context.document.querySelector('[data-screen="payment-handoff"]');
+  const finalReviewScreen = context.document.querySelector('[data-screen="final-review"]');
   const clickEvent = {
     type: 'click',
-    target: paymentHandoffSubmitButton,
-    currentTarget: paymentScreen,
+    target: placeOrderButton,
+    currentTarget: finalReviewScreen,
     preventDefault() {},
     stopPropagation() {}
   };
 
-  paymentScreen.dispatchEvent(clickEvent);
-  paymentScreen.dispatchEvent(clickEvent);
+  finalReviewScreen.dispatchEvent(clickEvent);
+  finalReviewScreen.dispatchEvent(clickEvent);
 
   assert.equal(vm.runInContext('submitCallCount', context), 1);
+});
+
+test('final review cancel flow and edit actions remain available on the same screen', () => {
+  const {
+    context,
+    finalReviewScreen,
+    finalReviewCancelPanel
+  } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    validateFinalReviewDraft = () => ({ isValid: true, issues: [] });
+    getOrderItems = () => [{
+      itemId: 'item-1',
+      quantity: 1,
+      unitPrice: 30,
+      displayName: 'Tree Ornament',
+      orderedEntries: [],
+      personalization: {},
+      productDefinitionId: 'tree_ornament'
+    }];
+    getCurrentOrderStats = () => ({ itemCount: 1, subtotal: 3000 });
+    customerDraft.fullName = 'Kyle Hemenway';
+    appState.currentScreen = 'final-review';
+    renderFinalReview();
+  `, context);
+
+  finalReviewScreen.dispatchEvent({
+    type: 'click',
+    target: createDispatchTarget({ action: 'final-review-cancel' }),
+    currentTarget: finalReviewScreen,
+    preventDefault() {},
+    stopPropagation() {}
+  });
+  assert.equal(finalReviewCancelPanel.hidden, false);
+
+  finalReviewScreen.dispatchEvent({
+    type: 'click',
+    target: createDispatchTarget({ action: 'final-review-cancel-dismiss' }),
+    currentTarget: finalReviewScreen,
+    preventDefault() {},
+    stopPropagation() {}
+  });
+  assert.equal(finalReviewCancelPanel.hidden, true);
+
+  finalReviewScreen.dispatchEvent({
+    type: 'click',
+    target: createDispatchTarget({ action: 'edit-items-from-final' }),
+    currentTarget: finalReviewScreen,
+    preventDefault() {},
+    stopPropagation() {}
+  });
+  assert.equal(vm.runInContext('appState.currentScreen', context), 'current-order');
+
+  vm.runInContext('showScreen("final-review");', context);
+  finalReviewScreen.dispatchEvent({
+    type: 'click',
+    target: createDispatchTarget({ action: 'edit-customer-from-final' }),
+    currentTarget: finalReviewScreen,
+    preventDefault() {},
+    stopPropagation() {}
+  });
+  assert.equal(vm.runInContext('appState.currentScreen', context), 'customer-information');
 });
 
 test('no-token customer access keeps the Hilltop Shop kiosk copy tied to the current active event', () => {

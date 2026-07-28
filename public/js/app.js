@@ -38,12 +38,9 @@ const finalReviewItems = document.querySelector('[data-final-review-items]');
 const finalReviewSummary = document.querySelector('[data-final-review-summary]');
 const finalReviewCustomer = document.querySelector('[data-final-review-customer]');
 const finalReviewDelivery = document.querySelector('[data-final-review-delivery]');
+const finalReviewActionsCard = document.querySelector('[data-final-review-actions-card]');
 const finalReviewStatus = document.querySelector('[data-final-review-status]');
-const paymentHandoffCustomerName = document.querySelector('[data-payment-handoff-customer-name]');
-const paymentHandoffSummary = document.querySelector('[data-payment-handoff-summary]');
-const paymentHandoffTotal = document.querySelector('[data-payment-handoff-total]');
-const paymentHandoffStatus = document.querySelector('[data-payment-handoff-status]');
-const paymentHandoffCancelPanel = document.querySelector('[data-payment-handoff-cancel-panel]');
+const finalReviewCancelPanel = document.querySelector('[data-final-review-cancel-panel]');
 const paymentMethodChoiceButtons = [...document.querySelectorAll('[data-payment-method]')];
 const thankYouCopy = document.querySelector('[data-thank-you-copy]');
 const thankYouReference = document.querySelector('[data-thank-you-reference]');
@@ -681,13 +678,8 @@ const addConfirmationState = {
 const finalReviewState = {
   message: '',
   tone: '',
-  savingOrder: false
-};
-const paymentHandoffState = {
-  message: '',
-  tone: '',
+  savingOrder: false,
   selectedMethod: '',
-  processing: false,
   confirmCancel: false
 };
 const payloadPreviewState = {
@@ -1517,8 +1509,7 @@ function showScreen(name) {
     'tree-review',
     'current-order',
     'customer-information',
-    'final-review',
-    'payment-handoff'
+    'final-review'
   ]);
   if (customerScreens.has(name) && !customerEventState.orderingOpen) {
     name = 'welcome';
@@ -1722,7 +1713,7 @@ async function refreshCustomerOrderingGate(options = {}) {
   renderOrderingGate();
 
   if (!customerEventState.orderingOpen && !options.preserveCustomerScreens) {
-    const customerScreens = new Set(['categories', 'ornaments', 'tree-customization', 'tree-review', 'current-order', 'customer-information', 'final-review', 'payment-handoff']);
+    const customerScreens = new Set(['categories', 'ornaments', 'tree-customization', 'tree-review', 'current-order', 'customer-information', 'final-review']);
     if (customerScreens.has(appState.currentScreen)) {
       showScreen('welcome');
     }
@@ -3056,7 +3047,7 @@ function openReadyToPackScreen() {
 
 function resetActiveOrderSession({ clearCart = true, goToWelcome = true } = {}) {
   const previousOrderSessionId = appState.activeOrderSessionId;
-  resetPaymentHandoffState();
+  resetFinalReviewSubmissionState();
   if (clearCart) {
     saveOrderItems([]);
   }
@@ -4837,21 +4828,23 @@ function renderPlaceOrderButton() {
     return;
   }
 
-  button.disabled = finalReviewState.savingOrder;
-  button.textContent = 'Submit Order';
+  button.disabled = finalReviewState.savingOrder
+    || !allowedExternalPaymentMethods.includes(finalReviewState.selectedMethod);
+  button.textContent = finalReviewState.savingOrder
+    ? 'Submitting Order...'
+    : 'Payment Received — Submit Order';
 }
 
-function resetPaymentHandoffState(options = {}) {
+function resetFinalReviewSubmissionState(options = {}) {
   const clearMethod = options.clearMethod !== false;
   const clearMessage = options.clearMessage !== false;
-  paymentHandoffState.processing = false;
-  paymentHandoffState.confirmCancel = false;
   if (clearMethod) {
-    paymentHandoffState.selectedMethod = '';
+    finalReviewState.selectedMethod = '';
   }
+  finalReviewState.confirmCancel = false;
   if (clearMessage) {
-    paymentHandoffState.message = '';
-    paymentHandoffState.tone = '';
+    finalReviewState.message = '';
+    finalReviewState.tone = '';
   }
 }
 
@@ -4870,84 +4863,20 @@ function getPaymentMethodLabel(value) {
 
 function renderPaymentMethodChoices() {
   paymentMethodChoiceButtons.forEach((button) => {
-    const selected = button.dataset.paymentMethod === paymentHandoffState.selectedMethod;
+    const selected = button.dataset.paymentMethod === finalReviewState.selectedMethod;
     button.classList.toggle('is-selected', selected);
     button.setAttribute('aria-pressed', selected ? 'true' : 'false');
-    button.disabled = paymentHandoffState.processing || finalReviewState.savingOrder;
+    button.disabled = finalReviewState.savingOrder;
   });
 }
 
-function renderPaymentHandoffStatus() {
-  if (!paymentHandoffStatus) {
-    return;
-  }
-  paymentHandoffStatus.textContent = paymentHandoffState.message;
-  paymentHandoffStatus.className = `form-status payment-handoff-status${paymentHandoffState.tone === 'success' ? ' is-success' : ''}`;
-}
-
-function renderPaymentHandoff() {
-  const items = getOrderItems();
-  const { itemCount, subtotal } = getCurrentOrderStats(items);
-  if (paymentHandoffCustomerName) {
-    paymentHandoffCustomerName.textContent = customerDraft.fullName || 'Customer name unavailable';
-  }
-  if (paymentHandoffSummary) {
-    const summaryMarkup = items.length > 0
-      ? `
-        <ul>
-          ${items.map((item) => `
-            <li>${item.quantity} × ${escapeHtml(item.displayName || 'Item')}</li>
-          `).join('')}
-        </ul>
-        <p class="payment-handoff-summary-note">${itemCount} total item${itemCount === 1 ? '' : 's'} in this order.</p>
-      `
-      : '<p class="payment-handoff-summary-note">No items are currently in this order.</p>';
-    paymentHandoffSummary.innerHTML = summaryMarkup;
-  }
-  if (paymentHandoffTotal) {
-    paymentHandoffTotal.textContent = formatPrice(subtotal);
-  }
-  if (paymentHandoffCancelPanel) {
-    paymentHandoffCancelPanel.hidden = !paymentHandoffState.confirmCancel;
+function renderFinalReviewActions() {
+  if (finalReviewCancelPanel) {
+    finalReviewCancelPanel.hidden = !finalReviewState.confirmCancel;
   }
   renderPaymentMethodChoices();
-  renderPaymentHandoffStatus();
-  renderPaymentHandoffSubmitButton();
-}
-
-function renderPaymentHandoffSubmitButton() {
-  const button = document.querySelector('[data-action="payment-handoff-submit"]');
-  if (!button) {
-    return;
-  }
-  const disabled = paymentHandoffState.processing
-    || finalReviewState.savingOrder
-    || !allowedExternalPaymentMethods.includes(paymentHandoffState.selectedMethod);
-  button.disabled = disabled;
-  button.textContent = paymentHandoffState.processing || finalReviewState.savingOrder
-    ? 'Submitting Order...'
-    : 'Submit Order';
-}
-
-function openPaymentHandoff() {
-  const validationResult = validateFinalReviewDraft();
-  if (!validationResult.isValid) {
-    finalReviewState.message = `${validationResult.issues[0]} Use Edit Items or Edit Customer Information to finish your order.`;
-    finalReviewState.tone = 'error';
-    renderFinalReviewStatus();
-    finalReviewStatus?.focus();
-    return;
-  }
-  resetPaymentHandoffState();
-  renderPaymentHandoff();
-  showScreen('payment-handoff');
-}
-
-function showPaymentHandoffError(message) {
-  paymentHandoffState.message = message;
-  paymentHandoffState.tone = 'error';
-  renderPaymentHandoff();
-  paymentHandoffStatus?.focus();
+  renderFinalReviewStatus();
+  renderPlaceOrderButton();
 }
 
 function ensurePayloadPreviewUi() {
@@ -9004,14 +8933,10 @@ async function submitCurrentOrder(paymentConfirmation = null) {
   const validationResult = validateFinalReviewDraft();
   if (!validationResult.isValid) {
     const message = `${validationResult.issues[0]} Use Edit Items or Edit Customer Information to finish your order.`;
-    paymentHandoffState.processing = false;
     finalReviewState.message = message;
     finalReviewState.tone = 'error';
-    paymentHandoffState.message = message;
-    paymentHandoffState.tone = 'error';
-    renderFinalReviewStatus();
-    renderPaymentHandoff();
-    (appState.currentScreen === 'payment-handoff' ? paymentHandoffStatus : finalReviewStatus)?.focus();
+    renderFinalReviewActions();
+    finalReviewStatus?.focus();
     return;
   }
 
@@ -9022,13 +8947,8 @@ async function submitCurrentOrder(paymentConfirmation = null) {
   finalReviewState.savingOrder = true;
   finalReviewState.message = '';
   finalReviewState.tone = '';
-  paymentHandoffState.processing = true;
-  paymentHandoffState.message = '';
-  paymentHandoffState.tone = '';
-  paymentHandoffState.confirmCancel = false;
-  renderFinalReviewStatus();
-  renderPlaceOrderButton();
-  renderPaymentHandoff();
+  finalReviewState.confirmCancel = false;
+  renderFinalReviewActions();
 
   const orderStateSnapshot = buildCurrentOrderStateSnapshot();
 
@@ -9046,13 +8966,8 @@ async function submitCurrentOrder(paymentConfirmation = null) {
       finalReviewState.savingOrder = false;
       finalReviewState.message = 'We could not save your order. Please ask a Hilltop Shop team member for help.';
       finalReviewState.tone = 'error';
-      paymentHandoffState.processing = false;
-      paymentHandoffState.message = finalReviewState.message;
-      paymentHandoffState.tone = 'error';
-      renderFinalReviewStatus();
-      renderPlaceOrderButton();
-      renderPaymentHandoff();
-      (appState.currentScreen === 'payment-handoff' ? paymentHandoffStatus : finalReviewStatus)?.focus();
+      renderFinalReviewActions();
+      finalReviewStatus?.focus();
       return;
     }
 
@@ -9075,13 +8990,8 @@ async function submitCurrentOrder(paymentConfirmation = null) {
     finalReviewState.savingOrder = false;
     finalReviewState.message = 'We could not save your order. Please ask a Hilltop Shop team member for help.';
     finalReviewState.tone = 'error';
-    paymentHandoffState.processing = false;
-    paymentHandoffState.message = finalReviewState.message;
-    paymentHandoffState.tone = 'error';
-    renderFinalReviewStatus();
-    renderPlaceOrderButton();
-    renderPaymentHandoff();
-    (appState.currentScreen === 'payment-handoff' ? paymentHandoffStatus : finalReviewStatus)?.focus();
+    renderFinalReviewActions();
+    finalReviewStatus?.focus();
   }
 }
 
@@ -9109,7 +9019,7 @@ function clearEditableOrderStateAfterSubmit() {
   reviewState.saving = false;
   reviewState.error = '';
   finalReviewState.savingOrder = false;
-  resetPaymentHandoffState();
+  resetFinalReviewSubmissionState();
   closeSavedOrdersInspector();
   closePayloadPreview(false);
   appState.editingItemId = '';
@@ -9223,22 +9133,12 @@ function renderFinalReview() {
 
   renderFinalReviewCustomer();
   renderFinalReviewDelivery();
-  renderFinalReviewStatus();
-  renderPlaceOrderButton();
+  renderFinalReviewActions();
 }
 
 function openFinalReview() {
-  finalReviewState.message = '';
-  finalReviewState.tone = '';
-  resetPaymentHandoffState();
+  resetFinalReviewSubmissionState();
   ensurePayloadPreviewUi();
-  renderFinalReview();
-  showScreen('final-review');
-}
-
-function returnFromPaymentHandoffToFinalReview() {
-  resetPaymentHandoffState();
-  renderPaymentHandoff();
   renderFinalReview();
   showScreen('final-review');
 }
@@ -9556,7 +9456,6 @@ if (treeForm) {
   renderTreeReview();
   renderCurrentOrder();
   renderFinalReview();
-  renderPaymentHandoff();
   renderCustomerOrderContext();
   renderCurrentOrderUtilityButtons();
   renderDiscardPanels();
@@ -9589,8 +9488,8 @@ if (treeForm) {
   } else if (appState.currentScreen === 'final-review') {
     showScreen('final-review');
   } else if (appState.currentScreen === 'payment-handoff' && hasRestorableFinalReviewState()) {
-    renderPaymentHandoff();
-    showScreen('payment-handoff');
+    renderFinalReview();
+    showScreen('final-review');
   } else if (appState.currentScreen === 'thank-you' && appState.lastSubmittedOrderUuid) {
     renderThankYouScreen();
     showScreen('thank-you');
@@ -9946,14 +9845,14 @@ if (treeForm) {
 
   paymentMethodChoiceButtons.forEach((button) => {
     button.addEventListener('click', () => {
-      if (paymentHandoffState.processing || finalReviewState.savingOrder) {
+      if (finalReviewState.savingOrder) {
         return;
       }
-      paymentHandoffState.selectedMethod = button.dataset.paymentMethod || '';
-      paymentHandoffState.message = '';
-      paymentHandoffState.tone = '';
-      paymentHandoffState.confirmCancel = false;
-      renderPaymentHandoff();
+      finalReviewState.selectedMethod = button.dataset.paymentMethod || '';
+      finalReviewState.message = '';
+      finalReviewState.tone = '';
+      finalReviewState.confirmCancel = false;
+      renderFinalReviewActions();
     });
   });
 
@@ -10218,13 +10117,23 @@ if (treeForm) {
   document.querySelector('[data-screen="final-review"]')?.addEventListener('click', (event) => {
     const action = event.target.closest('[data-action]')?.dataset.action;
     if (!action) {
+      const paymentMethod = event.target.closest('[data-payment-method]')?.dataset.paymentMethod || '';
+      if (!paymentMethod || finalReviewState.savingOrder) {
+        return;
+      }
+      finalReviewState.selectedMethod = paymentMethod;
+      finalReviewState.confirmCancel = false;
+      finalReviewState.message = '';
+      finalReviewState.tone = '';
+      renderFinalReviewActions();
       return;
     }
 
     if (action === 'edit-items-from-final') {
       finalReviewState.message = '';
       finalReviewState.tone = '';
-      renderFinalReviewStatus();
+      finalReviewState.confirmCancel = false;
+      renderFinalReviewActions();
       openCurrentOrder();
       return;
     }
@@ -10232,79 +10141,51 @@ if (treeForm) {
     if (action === 'edit-customer-from-final') {
       finalReviewState.message = '';
       finalReviewState.tone = '';
-      renderFinalReviewStatus();
+      finalReviewState.confirmCancel = false;
+      renderFinalReviewActions();
       showScreen('customer-information');
       return;
     }
 
+    if (action === 'final-review-cancel') {
+      finalReviewState.confirmCancel = true;
+      finalReviewState.message = '';
+      finalReviewState.tone = '';
+      renderFinalReviewActions();
+      return;
+    }
+
+    if (action === 'final-review-cancel-dismiss') {
+      finalReviewState.confirmCancel = false;
+      renderFinalReviewActions();
+      return;
+    }
+
+    if (action === 'final-review-cancel-confirm') {
+      resetActiveOrderSession();
+      return;
+    }
+
     if (action === 'place-order-development') {
-      openPaymentHandoff();
+      if (finalReviewState.savingOrder) {
+        return;
+      }
+      if (!allowedExternalPaymentMethods.includes(finalReviewState.selectedMethod)) {
+        finalReviewState.message = 'Select a payment method before continuing.';
+        finalReviewState.tone = 'error';
+        renderFinalReviewActions();
+        finalReviewStatus?.focus();
+        return;
+      }
+      void submitCurrentOrder({
+        externalPaymentMethod: finalReviewState.selectedMethod,
+        paymentConfirmedAt: new Date().toISOString()
+      });
       return;
     }
 
     if (action === 'preview-order-payload') {
       openPayloadPreview();
-    }
-  });
-
-  document.querySelector('[data-screen="payment-handoff"]')?.addEventListener('click', async (event) => {
-    const action = event.target.closest('[data-action]')?.dataset.action;
-    if (!action) {
-      return;
-    }
-
-    if (action === 'payment-handoff-back') {
-      returnFromPaymentHandoffToFinalReview();
-      return;
-    }
-
-    if (action === 'payment-handoff-cancel') {
-      paymentHandoffState.confirmCancel = true;
-      paymentHandoffState.message = '';
-      paymentHandoffState.tone = '';
-      renderPaymentHandoff();
-      return;
-    }
-
-    if (action === 'payment-handoff-cancel-dismiss') {
-      paymentHandoffState.confirmCancel = false;
-      renderPaymentHandoff();
-      return;
-    }
-
-    if (action === 'payment-handoff-cancel-confirm') {
-      resetActiveOrderSession();
-      return;
-    }
-
-    if (action !== 'payment-handoff-submit') {
-      return;
-    }
-
-    if (paymentHandoffState.processing || finalReviewState.savingOrder) {
-      return;
-    }
-
-    if (!allowedExternalPaymentMethods.includes(paymentHandoffState.selectedMethod)) {
-      showPaymentHandoffError('Select a payment method before continuing.');
-      return;
-    }
-
-    paymentHandoffState.processing = true;
-    paymentHandoffState.message = '';
-    paymentHandoffState.tone = '';
-    paymentHandoffState.confirmCancel = false;
-    renderPaymentHandoff();
-
-    try {
-      await submitCurrentOrder({
-        externalPaymentMethod: paymentHandoffState.selectedMethod,
-        paymentConfirmedAt: new Date().toISOString()
-      });
-    } catch (error) {
-      paymentHandoffState.processing = false;
-      finalReviewState.savingOrder = false;
-      showPaymentHandoffError('We could not save your order. Please ask a Hilltop Shop team member for help.');
     }
   });
 
