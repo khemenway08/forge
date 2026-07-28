@@ -622,6 +622,10 @@ function loadForgeHostedStaffAppForTrayDetail() {
   let detailDialogHtml = '';
   let assignTrayButton = null;
   let completionButtons = [];
+  let deleteConfirmationInput = null;
+  let deleteConfirmationButton = null;
+  let deleteConfirmationKeepButton = null;
+  let detailRenderCount = 0;
   let internalNoteSaveCallCount = 0;
   let cancelOrderCallCount = 0;
   let deleteTestOrderCallCount = 0;
@@ -697,6 +701,7 @@ function loadForgeHostedStaffAppForTrayDetail() {
       return detailDialogHtml;
     },
     set(value) {
+      detailRenderCount += 1;
       detailDialogHtml = String(value);
       if (detailDialogHtml.includes('data-action="staff-open-tray-assignment"')) {
         assignTrayButton = createElement('button');
@@ -739,6 +744,48 @@ function loadForgeHostedStaffAppForTrayDetail() {
       } else {
         completionButtons = [];
       }
+
+      if (detailDialogHtml.includes('data-staff-destructive-confirmation')) {
+        deleteConfirmationInput = createElement('input');
+        deleteConfirmationInput.dataset.staffDestructiveConfirmation = '';
+        deleteConfirmationInput.matches = (selector) => selector === '[data-staff-destructive-confirmation]';
+        deleteConfirmationInput.focus = () => {
+          context.document.activeElement = deleteConfirmationInput;
+        };
+        deleteConfirmationInput.closest = (selector) => {
+          if (selector === '[data-staff-destructive-confirmation]') {
+            return deleteConfirmationInput;
+          }
+          return null;
+        };
+
+        deleteConfirmationButton = createElement('button');
+        deleteConfirmationButton.dataset.action = 'staff-confirm-delete-test-order';
+        deleteConfirmationButton.dataset.orderUuid = 'shared-order-1';
+        deleteConfirmationButton.disabled = /data-action="staff-confirm-delete-test-order"[^>]*disabled/.test(detailDialogHtml);
+        deleteConfirmationButton.closest = (selector) => {
+          if (selector === '[data-action]') {
+            return deleteConfirmationButton;
+          }
+          if (selector === '[data-order-uuid]') {
+            return deleteConfirmationButton;
+          }
+          return null;
+        };
+
+        deleteConfirmationKeepButton = createElement('button');
+        deleteConfirmationKeepButton.dataset.action = 'staff-close-destructive-action';
+        deleteConfirmationKeepButton.closest = (selector) => {
+          if (selector === '[data-action]') {
+            return deleteConfirmationKeepButton;
+          }
+          return null;
+        };
+      } else {
+        deleteConfirmationInput = null;
+        deleteConfirmationButton = null;
+        deleteConfirmationKeepButton = null;
+      }
     }
   });
 
@@ -748,6 +795,15 @@ function loadForgeHostedStaffAppForTrayDetail() {
     }
     if (selector === '[data-action="staff-complete-item"]') {
       return completionButtons[0] || null;
+    }
+    if (selector === '[data-staff-destructive-confirmation]') {
+      return deleteConfirmationInput;
+    }
+    if (selector === '[data-action="staff-confirm-delete-test-order"]') {
+      return deleteConfirmationButton;
+    }
+    if (selector === '[data-action="staff-close-destructive-action"]') {
+      return deleteConfirmationKeepButton;
     }
     return null;
   };
@@ -1074,6 +1130,9 @@ function loadForgeHostedStaffAppForTrayDetail() {
     },
     getDeleteTestOrderCallCount() {
       return deleteTestOrderCallCount;
+    },
+    getDetailRenderCount() {
+      return detailRenderCount;
     },
     setSharedRecord(overrides) {
       Object.assign(sharedRecord, structuredClone(overrides));
@@ -2080,6 +2139,45 @@ test('localhost hosted-only admin actions do not invoke runtime or api methods',
   });
 });
 
+test('legacy cleanup typed confirmation behavior remains unchanged', () => {
+  const { context } = loadForgeAppWithoutStaffModules({
+    protocol: 'https:',
+    hostname: 'forge.thehilltopshop.com',
+    includeHostedStaffModules: true
+  });
+
+  vm.runInContext(`
+    staffOrdersState.dataSource = 'server';
+    staffOrdersState.authenticated = true;
+    staffOrdersState.legacyCleanupPreview = {
+      eligibleCount: 2,
+      cutoffLocal: 'July 25, 2026 at 12:00 AM America/Chicago',
+      confirmationText: 'DELETE 2 ORDERS BEFORE JULY 25',
+      eligibleOrders: [],
+      protectedOrders: []
+    };
+    staffOrdersState.legacyCleanupConfirmationText = 'DELETE 2';
+    renderStaffAdminTools();
+  `, context);
+
+  let controlsHtml = vm.runInContext('document.querySelector("[data-staff-admin-content]").innerHTML', context);
+  assert.match(String(controlsHtml), /data-action="staff-apply-legacy-cleanup"[^>]*disabled/);
+
+  vm.runInContext(`
+    staffOrdersState.legacyCleanupConfirmationText = 'DELETE 2 ORDERS BEFORE JULY 25';
+    renderStaffAdminTools();
+  `, context);
+  controlsHtml = vm.runInContext('document.querySelector("[data-staff-admin-content]").innerHTML', context);
+  assert.doesNotMatch(String(controlsHtml), /data-action="staff-apply-legacy-cleanup"[^>]*disabled/);
+
+  vm.runInContext(`
+    staffOrdersState.legacyCleanupConfirmationText = 'DELETE 2 ORDERS BEFORE JULY 2';
+    renderStaffAdminTools();
+  `, context);
+  controlsHtml = vm.runInContext('document.querySelector("[data-staff-admin-content]").innerHTML', context);
+  assert.match(String(controlsHtml), /data-action="staff-apply-legacy-cleanup"[^>]*disabled/);
+});
+
 test('hosted authenticated admin actions remain enabled', () => {
   const { context } = loadForgeAppWithoutStaffModules({
     protocol: 'https:',
@@ -2452,6 +2550,73 @@ test('shared server Test Session orders render typed delete confirmation and hid
   assert.doesNotMatch(String(detailDialog.innerHTML || ''), /Confirm Cancel Order/);
 });
 
+test('shared server Test Session delete confirmation preserves input identity and focus while typing', async () => {
+  const {
+    context,
+    detailDialog,
+    getDetailRenderCount,
+    setSharedRecord
+  } = loadForgeHostedStaffAppForTrayDetail();
+
+  setSharedRecord({
+    current_tray_number: 8,
+    payload: {
+      customer: { full_name: 'Test Customer' },
+      fulfillment: { method: 'shipping' },
+      items: [{ line_id: 'shared-tree-line', quantity: 1, completed_quantity: 0, production_status: 'pending' }],
+      event: { event_id: 'event-test-1', event_name: 'Checkout Test Session', event_type: 'test_session' },
+      forge_order_number: 1001
+    }
+  });
+
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+  vm.runInContext('staffOrdersState.detailDestructiveAction = "delete_test_order"; renderStaffOrderDetail();', context);
+
+  const input = detailDialog.querySelector('[data-staff-destructive-confirmation]');
+  const deleteButton = detailDialog.querySelector('[data-action="staff-confirm-delete-test-order"]');
+  const renderCountBefore = getDetailRenderCount();
+
+  input.focus();
+  input.value = 'DELE';
+  detailDialog.dispatchEvent({
+    type: 'input',
+    target: input,
+    currentTarget: detailDialog,
+    preventDefault() {},
+    stopPropagation() {}
+  });
+
+  assert.equal(detailDialog.querySelector('[data-staff-destructive-confirmation]'), input);
+  assert.equal(context.document.activeElement, input);
+  assert.equal(getDetailRenderCount(), renderCountBefore);
+  assert.equal(deleteButton.disabled, true);
+
+  input.value = 'DELETE TEST ORDER';
+  detailDialog.dispatchEvent({
+    type: 'input',
+    target: input,
+    currentTarget: detailDialog,
+    preventDefault() {},
+    stopPropagation() {}
+  });
+
+  assert.equal(detailDialog.querySelector('[data-staff-destructive-confirmation]'), input);
+  assert.equal(context.document.activeElement, input);
+  assert.equal(deleteButton.disabled, false);
+
+  input.value = 'DELETE TEST ORDE';
+  detailDialog.dispatchEvent({
+    type: 'input',
+    target: input,
+    currentTarget: detailDialog,
+    preventDefault() {},
+    stopPropagation() {}
+  });
+
+  assert.equal(deleteButton.disabled, true);
+});
+
 test('shared server Test Session deletion closes the detail dialog and refreshes the queue', async () => {
   const {
     context,
@@ -2481,6 +2646,44 @@ test('shared server Test Session deletion closes the detail dialog and refreshes
 
   await context.openStaffOrderDetail('shared-order-1');
   assert.match(String(detailDialog.innerHTML || ''), /could not be found/i);
+});
+
+test('shared server Test Session deletion still invokes the runtime once after exact confirmation', async () => {
+  const {
+    context,
+    detailDialog,
+    getDeleteTestOrderCallCount,
+    setSharedRecord
+  } = loadForgeHostedStaffAppForTrayDetail();
+
+  setSharedRecord({
+    current_tray_number: 8,
+    payload: {
+      customer: { full_name: 'Test Customer' },
+      fulfillment: { method: 'shipping' },
+      items: [{ line_id: 'shared-tree-line', quantity: 1, completed_quantity: 0, production_status: 'pending' }],
+      event: { event_id: 'event-test-1', event_name: 'Checkout Test Session', event_type: 'test_session' },
+      forge_order_number: 1001
+    }
+  });
+
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+  vm.runInContext('staffOrdersState.detailDestructiveAction = "delete_test_order"; renderStaffOrderDetail();', context);
+
+  const input = detailDialog.querySelector('[data-staff-destructive-confirmation]');
+  input.value = 'DELETE TEST ORDER';
+  detailDialog.dispatchEvent({
+    type: 'input',
+    target: input,
+    currentTarget: detailDialog,
+    preventDefault() {},
+    stopPropagation() {}
+  });
+
+  assert.equal(detailDialog.querySelector('[data-action="staff-confirm-delete-test-order"]').disabled, false);
+  await context.submitStaffDeleteTestOrder('shared-order-1');
+  assert.equal(getDeleteTestOrderCallCount(), 1);
 });
 
 test('shared server Test Session deletion failures stay in the dialog and never claim success', async () => {
@@ -2732,7 +2935,7 @@ test('staff orders remains the default protected destination and the catalog she
   assert.match(indexSource, />Shortlist<\/button>/);
   assert.match(
     indexSource,
-    /<script src="js\/forge-staff-api-client\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-catalog-ordering\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-catalog-image-viewer\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260728-37"><\/script>/
+    /<script src="js\/forge-staff-api-client\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-catalog-ordering\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-catalog-image-viewer\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260728-38"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260728-38"><\/script>/
   );
   assert.doesNotMatch(indexSource, /data-category="staff-catalog"/);
 });

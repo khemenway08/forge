@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260728-37';
+const FORGE_BUILD_VERSION = '20260728-38';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
 
@@ -5165,7 +5165,7 @@ function ensureStaffOrderDetailUi() {
     if (target && typeof target.matches === 'function' && target.matches('[data-staff-destructive-confirmation]')) {
       staffOrdersState.detailDestructiveConfirmationText = String(target.value || '').slice(0, 64).trim();
       staffOrdersState.detailDestructiveError = '';
-      renderStaffOrderDetail();
+      updateStaffDeleteTestOrderConfirmationUi();
     }
   });
 
@@ -5531,6 +5531,41 @@ function getDeleteTestOrderConfirmationText() {
   return forgeOrderStore.ORDER_DELETE_TEST_CONFIRMATION_TEXT || 'DELETE TEST ORDER';
 }
 
+function getDeleteTestOrderConfirmationMatches() {
+  return staffOrdersState.detailDestructiveConfirmationText === getDeleteTestOrderConfirmationText();
+}
+
+function buildStaffDestructiveErrorMarkup(message) {
+  return `
+    <div data-staff-destructive-error>
+      ${message ? buildStaffNoticeMarkup(message, 'error') : ''}
+    </div>
+  `;
+}
+
+function updateStaffDeleteTestOrderConfirmationUi() {
+  if (!staffOrderDetailDialog || staffOrdersState.detailDestructiveAction !== 'delete_test_order') {
+    return;
+  }
+
+  const confirmationField = staffOrderDetailDialog.querySelector('[data-staff-destructive-confirmation]');
+  const confirmButton = staffOrderDetailDialog.querySelector('[data-action="staff-confirm-delete-test-order"]');
+  const errorContainer = staffOrderDetailDialog.querySelector('[data-staff-destructive-error]');
+  const matches = getDeleteTestOrderConfirmationMatches();
+
+  if (confirmationField) {
+    confirmationField.disabled = Boolean(staffOrdersState.detailDestructiveSaving);
+  }
+  if (confirmButton) {
+    confirmButton.disabled = staffOrdersState.detailDestructiveSaving || !matches;
+  }
+  if (errorContainer) {
+    errorContainer.innerHTML = staffOrdersState.detailDestructiveError
+      ? buildStaffNoticeMarkup(staffOrdersState.detailDestructiveError, 'error')
+      : '';
+  }
+}
+
 function canCancelStaffOrder(record) {
   return Boolean(record)
     && !staffOrdersState.demoMode
@@ -5753,13 +5788,13 @@ function buildStaffOrderDestructiveActionsMarkup(record) {
   const isCancelAction = action === 'cancel_order';
   const isDeleteAction = action === 'delete_test_order';
   const expectedDeleteConfirmation = getDeleteTestOrderConfirmationText();
-  const deleteConfirmationMatches = staffOrdersState.detailDestructiveConfirmationText === expectedDeleteConfirmation;
+  const deleteConfirmationMatches = getDeleteTestOrderConfirmationMatches();
 
   return `
     <section class="staff-order-detail-section">
       <h3>Order Actions</h3>
       <p class="staff-order-detail-note">Cancelled orders remain stored for history, but they leave active production immediately. Ending a Test Session order here permanently removes only that saved test order.</p>
-      ${staffOrdersState.detailDestructiveError ? buildStaffNoticeMarkup(staffOrdersState.detailDestructiveError, 'error') : ''}
+      ${buildStaffDestructiveErrorMarkup(staffOrdersState.detailDestructiveError)}
       <div class="staff-order-card-actions">
         ${canCancel ? `
           <button
@@ -7726,6 +7761,7 @@ function renderStaffOrderDetail() {
     const assignTrayButton = renderedDetailContainer.querySelector('[data-action="staff-open-tray-assignment"]');
     bindStaffOrderDetailDirectActions(assignTrayButton);
   }
+  updateStaffDeleteTestOrderConfirmationUi();
   bindStaffOrderDetailCompletionActions(Array.from(renderedDetailContainer.querySelectorAll('[data-action="staff-complete-item"]')));
 }
 
