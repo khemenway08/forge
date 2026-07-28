@@ -1428,7 +1428,7 @@ test('customer category hero continues into the existing ornaments flow', () => 
   assert.equal(vm.runInContext('appState.currentScreen', context), 'ornaments');
 });
 
-test('Review & Pay relabels the final review action and opening the payment handoff creates no submission context or completion receipt', () => {
+test('Submit Order relabels the final review action and opening the payment handoff creates no submission context or completion receipt', () => {
   const {
     context,
     placeOrderButton,
@@ -1451,7 +1451,7 @@ test('Review & Pay relabels the final review action and opening the payment hand
 
   context.openPaymentHandoff();
 
-  assert.equal(placeOrderButton.textContent, 'Review & Pay');
+  assert.equal(placeOrderButton.textContent, 'Submit Order');
   assert.equal(vm.runInContext('appState.currentScreen', context), 'payment-handoff');
   assert.equal(paymentHandoffCustomerName.textContent, 'Kyle Hemenway');
   assert.match(String(paymentHandoffSummary.innerHTML || ''), /Tree Ornament/);
@@ -1466,16 +1466,12 @@ test('payment handoff requires a payment method before submit and leaves the dra
     placeOrderButton,
     paymentHandoffSubmitButton,
     paymentHandoffStatus,
-    paymentHandoffPinInput,
     localStorageData
   } = loadForgeAppWithoutStaffModules();
 
   context.__testValidateFinalReviewDraft = () => ({ isValid: true, issues: [] });
   context.__testGetOrderItems = () => [{ quantity: 1, displayName: 'Tree Ornament' }];
   context.__testGetCurrentOrderStats = () => ({ itemCount: 1, subtotal: 3000 });
-  context.__testVerifyStaffPaymentHandoff = async () => {
-    throw new Error('verify should not be called');
-  };
   context.__testSubmitCurrentOrder = async () => {
     throw new Error('submit should not be called');
   };
@@ -1483,7 +1479,6 @@ test('payment handoff requires a payment method before submit and leaves the dra
     validateFinalReviewDraft = globalThis.__testValidateFinalReviewDraft;
     getOrderItems = globalThis.__testGetOrderItems;
     getCurrentOrderStats = globalThis.__testGetCurrentOrderStats;
-    verifyStaffPaymentHandoff = globalThis.__testVerifyStaffPaymentHandoff;
     submitCurrentOrder = globalThis.__testSubmitCurrentOrder;
     customerDraft.fullName = 'Kyle Hemenway';
     appState.currentScreen = 'final-review';
@@ -1496,7 +1491,6 @@ test('payment handoff requires a payment method before submit and leaves the dra
     preventDefault() {},
     stopPropagation() {}
   });
-  paymentHandoffPinInput.value = '2468';
   context.document.querySelector('[data-screen="payment-handoff"]').dispatchEvent({
     type: 'click',
     target: paymentHandoffSubmitButton,
@@ -1510,24 +1504,134 @@ test('payment handoff requires a payment method before submit and leaves the dra
   assert.equal(localStorageData.has('forge-order-completion-receipt'), false);
 });
 
-test('payment handoff authorization is tied to one order session and can be consumed only once', () => {
+test('no customer screen renders a staff PIN field', () => {
+  assert.doesNotMatch(indexSource, /data-payment-handoff-pin/);
+  assert.doesNotMatch(indexSource, /payment-handoff-pin/);
+});
+
+test('customer submission works without a PIN for kiosk and token event flows', async () => {
+  const scenarios = [
+    {
+      search: '',
+      token: 'no-token'
+    },
+    {
+      search: '?event=test-session-public-token',
+      token: 'test-session-public-token'
+    }
+  ];
+
+  for (const scenario of scenarios) {
+    const {
+      context,
+      placeOrderButton,
+      paymentHandoffSubmitButton
+    } = loadForgeAppWithoutStaffModules();
+
+    vm.runInContext(`
+      globalThis.__submitCallCount = 0;
+      globalThis.__submittedPaymentMethod = '';
+      globalThis.__submittedToken = '';
+      validateFinalReviewDraft = () => ({ isValid: true, issues: [] });
+      getOrderItems = () => [{ quantity: 1, displayName: 'Tree Ornament' }];
+      getCurrentOrderStats = () => ({ itemCount: 1, subtotal: 3000 });
+      submitCurrentOrder = async (paymentConfirmation) => {
+        globalThis.__submitCallCount += 1;
+        globalThis.__submittedPaymentMethod = paymentConfirmation.externalPaymentMethod;
+        globalThis.__submittedToken = customerEventState.activeEvent ? customerEventState.activeEvent.public_order_token : '';
+        paymentHandoffState.processing = false;
+      };
+      window.location.search = ${JSON.stringify(scenario.search)};
+      customerDraft.fullName = 'Kyle Hemenway';
+      customerEventState.activeEvent = {
+        event_id: 'event-test',
+        public_order_token: ${JSON.stringify(scenario.token)},
+        event_name: 'Summer Market',
+        event_type: 'live_event',
+        event_status: 'active'
+      };
+      appState.currentScreen = 'final-review';
+    `, context);
+
+    context.document.dispatchEvent({
+      type: 'click',
+      target: placeOrderButton,
+      currentTarget: context.document,
+      preventDefault() {},
+      stopPropagation() {}
+    });
+
+    vm.runInContext(`
+      paymentHandoffState.selectedMethod = 'cash';
+      renderPaymentHandoff();
+    `, context);
+
+    context.document.querySelector('[data-screen="payment-handoff"]').dispatchEvent({
+      type: 'click',
+      target: paymentHandoffSubmitButton,
+      currentTarget: context.document.querySelector('[data-screen="payment-handoff"]'),
+      preventDefault() {},
+      stopPropagation() {}
+    });
+
+    const verified = vm.runInContext(`JSON.stringify({
+      submitCallCount: globalThis.__submitCallCount,
+      submittedPaymentMethod: globalThis.__submittedPaymentMethod,
+      submittedToken: globalThis.__submittedToken
+    })`, context);
+    const parsed = JSON.parse(verified);
+
+    assert.equal(parsed.submitCallCount, 1);
+    assert.equal(parsed.submittedPaymentMethod, 'cash');
+    assert.equal(parsed.submittedToken, scenario.token);
+  }
+});
+
+test('duplicate customer submit is prevented while a submission is already in progress', () => {
   const {
-    context
+    context,
+    placeOrderButton,
+    paymentHandoffSubmitButton
   } = loadForgeAppWithoutStaffModules();
 
-  context.grantPaymentSubmissionAuthorization('order-session-1', 'venmo', '2026-07-21T18:45:00.000Z');
+  vm.runInContext(`
+    let submitCallCount = 0;
+    validateFinalReviewDraft = () => ({ isValid: true, issues: [] });
+    getOrderItems = () => [{ quantity: 1, displayName: 'Tree Ornament' }];
+    getCurrentOrderStats = () => ({ itemCount: 1, subtotal: 3000 });
+    submitCurrentOrder = async () => {
+      submitCallCount += 1;
+    };
+    customerDraft.fullName = 'Kyle Hemenway';
+    appState.currentScreen = 'final-review';
+  `, context);
 
-  const wrongSession = context.consumePaymentSubmissionAuthorization('other-session');
-  context.grantPaymentSubmissionAuthorization('order-session-1', 'venmo', '2026-07-21T18:45:00.000Z');
-  const firstConsume = context.consumePaymentSubmissionAuthorization('order-session-1');
-  const secondConsume = context.consumePaymentSubmissionAuthorization('order-session-1');
+  context.document.dispatchEvent({
+    type: 'click',
+    target: placeOrderButton,
+    currentTarget: context.document,
+    preventDefault() {},
+    stopPropagation() {}
+  });
 
-  assert.equal(wrongSession, null);
-  assert.equal(JSON.stringify(firstConsume), JSON.stringify({
-    externalPaymentMethod: 'venmo',
-    paymentConfirmedAt: '2026-07-21T18:45:00.000Z'
-  }));
-  assert.equal(secondConsume, null);
+  vm.runInContext(`
+    paymentHandoffState.selectedMethod = 'venmo';
+    renderPaymentHandoff();
+  `, context);
+
+  const paymentScreen = context.document.querySelector('[data-screen="payment-handoff"]');
+  const clickEvent = {
+    type: 'click',
+    target: paymentHandoffSubmitButton,
+    currentTarget: paymentScreen,
+    preventDefault() {},
+    stopPropagation() {}
+  };
+
+  paymentScreen.dispatchEvent(clickEvent);
+  paymentScreen.dispatchEvent(clickEvent);
+
+  assert.equal(vm.runInContext('submitCallCount', context), 1);
 });
 
 test('no-token customer access keeps the Hilltop Shop kiosk copy tied to the current active event', () => {

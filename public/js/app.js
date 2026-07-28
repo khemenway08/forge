@@ -43,7 +43,6 @@ const paymentHandoffCustomerName = document.querySelector('[data-payment-handoff
 const paymentHandoffSummary = document.querySelector('[data-payment-handoff-summary]');
 const paymentHandoffTotal = document.querySelector('[data-payment-handoff-total]');
 const paymentHandoffStatus = document.querySelector('[data-payment-handoff-status]');
-const paymentHandoffPinInput = document.querySelector('[data-payment-handoff-pin]');
 const paymentHandoffCancelPanel = document.querySelector('[data-payment-handoff-cancel-panel]');
 const paymentMethodChoiceButtons = [...document.querySelectorAll('[data-payment-method]')];
 const thankYouCopy = document.querySelector('[data-thank-you-copy]');
@@ -712,7 +711,6 @@ const orderUiState = {
 };
 
 let orderUiNoteTimer = 0;
-let paymentSubmissionAuthorization = null;
 let lastStaffFocusTarget = null;
 let lastConfirmationFocusTarget = null;
 let lastPayloadPreviewFocusTarget = null;
@@ -4840,14 +4838,12 @@ function renderPlaceOrderButton() {
   }
 
   button.disabled = finalReviewState.savingOrder;
-  button.textContent = 'Review & Pay';
+  button.textContent = 'Submit Order';
 }
 
 function resetPaymentHandoffState(options = {}) {
   const clearMethod = options.clearMethod !== false;
-  const clearPin = options.clearPin !== false;
   const clearMessage = options.clearMessage !== false;
-  const clearAuthorization = options.clearAuthorization !== false;
   paymentHandoffState.processing = false;
   paymentHandoffState.confirmCancel = false;
   if (clearMethod) {
@@ -4857,56 +4853,6 @@ function resetPaymentHandoffState(options = {}) {
     paymentHandoffState.message = '';
     paymentHandoffState.tone = '';
   }
-  if (clearPin && paymentHandoffPinInput) {
-    paymentHandoffPinInput.value = '';
-  }
-  if (clearAuthorization) {
-    clearPaymentSubmissionAuthorization();
-  }
-}
-
-function clearPaymentSubmissionAuthorization() {
-  paymentSubmissionAuthorization = null;
-}
-
-function grantPaymentSubmissionAuthorization(orderSessionId, externalPaymentMethod, paymentConfirmedAt) {
-  paymentSubmissionAuthorization = {
-    orderSessionId: sanitizeText(orderSessionId || ''),
-    externalPaymentMethod: sanitizeText(externalPaymentMethod || ''),
-    paymentConfirmedAt: sanitizeText(paymentConfirmedAt || '')
-  };
-}
-
-function normalizePaymentConfirmationTimestamp(value) {
-  const normalized = sanitizeText(value || '');
-  if (!normalized) {
-    return '';
-  }
-  const parsed = new Date(normalized);
-  if (Number.isNaN(parsed.getTime())) {
-    return '';
-  }
-  return parsed.toISOString();
-}
-
-function consumePaymentSubmissionAuthorization(activeOrderSessionId) {
-  const authorization = paymentSubmissionAuthorization;
-  clearPaymentSubmissionAuthorization();
-  const orderSessionId = sanitizeText(activeOrderSessionId || '');
-  if (!authorization || authorization.orderSessionId !== orderSessionId) {
-    return null;
-  }
-  if (!allowedExternalPaymentMethods.includes(authorization.externalPaymentMethod)) {
-    return null;
-  }
-  const normalizedTimestamp = normalizePaymentConfirmationTimestamp(authorization.paymentConfirmedAt);
-  if (!normalizedTimestamp) {
-    return null;
-  }
-  return {
-    externalPaymentMethod: authorization.externalPaymentMethod,
-    paymentConfirmedAt: normalizedTimestamp
-  };
 }
 
 function getPaymentMethodLabel(value) {
@@ -4961,9 +4907,6 @@ function renderPaymentHandoff() {
   if (paymentHandoffTotal) {
     paymentHandoffTotal.textContent = formatPrice(subtotal);
   }
-  if (paymentHandoffPinInput) {
-    paymentHandoffPinInput.disabled = paymentHandoffState.processing || finalReviewState.savingOrder;
-  }
   if (paymentHandoffCancelPanel) {
     paymentHandoffCancelPanel.hidden = !paymentHandoffState.confirmCancel;
   }
@@ -4977,15 +4920,13 @@ function renderPaymentHandoffSubmitButton() {
   if (!button) {
     return;
   }
-  const pinValue = sanitizeText(paymentHandoffPinInput?.value || '');
   const disabled = paymentHandoffState.processing
     || finalReviewState.savingOrder
-    || !allowedExternalPaymentMethods.includes(paymentHandoffState.selectedMethod)
-    || !pinValue;
+    || !allowedExternalPaymentMethods.includes(paymentHandoffState.selectedMethod);
   button.disabled = disabled;
   button.textContent = paymentHandoffState.processing || finalReviewState.savingOrder
-    ? 'Verifying Staff PIN...'
-    : 'Payment Received — Submit Order';
+    ? 'Submitting Order...'
+    : 'Submit Order';
 }
 
 function openPaymentHandoff() {
@@ -5000,21 +4941,6 @@ function openPaymentHandoff() {
   resetPaymentHandoffState();
   renderPaymentHandoff();
   showScreen('payment-handoff');
-}
-
-async function verifyStaffPaymentHandoff(pin) {
-  if (!staffApiClient || typeof staffApiClient.verifyPin !== 'function') {
-    const unavailableError = new Error('Staff verification is unavailable.');
-    unavailableError.code = 'verification_unavailable';
-    throw unavailableError;
-  }
-
-  const verificationResult = await staffApiClient.verifyPin(pin);
-  if (!verificationResult || verificationResult.verified !== true) {
-    const invalidPinError = new Error('The Staff PIN was incorrect.');
-    invalidPinError.code = 'invalid_pin';
-    throw invalidPinError;
-  }
 }
 
 function showPaymentHandoffError(message) {
@@ -9074,12 +9000,11 @@ async function renderThankYouScreen() {
   renderDebugOrderTools();
 }
 
-async function submitCurrentOrder() {
+async function submitCurrentOrder(paymentConfirmation = null) {
   const validationResult = validateFinalReviewDraft();
   if (!validationResult.isValid) {
     const message = `${validationResult.issues[0]} Use Edit Items or Edit Customer Information to finish your order.`;
     paymentHandoffState.processing = false;
-    clearPaymentSubmissionAuthorization();
     finalReviewState.message = message;
     finalReviewState.tone = 'error';
     paymentHandoffState.message = message;
@@ -9091,13 +9016,6 @@ async function submitCurrentOrder() {
   }
 
   if (finalReviewState.savingOrder) {
-    return;
-  }
-
-  const paymentConfirmation = consumePaymentSubmissionAuthorization(appState.activeOrderSessionId);
-  if (!paymentConfirmation) {
-    paymentHandoffState.processing = false;
-    showPaymentHandoffError('Staff payment confirmation is required before submitting this order.');
     return;
   }
 
@@ -10035,17 +9953,8 @@ if (treeForm) {
       paymentHandoffState.message = '';
       paymentHandoffState.tone = '';
       paymentHandoffState.confirmCancel = false;
-      clearPaymentSubmissionAuthorization();
       renderPaymentHandoff();
     });
-  });
-
-  paymentHandoffPinInput?.addEventListener('input', () => {
-    paymentHandoffState.message = '';
-    paymentHandoffState.tone = '';
-    clearPaymentSubmissionAuthorization();
-    renderPaymentHandoffSubmitButton();
-    renderPaymentHandoffStatus();
   });
 
   treeForm.addEventListener('submit', (event) => {
@@ -10381,12 +10290,6 @@ if (treeForm) {
       return;
     }
 
-    const pin = sanitizeText(paymentHandoffPinInput?.value || '');
-    if (!pin) {
-      showPaymentHandoffError('Enter the Staff PIN before continuing.');
-      return;
-    }
-
     paymentHandoffState.processing = true;
     paymentHandoffState.message = '';
     paymentHandoffState.tone = '';
@@ -10394,25 +10297,14 @@ if (treeForm) {
     renderPaymentHandoff();
 
     try {
-      await verifyStaffPaymentHandoff(pin);
-      grantPaymentSubmissionAuthorization(
-        appState.activeOrderSessionId,
-        paymentHandoffState.selectedMethod,
-        new Date().toISOString()
-      );
-      await submitCurrentOrder();
+      await submitCurrentOrder({
+        externalPaymentMethod: paymentHandoffState.selectedMethod,
+        paymentConfirmedAt: new Date().toISOString()
+      });
     } catch (error) {
-      clearPaymentSubmissionAuthorization();
       paymentHandoffState.processing = false;
       finalReviewState.savingOrder = false;
-      if (paymentHandoffPinInput) {
-        paymentHandoffPinInput.value = '';
-      }
-      if (error && error.code === 'invalid_pin') {
-        showPaymentHandoffError('The Staff PIN was incorrect. Re-enter the PIN and try again.');
-        return;
-      }
-      showPaymentHandoffError('Staff verification is unavailable. Check the connection and try again.');
+      showPaymentHandoffError('We could not save your order. Please ask a Hilltop Shop team member for help.');
     }
   });
 
