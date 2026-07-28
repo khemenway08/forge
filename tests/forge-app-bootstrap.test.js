@@ -1508,6 +1508,22 @@ test('no customer screen renders a staff PIN field', () => {
   assert.doesNotMatch(indexSource, /data-screen="payment-handoff"/);
 });
 
+test('missing removed screens fall back safely instead of blanking the app', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    appState.currentScreen = 'final-review';
+    const missingScreenIndex = screens.findIndex((screen) => screen.dataset.screen === 'payment-handoff');
+    if (missingScreenIndex >= 0) {
+      screens.splice(missingScreenIndex, 1);
+    }
+    showScreen('payment-handoff');
+  `, context);
+
+  assert.equal(vm.runInContext('appState.currentScreen', context), 'final-review');
+  assert.equal(context.document.querySelector('[data-screen="final-review"]').classList.contains('active'), true);
+});
+
 test('customer submission works without a PIN for kiosk and token event flows from final review only', async () => {
   const scenarios = [
     {
@@ -2716,7 +2732,7 @@ test('staff orders remains the default protected destination and the catalog she
   assert.match(indexSource, />Shortlist<\/button>/);
   assert.match(
     indexSource,
-    /<script src="js\/forge-staff-api-client\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-catalog-ordering\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-catalog-image-viewer\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260727-36"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260727-36"><\/script>/
+    /<script src="js\/forge-staff-api-client\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-catalog-ordering\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-catalog-image-viewer\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260728-37"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260728-37"><\/script>/
   );
   assert.doesNotMatch(indexSource, /data-category="staff-catalog"/);
 });

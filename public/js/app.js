@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260727-36';
+const FORGE_BUILD_VERSION = '20260728-37';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
 
@@ -1513,6 +1513,15 @@ function showScreen(name) {
   ]);
   if (customerScreens.has(name) && !customerEventState.orderingOpen) {
     name = 'welcome';
+  }
+
+  const hasTargetScreen = screens.some((screen) => screen.dataset.screen === name);
+  if (!hasTargetScreen && name === 'payment-handoff') {
+    const fallbackScreen = screens.some((screen) => screen.dataset.screen === appState.currentScreen)
+      ? appState.currentScreen
+      : (screens.some((screen) => screen.dataset.screen === 'final-review') ? 'final-review' : 'welcome');
+    console.warn(`Forge requested missing screen "${name}". Falling back to ${fallbackScreen}.`);
+    name = fallbackScreen;
   }
 
   screens.forEach((screen) => {
