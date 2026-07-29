@@ -2458,6 +2458,264 @@ $runner->run('cancelled orders cannot receive another tray or complete more item
     );
 });
 
+$runner->run('current UTC database timestamp helper produces a valid database date-time value for item completion', static function (): void {
+    $timestamp = \Forge\Server\currentUtcDatabaseDateTime();
+
+    assertSame(1, preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}$/', $timestamp));
+    assertTrue(is_string(\Forge\Server\OrderPayload::databaseDateTimeToIso8601($timestamp)));
+});
+
+$runner->run('final pending item completion succeeds for a live-shaped two-item order and transitions it to ready to pack safely', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174509',
+        'forge_order_number' => 1051,
+        'production_status' => 'in_production',
+        'current_tray_number' => 7,
+        'payload' => createValidPayload([
+            'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174509',
+            'forge_order_number' => 1051,
+            'items' => [
+                [
+                    'line_id' => 'line-live-1',
+                    'line_number' => 1,
+                    'quantity' => 1,
+                    'product_definition_id' => 'tree_ornament',
+                    'product_display_name' => 'Tree Ornament',
+                    'product_category' => 'ornament',
+                    'product_definition_version' => '1.0',
+                    'pricing' => [
+                        'mode' => 'fixed',
+                        'final_unit_price_cents' => 2600,
+                    ],
+                    'configuration_snapshot' => [
+                        'familyName' => 'Hemenway',
+                        'year' => '2026',
+                    ],
+                    'personalization_order' => [],
+                    'structured_attributes' => [],
+                    'open_flags' => [],
+                    'customer_note' => null,
+                    'production_note' => null,
+                    'completed_quantity' => 1,
+                    'production_status' => 'complete',
+                    'completed_at' => '2026-07-29 12:00:00.000000',
+                ],
+                [
+                    'line_id' => 'line-live-2',
+                    'line_number' => 2,
+                    'quantity' => 1,
+                    'product_definition_id' => 'reindeer_ornament',
+                    'product_display_name' => 'Reindeer Ornament',
+                    'product_category' => 'ornament',
+                    'product_definition_version' => '1.0',
+                    'pricing' => [
+                        'mode' => 'fixed',
+                        'final_unit_price_cents' => 2600,
+                    ],
+                    'configuration_snapshot' => [
+                        'familyName' => 'Hemenway',
+                        'year' => '2026',
+                    ],
+                    'personalization_order' => [],
+                    'structured_attributes' => [],
+                    'open_flags' => [],
+                    'customer_note' => null,
+                    'production_note' => null,
+                    'completed_quantity' => 0,
+                    'production_status' => 'pending',
+                    'completed_at' => null,
+                ],
+            ],
+        ]),
+    ]);
+
+    $repository = new \Forge\Server\PdoStaffOrderRepository($pdo, [
+        'FORGE_TRAY_NUMBERS' => '1,2,3,4,5,6,7,8',
+    ]);
+
+    $result = $repository->completeItemQuantity(
+        '123e4567-e89b-42d3-a456-426614174509',
+        'line-live-2',
+        0,
+        1
+    );
+    $storedOrderRow = $pdo->query("SELECT production_status, ready_to_pack_at FROM forge_orders WHERE forge_order_uuid = '123e4567-e89b-42d3-a456-426614174509'")->fetch(PDO::FETCH_ASSOC);
+    $storedItemRows = $pdo->query("SELECT line_id, completed_quantity, production_status, completed_at FROM forge_order_item_production WHERE forge_order_uuid = '123e4567-e89b-42d3-a456-426614174509' ORDER BY line_id ASC")->fetchAll(PDO::FETCH_ASSOC);
+    $reloaded = $repository->getOrder('123e4567-e89b-42d3-a456-426614174509');
+    $repeated = $repository->completeItemQuantity(
+        '123e4567-e89b-42d3-a456-426614174509',
+        'line-live-2',
+        0,
+        1
+    );
+
+    assertSame(false, $result['already_applied']);
+    assertSame('ready_to_pack', $result['order']['production_status']);
+    assertSame('complete', $result['item']['production_status']);
+    assertSame(1, $result['item']['completed_quantity']);
+    assertTrue(is_string($result['item']['completed_at'] ?? null));
+    assertTrue(is_string($result['order']['ready_to_pack_at'] ?? null));
+    assertSame('ready_to_pack', $storedOrderRow['production_status'] ?? null);
+    assertSame(1, preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}$/', (string) ($storedOrderRow['ready_to_pack_at'] ?? '')));
+    assertSame(2, count($storedItemRows));
+    assertSame('line-live-1', $storedItemRows[0]['line_id'] ?? null);
+    assertSame('complete', $storedItemRows[0]['production_status'] ?? null);
+    assertSame(1, preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}$/', (string) ($storedItemRows[0]['completed_at'] ?? '')));
+    assertSame('line-live-2', $storedItemRows[1]['line_id'] ?? null);
+    assertSame(1, (int) ($storedItemRows[1]['completed_quantity'] ?? -1));
+    assertSame('complete', $storedItemRows[1]['production_status'] ?? null);
+    assertSame(1, preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}$/', (string) ($storedItemRows[1]['completed_at'] ?? '')));
+    assertSame('ready_to_pack', $reloaded['production_status'] ?? null);
+    assertTrue(is_string($reloaded['ready_to_pack_at'] ?? null));
+    assertSame(true, $repeated['already_applied']);
+    assertSame('ready_to_pack', $repeated['order']['production_status']);
+    assertSame('complete', $repeated['item']['production_status']);
+});
+
+$runner->run('single-item completion still succeeds and malformed completion timestamps roll back safely', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174510',
+        'forge_order_number' => 1052,
+        'production_status' => 'tray_assigned',
+        'current_tray_number' => 6,
+        'payload' => createValidPayload([
+            'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174510',
+            'forge_order_number' => 1052,
+            'items' => [
+                [
+                    'line_id' => 'line-single-1',
+                    'line_number' => 1,
+                    'quantity' => 1,
+                    'product_definition_id' => 'tree_ornament',
+                    'product_display_name' => 'Tree Ornament',
+                    'product_category' => 'ornament',
+                    'product_definition_version' => '1.0',
+                    'pricing' => [
+                        'mode' => 'fixed',
+                        'final_unit_price_cents' => 2600,
+                    ],
+                    'configuration_snapshot' => [
+                        'familyName' => 'Hemenway',
+                        'year' => '2026',
+                    ],
+                    'personalization_order' => [],
+                    'structured_attributes' => [],
+                    'open_flags' => [],
+                    'customer_note' => null,
+                    'production_note' => null,
+                    'completed_quantity' => 0,
+                    'production_status' => 'pending',
+                    'completed_at' => null,
+                ],
+            ],
+        ]),
+    ]);
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174511',
+        'forge_order_number' => 1053,
+        'production_status' => 'in_production',
+        'current_tray_number' => 8,
+        'payload' => createValidPayload([
+            'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174511',
+            'forge_order_number' => 1053,
+            'items' => [
+                [
+                    'line_id' => 'line-bad-1',
+                    'line_number' => 1,
+                    'quantity' => 1,
+                    'product_definition_id' => 'tree_ornament',
+                    'product_display_name' => 'Tree Ornament',
+                    'product_category' => 'ornament',
+                    'product_definition_version' => '1.0',
+                    'pricing' => [
+                        'mode' => 'fixed',
+                        'final_unit_price_cents' => 2600,
+                    ],
+                    'configuration_snapshot' => [
+                        'familyName' => 'Hemenway',
+                        'year' => '2026',
+                    ],
+                    'personalization_order' => [],
+                    'structured_attributes' => [],
+                    'open_flags' => [],
+                    'customer_note' => null,
+                    'production_note' => null,
+                    'completed_quantity' => 1,
+                    'production_status' => 'complete',
+                    'completed_at' => '2026-07-29 12:00:00.000000',
+                ],
+                [
+                    'line_id' => 'line-bad-2',
+                    'line_number' => 2,
+                    'quantity' => 1,
+                    'product_definition_id' => 'reindeer_ornament',
+                    'product_display_name' => 'Reindeer Ornament',
+                    'product_category' => 'ornament',
+                    'product_definition_version' => '1.0',
+                    'pricing' => [
+                        'mode' => 'fixed',
+                        'final_unit_price_cents' => 2600,
+                    ],
+                    'configuration_snapshot' => [
+                        'familyName' => 'Hemenway',
+                        'year' => '2026',
+                    ],
+                    'personalization_order' => [],
+                    'structured_attributes' => [],
+                    'open_flags' => [],
+                    'customer_note' => null,
+                    'production_note' => null,
+                    'completed_quantity' => 0,
+                    'production_status' => 'pending',
+                    'completed_at' => null,
+                ],
+            ],
+        ]),
+    ]);
+    $pdo->exec("UPDATE forge_order_item_production SET completed_at = '2026-07-29T12:00:00+00:00' WHERE forge_order_uuid = '123e4567-e89b-42d3-a456-426614174511' AND line_id = 'line-bad-1'");
+
+    $repository = new \Forge\Server\PdoStaffOrderRepository($pdo, [
+        'FORGE_TRAY_NUMBERS' => '1,2,3,4,5,6,7,8',
+    ]);
+
+    $singleResult = $repository->completeItemQuantity(
+        '123e4567-e89b-42d3-a456-426614174510',
+        'line-single-1',
+        0,
+        1
+    );
+    assertSame(false, $singleResult['already_applied']);
+    assertSame('ready_to_pack', $singleResult['order']['production_status']);
+    assertSame('complete', $singleResult['item']['production_status']);
+    assertTrue(is_string($singleResult['order']['ready_to_pack_at'] ?? null));
+
+    assertThrows(
+        static function () use ($repository): void {
+            $repository->completeItemQuantity(
+                '123e4567-e89b-42d3-a456-426614174511',
+                'line-bad-2',
+                0,
+                1
+            );
+        },
+        static function (\Throwable $exception) use ($pdo): void {
+            assertTrue($exception instanceof \InvalidArgumentException);
+            assertSame('A valid database date-time value is required.', $exception->getMessage());
+
+            $orderRow = $pdo->query("SELECT production_status, ready_to_pack_at FROM forge_orders WHERE forge_order_uuid = '123e4567-e89b-42d3-a456-426614174511'")->fetch(PDO::FETCH_ASSOC);
+            $itemRow = $pdo->query("SELECT completed_quantity, production_status, completed_at FROM forge_order_item_production WHERE forge_order_uuid = '123e4567-e89b-42d3-a456-426614174511' AND line_id = 'line-bad-2'")->fetch(PDO::FETCH_ASSOC);
+
+            assertSame('in_production', $orderRow['production_status'] ?? null);
+            assertSame(null, $orderRow['ready_to_pack_at'] ?? null);
+            assertSame(0, (int) ($itemRow['completed_quantity'] ?? -1));
+            assertSame('pending', $itemRow['production_status'] ?? null);
+            assertSame(null, $itemRow['completed_at'] ?? null);
+        }
+    );
+});
+
 $runner->run('staff Test Session deletion creates a minimal tombstone and rejects live or malformed event deletes safely', static function (): void {
     $pdo = createStaffOrderRepositoryTestPdo();
     seedStaffOrderRepositoryTestOrder($pdo, [
@@ -4775,6 +5033,16 @@ final class SqliteStaffOrderTestPdo extends PDO
         $normalized = str_replace(
             'ON DUPLICATE KEY UPDATE tray_number = tray_number',
             'ON CONFLICT(tray_number) DO NOTHING',
+            $normalized
+        );
+        $normalized = str_replace(
+            "ON DUPLICATE KEY UPDATE\n                required_quantity = VALUES(required_quantity),\n                updated_at = updated_at",
+            "ON CONFLICT(forge_order_uuid, line_id) DO UPDATE SET\n                required_quantity = excluded.required_quantity,\n                updated_at = forge_order_item_production.updated_at",
+            $normalized
+        );
+        $normalized = str_replace(
+            "ON DUPLICATE KEY UPDATE\n                    required_quantity = VALUES(required_quantity),\n                    completed_quantity = VALUES(completed_quantity),\n                    production_status = VALUES(production_status),\n                    completed_at = VALUES(completed_at),\n                    updated_at = VALUES(updated_at)",
+            "ON CONFLICT(forge_order_uuid, line_id) DO UPDATE SET\n                    required_quantity = excluded.required_quantity,\n                    completed_quantity = excluded.completed_quantity,\n                    production_status = excluded.production_status,\n                    completed_at = excluded.completed_at,\n                    updated_at = excluded.updated_at",
             $normalized
         );
 

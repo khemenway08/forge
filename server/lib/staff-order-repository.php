@@ -292,7 +292,7 @@ final class PdoStaffOrderRepository
         }
 
         $this->ensureConfiguredTrays();
-        $timestamp = gmdate('Y-m-d H:i:s.u');
+        $timestamp = currentUtcDatabaseDateTime();
 
         try {
             $this->pdo->beginTransaction();
@@ -492,13 +492,13 @@ final class PdoStaffOrderRepository
             }
 
             $payload = is_array($lockedOrder['payload'] ?? null) ? $lockedOrder['payload'] : [];
-            $normalizedItems = normalizeStaffPayloadItems($payload, $orderUuid);
-            $itemIndex = findStaffPayloadItemIndexByLineId($normalizedItems, $normalizedLineId);
+            $payloadItems = is_array($payload['items'] ?? null) ? $payload['items'] : [];
+            $itemIndex = findStaffPayloadItemIndexByLineId($payloadItems, $normalizedLineId);
             if ($itemIndex < 0) {
                 throw new ProductionOrderItemNotFoundException('That saved item could not be found.');
             }
 
-            $this->ensureItemProductionRowsForOrder($orderUuid, $normalizedItems, $timestamp);
+            $this->ensureItemProductionRowsForOrder($orderUuid, $payloadItems, $timestamp);
             $itemProductionRows = $this->loadItemProductionRowsForOrderForUpdate($orderUuid);
             $normalizedOrder = normalizeStoredStaffOrderRecord($orderRow, $itemProductionRows);
             $items = is_array($normalizedOrder['payload']['items'] ?? null) ? $normalizedOrder['payload']['items'] : [];
@@ -596,6 +596,9 @@ final class PdoStaffOrderRepository
                 ? $updatedOrder['production_status']
                 : self::ORDER_STATUS_SUBMITTED;
             $readyToPackAt = normalizeNullableIso8601Value($updatedOrder['ready_to_pack_at'] ?? null);
+            if ($derivedOrderStatus === self::ORDER_STATUS_READY_TO_PACK && $readyToPackAt === null) {
+                $readyToPackAt = OrderPayload::databaseDateTimeToIso8601($timestamp);
+            }
             $updateOrder = $this->pdo->prepare(
                 'UPDATE forge_orders
                  SET production_status = :production_status,
@@ -1820,6 +1823,11 @@ function normalizeStoredInternalOrderNote($value): ?string
 
     $normalized = str_replace(["\r\n", "\r"], "\n", $value);
     return trim($normalized) === '' ? null : $normalized;
+}
+
+function currentUtcDatabaseDateTime(): string
+{
+    return (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s.u');
 }
 
 function legacyTestCleanupCutoffDatabase(): string
