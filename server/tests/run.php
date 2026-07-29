@@ -120,7 +120,16 @@ final class FakePhpMailer
     public ?string $Subject = null;
     public ?string $Body = null;
     public ?string $AltBody = null;
+    /** @var object{Timelimit:?int} */
+    public object $smtp;
     private ?\Throwable $sendFailure = null;
+
+    public function __construct()
+    {
+        $this->smtp = (object) [
+            'Timelimit' => null,
+        ];
+    }
 
     public function isSMTP(): void
     {
@@ -149,6 +158,11 @@ final class FakePhpMailer
     public function isHTML(bool $value): void
     {
         $this->htmlEnabled = $value;
+    }
+
+    public function getSMTPInstance(): object
+    {
+        return $this->smtp;
     }
 
     public function send(): void
@@ -1110,7 +1124,7 @@ $runner->run('tls port 587 smtp configuration is passed to PHPMailer as STARTTLS
     assertSame('tls', $fakeMailer->SMTPSecure);
     assertSame(true, $fakeMailer->SMTPAuth);
     assertSame(12, $fakeMailer->Timeout);
-    assertSame(34, $fakeMailer->Timelimit);
+    assertSame(34, $fakeMailer->smtp->Timelimit);
 });
 
 $runner->run('transport sanitizes smtp authentication failures before they reach staff-visible storage', static function (): void {

@@ -232,7 +232,10 @@ function configurePhpMailerSmtpTransport($mailer, array $config, EmailMessage $m
     $mailer->Username = $config['FORGE_EMAIL_USERNAME'];
     $mailer->Password = $config['FORGE_EMAIL_PASSWORD'];
     $mailer->Timeout = $config['FORGE_EMAIL_CONNECT_TIMEOUT'];
-    $mailer->Timelimit = $config['FORGE_EMAIL_SEND_TIMEOUT'];
+    $smtpInstance = $mailer->getSMTPInstance();
+    if (is_object($smtpInstance) && property_exists($smtpInstance, 'Timelimit')) {
+        $smtpInstance->Timelimit = $config['FORGE_EMAIL_SEND_TIMEOUT'];
+    }
     $mailer->CharSet = 'UTF-8';
     $mailer->SMTPSecure = $config['FORGE_EMAIL_ENCRYPTION'];
     $mailer->setFrom($message->fromAddress, $message->fromName, false);
