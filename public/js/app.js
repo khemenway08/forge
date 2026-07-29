@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260728-40';
+const FORGE_BUILD_VERSION = '20260729-41';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
 
@@ -7604,7 +7604,7 @@ function renderStaffOrderDetail() {
     return;
   }
 
-  if (staffOrdersState.detailError || !staffOrdersState.detailRecord) {
+  if (!staffOrdersState.detailRecord) {
     staffOrderDetailDialog.innerHTML = `
       <div class="staff-order-detail-header">
         <div>

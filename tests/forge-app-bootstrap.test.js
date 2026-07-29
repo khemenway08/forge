@@ -2737,6 +2737,73 @@ test('shared server two-item order detail reopens and completes the second hoste
   assert.doesNotMatch(String(detailDialog.innerHTML || ''), /Unable to open this order/);
 });
 
+test('shared server item completion keeps order detail open and shows the safe validation error', async () => {
+  const {
+    context,
+    detailDialog,
+    getCompletionButtons,
+    setCompleteItemHandler,
+    setSharedRecord
+  } = loadForgeHostedStaffAppForTrayDetail();
+
+  setSharedRecord({
+    production_status: 'in_production',
+    current_tray_number: 7,
+    total_item_count: 2,
+    completed_item_count: 1,
+    staff_can_assign_tray: false,
+    staff_can_complete_items: true,
+    payload: {
+      forge_order_number: 1001,
+      customer: { full_name: 'Kyle Hemenway' },
+      fulfillment: { method: 'shipping' },
+      items: [
+        {
+          line_id: 'shared-first-line',
+          line_number: 1,
+          product_display_name: 'Antler Ornament',
+          quantity: 1,
+          completed_quantity: 1,
+          production_status: 'complete',
+          completed_at: '2026-07-20T12:05:00Z',
+          pricing: { final_unit_price_cents: 2600, line_total_cents: 2600 },
+          open_flags: []
+        },
+        {
+          line_id: 'shared-second-line',
+          line_number: 2,
+          product_display_name: 'Antler Ornament',
+          quantity: 1,
+          completed_quantity: 0,
+          production_status: 'pending',
+          pricing: { final_unit_price_cents: 2600, line_total_cents: 2600 },
+          open_flags: []
+        }
+      ]
+    }
+  });
+
+  setCompleteItemHandler(() => {
+    const error = new Error('A valid current completed quantity is required.');
+    error.code = 'invalid_request';
+    throw error;
+  });
+
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+
+  const completionButtons = getCompletionButtons();
+  assert.equal(completionButtons.length, 1);
+  completionButtons[0].dispatchEvent(new MockMouseEvent('click', { bubbles: true, cancelable: true }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const detailHtml = String(detailDialog.innerHTML || '');
+  assert.match(detailHtml, /Order 1001/i);
+  assert.match(detailHtml, /A valid current completed quantity is required\./i);
+  assert.doesNotMatch(detailHtml, /Order Unavailable/i);
+  assert.doesNotMatch(detailHtml, /Staff authentication could not be prepared\./i);
+});
+
 test('shared server order detail renders the internal notes section and note badge when a note exists', async () => {
   const { context, detailDialog, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
 
@@ -3285,7 +3352,7 @@ test('staff orders remains the default protected destination and the catalog she
   assert.match(indexSource, />Shortlist<\/button>/);
   assert.match(
     indexSource,
-    /<script src="js\/forge-staff-api-client\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-catalog-ordering\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-catalog-image-viewer\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260728-40"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260728-40"><\/script>/
+    /<script src="js\/forge-staff-api-client\.js\?v=20260729-41"><\/script>\s*<script src="js\/forge-staff-catalog-ordering\.js\?v=20260729-41"><\/script>\s*<script src="js\/forge-catalog-image-viewer\.js\?v=20260729-41"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260729-41"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260729-41"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260729-41"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260729-41"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260729-41"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260729-41"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260729-41"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260729-41"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260729-41"><\/script>/
   );
   assert.doesNotMatch(indexSource, /data-category="staff-catalog"/);
 });

@@ -1275,13 +1275,17 @@
       throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
     }
 
-    return new ForgeStaffApiError(code, sanitizeServerMessage(code), {
+    return new ForgeStaffApiError(code, sanitizeServerMessage(code, message), {
       status: Number.isInteger(httpStatus) ? httpStatus : undefined
     });
   }
 
-  function sanitizeServerMessage(code) {
+  function sanitizeServerMessage(code, message = '') {
     const normalizedCode = asTrimmedString(code);
+    const normalizedMessage = asTrimmedString(message);
+    if (normalizedCode === 'invalid_request' && normalizedMessage) {
+      return normalizedMessage;
+    }
     return SAFE_ERROR_MESSAGES[normalizedCode] || SAFE_ERROR_MESSAGES.invalid_response;
   }
 

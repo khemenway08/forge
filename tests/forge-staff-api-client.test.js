@@ -367,6 +367,30 @@ test('completeItemQuantity sends POST JSON and same-origin credentials with opti
   });
 });
 
+test('completeItemQuantity preserves the safe server invalid-request message', async () => {
+  const client = staffApiClientModule.createForgeStaffApiClient({
+    fetchImpl: async () => createJsonResponse(422, {
+      application: 'Forge',
+      api_version: '1',
+      status: 'error',
+      error: {
+        code: 'invalid_request',
+        message: 'A valid current completed quantity is required.'
+      }
+    })
+  });
+
+  await assert.rejects(
+    () => client.completeItemQuantity('order-2', 'line-2', 0, 1),
+    (error) => {
+      assert.equal(error.code, 'invalid_request');
+      assert.equal(error.message, 'A valid current completed quantity is required.');
+      assert.equal(error.status, 422);
+      return true;
+    }
+  );
+});
+
 test('updateInternalNote sends POST JSON and same-origin credentials with the private note only', async () => {
   const requests = [];
   const client = staffApiClientModule.createForgeStaffApiClient({
