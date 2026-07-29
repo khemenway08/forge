@@ -46,7 +46,7 @@ function buildOrderHandlerFromEnvironment(?callable $unexpectedExceptionReporter
     $emailService = new EmailService(
         $outboundMessageRepository,
         $transport,
-        new EmailRenderer(),
+        new EmailRenderer(loadPrivateEmailConfig()),
         loadPrivateEmailConfig()
     );
 
@@ -117,7 +117,10 @@ function loadPrivateStaffPinHashFromEnvironment(): string
  *   FORGE_EMAIL_FROM_NAME?: mixed,
  *   FORGE_EMAIL_REPLY_TO?: mixed,
  *   FORGE_EMAIL_CONNECT_TIMEOUT?: mixed,
- *   FORGE_EMAIL_SEND_TIMEOUT?: mixed
+ *   FORGE_EMAIL_SEND_TIMEOUT?: mixed,
+ *   FORGE_FACEBOOK_URL?: mixed,
+ *   FORGE_INSTAGRAM_URL?: mixed,
+ *   FORGE_EMAIL_SIGNUP_URL?: mixed
  * }
  */
 function loadPrivateServerConfig(): array
@@ -183,7 +186,10 @@ function loadPrivateTrayConfig(): array
  *   FORGE_EMAIL_FROM_NAME?: mixed,
  *   FORGE_EMAIL_REPLY_TO?: mixed,
  *   FORGE_EMAIL_CONNECT_TIMEOUT?: mixed,
- *   FORGE_EMAIL_SEND_TIMEOUT?: mixed
+ *   FORGE_EMAIL_SEND_TIMEOUT?: mixed,
+ *   FORGE_FACEBOOK_URL?: mixed,
+ *   FORGE_INSTAGRAM_URL?: mixed,
+ *   FORGE_EMAIL_SIGNUP_URL?: mixed
  * }
  */
 function loadPrivateEmailConfig(): array
@@ -203,6 +209,9 @@ function loadPrivateEmailConfig(): array
         'FORGE_EMAIL_REPLY_TO',
         'FORGE_EMAIL_CONNECT_TIMEOUT',
         'FORGE_EMAIL_SEND_TIMEOUT',
+        'FORGE_FACEBOOK_URL',
+        'FORGE_INSTAGRAM_URL',
+        'FORGE_EMAIL_SIGNUP_URL',
     ] as $key) {
         $value = resolvePrivateEmailConfigValue(getenv($key), $config[$key] ?? null);
         if ($value !== null) {
@@ -232,7 +241,10 @@ function loadPrivateEmailConfig(): array
  *   FORGE_EMAIL_FROM_NAME?: mixed,
  *   FORGE_EMAIL_REPLY_TO?: mixed,
  *   FORGE_EMAIL_CONNECT_TIMEOUT?: mixed,
- *   FORGE_EMAIL_SEND_TIMEOUT?: mixed
+ *   FORGE_EMAIL_SEND_TIMEOUT?: mixed,
+ *   FORGE_FACEBOOK_URL?: mixed,
+ *   FORGE_INSTAGRAM_URL?: mixed,
+ *   FORGE_EMAIL_SIGNUP_URL?: mixed
  * }
  */
 function normalizePrivateServerConfig($config): array
@@ -259,6 +271,9 @@ function normalizePrivateServerConfig($config): array
         'FORGE_EMAIL_REPLY_TO',
         'FORGE_EMAIL_CONNECT_TIMEOUT',
         'FORGE_EMAIL_SEND_TIMEOUT',
+        'FORGE_FACEBOOK_URL',
+        'FORGE_INSTAGRAM_URL',
+        'FORGE_EMAIL_SIGNUP_URL',
     ];
 
     $normalized = [];

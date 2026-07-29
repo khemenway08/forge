@@ -2109,11 +2109,15 @@ $runner->run('staff repository lists historical orders as Not Scheduled and new 
     assertSame('Sent', $statuses['123e4567-e89b-42d3-a456-426614174502']);
 });
 
-$runner->run('email renderer includes the approved order details and excludes staff-only fields', static function (): void {
+$runner->run('email renderer includes the branded Hilltop order details and excludes staff-only fields', static function (): void {
     $payload = createValidPayload([
         'forge_order_number' => 1099,
         'external_payment_method' => 'card_square',
         'payment_confirmed_at' => '2026-07-28T12:58:00+00:00',
+        'customer' => [
+            'full_name' => 'Kyle & <Hemenway>',
+            'email' => 'customer@example.com',
+        ],
         'fulfillment' => [
             'method' => 'shipping',
             'shipping_address' => [
@@ -2142,42 +2146,199 @@ $runner->run('email renderer includes the approved order details and excludes st
                     'final_unit_price_cents' => 2600,
                 ],
                 'configuration_snapshot' => [
-                    'familyName' => 'Hemenway',
+                    'familyName' => 'Hemenway <Family>',
                     'year' => '2026',
                 ],
                 'personalization_order' => [
-                    ['position' => 1, 'type' => 'person', 'name' => 'Kyle'],
-                    ['position' => 2, 'type' => 'pet', 'name' => 'Scout', 'icon' => 'paw'],
+                    ['position' => 1, 'type' => 'person', 'name' => 'Kyle <script>'],
+                    ['position' => 2, 'type' => 'pet', 'name' => 'Scout & Co', 'icon' => 'paw'],
                 ],
                 'structured_attributes' => [],
                 'open_flags' => [],
-                'customer_note' => 'Please double check spelling',
+                'customer_note' => 'Please double check spelling & initials',
                 'production_note' => 'private production detail',
                 'current_tray_number' => 8,
             ],
+            [
+                'line_id' => 'line-2',
+                'line_number' => 2,
+                'quantity' => 1,
+                'product_definition_id' => 'present_stack_ornament',
+                'product_display_name' => 'Present Stack Ornament',
+                'product_category' => 'ornament',
+                'product_definition_version' => '1.0',
+                'pricing' => [
+                    'mode' => 'fixed',
+                    'line_total_cents' => 3100,
+                    'final_unit_price_cents' => 3100,
+                ],
+                'configuration_snapshot' => [
+                    'bow_color' => 'Red',
+                ],
+                'personalization_order' => [
+                    ['position' => 1, 'type' => 'person', 'name' => 'Avery'],
+                    ['position' => 2, 'type' => 'person', 'name' => 'Morgan'],
+                ],
+                'structured_attributes' => [],
+                'open_flags' => [],
+                'customer_note' => null,
+                'production_note' => null,
+            ],
         ],
         'pricing' => [
-            'estimated_total_cents' => 5200,
+            'estimated_total_cents' => 8300,
         ],
     ]);
-    $renderer = new \Forge\Server\EmailRenderer();
+    $renderer = new \Forge\Server\EmailRenderer([
+        'FORGE_FACEBOOK_URL' => 'https://example.com/facebook',
+        'FORGE_INSTAGRAM_URL' => 'https://example.com/instagram',
+        'FORGE_EMAIL_SIGNUP_URL' => 'https://example.com/signup',
+    ]);
     $html = $renderer->renderOrderConfirmationHtml($payload, 'orders@thehilltopshop.com');
     $text = $renderer->renderOrderConfirmationText($payload, 'orders@thehilltopshop.com');
 
-    assertTrue(strpos($html, 'The Hilltop Shop') !== false);
+    assertTrue(strpos($html, 'Order confirmed') !== false);
     assertTrue(strpos($html, '#1099') !== false);
-    assertTrue(strpos($html, 'Kyle Hemenway') !== false);
+    assertTrue(strpos($html, \Forge\Server\EmailRenderer::HILLTOP_LOGO_URL) !== false);
+    assertTrue(strpos($html, 'Kyle &amp; &lt;Hemenway&gt;') !== false);
     assertTrue(strpos($html, 'Tree Ornament') !== false);
-    assertTrue(strpos($html, 'Kyle') !== false);
-    assertTrue(strpos($html, 'Scout') !== false);
+    assertTrue(strpos($html, 'Present Stack Ornament') !== false);
+    assertTrue(strpos($html, 'Kyle &lt;script&gt;') !== false);
+    assertTrue(strpos($html, 'Scout &amp; Co') !== false);
     assertTrue(strpos($html, 'Card / Square') !== false);
     assertTrue(strpos($html, 'Shipping') !== false);
     assertTrue(strpos($html, '123 Main Street') !== false);
-    assertTrue(strpos($text, 'Order total: $52.00') !== false);
-    assertTrue(strpos($text, 'Please review your order details carefully.') !== false);
+    assertTrue(strpos($html, 'Stay connected with The Hilltop Shop') !== false);
+    assertTrue(strpos($html, 'Follow on Facebook') !== false);
+    assertTrue(strpos($html, 'Follow on Instagram') !== false);
+    assertTrue(strpos($html, 'Join our email list') !== false);
+    assertTrue(strpos($html, 'mailto:orders@thehilltopshop.com') !== false);
+    assertTrue(strpos($text, 'Order total: $83.00') !== false);
+    assertTrue(strpos($text, 'Please review all spelling and personalization carefully.') !== false);
+    assertTrue(strpos($text, 'Follow on Facebook: https://example.com/facebook') !== false);
+    assertTrue(strpos($text, 'Follow on Instagram: https://example.com/instagram') !== false);
+    assertTrue(strpos($text, 'Join our email list: https://example.com/signup') !== false);
     assertNotContains('never render this', $html);
     assertNotContains('private production detail', $html);
     assertNotContains('Tray', $html);
+    assertNotContains('<script>', $html);
+});
+
+$runner->run('email renderer handles pickup orders and missing optional fields without rendering shipping or empty footer sections', static function (): void {
+    $payload = createValidPayload([
+        'fulfillment' => [
+            'method' => 'pickup',
+            'shipping_address' => null,
+        ],
+        'items' => [
+            [
+                'line_id' => 'line-pickup-1',
+                'line_number' => 1,
+                'quantity' => 1,
+                'product_definition_id' => 'antler_ornament',
+                'product_display_name' => 'Antler Ornament',
+                'product_category' => 'ornament',
+                'product_definition_version' => '1.0',
+                'pricing' => [
+                    'mode' => 'fixed',
+                    'line_total_cents' => null,
+                    'final_unit_price_cents' => 2400,
+                ],
+                'configuration_snapshot' => [
+                    'year' => '2026',
+                    'bow_color' => '',
+                ],
+                'personalization_order' => [],
+                'structured_attributes' => [],
+                'open_flags' => [],
+                'customer_note' => null,
+                'production_note' => null,
+            ],
+        ],
+        'pricing' => [
+            'estimated_total_cents' => 2400,
+        ],
+    ]);
+    $renderer = new \Forge\Server\EmailRenderer();
+    $html = $renderer->renderOrderConfirmationHtml($payload, 'info@thehilltopshop.com');
+    $text = $renderer->renderOrderConfirmationText($payload, 'info@thehilltopshop.com');
+
+    assertTrue(strpos($html, 'Pickup') !== false);
+    assertNotContains('Shipping address', $html);
+    assertNotContains('Stay connected with The Hilltop Shop', $html);
+    assertTrue(strpos($text, 'Delivery method: Pickup') !== false);
+    assertNotContains('Shipping address:', $text);
+    assertNotContains('Follow on Facebook:', $text);
+});
+
+$runner->run('email renderer preserves existing subject behavior with and without an order number', static function (): void {
+    $renderer = new \Forge\Server\EmailRenderer();
+
+    assertSame(
+        'The Hilltop Shop order confirmation #1099',
+        $renderer->renderOrderConfirmationSubject(createValidPayload([
+            'forge_order_number' => 1099,
+        ]))
+    );
+    assertSame(
+        'The Hilltop Shop order confirmation',
+        $renderer->renderOrderConfirmationSubject(createValidPayload([
+            'forge_order_number' => null,
+        ]))
+    );
+});
+
+$runner->run('email renderer shows only a verified Facebook footer link when configured alone', static function (): void {
+    $renderer = new \Forge\Server\EmailRenderer([
+        'FORGE_FACEBOOK_URL' => 'https://facebook.example.com/hilltop',
+    ]);
+    $html = $renderer->renderOrderConfirmationHtml(createValidPayload(), 'info@thehilltopshop.com');
+    $text = $renderer->renderOrderConfirmationText(createValidPayload(), 'info@thehilltopshop.com');
+
+    assertTrue(strpos($html, 'Follow on Facebook') !== false);
+    assertNotContains('Follow on Instagram', $html);
+    assertNotContains('Join our email list', $html);
+    assertTrue(strpos($text, 'Follow on Facebook: https://facebook.example.com/hilltop') !== false);
+});
+
+$runner->run('email renderer shows only a verified Instagram footer link when configured alone', static function (): void {
+    $renderer = new \Forge\Server\EmailRenderer([
+        'FORGE_INSTAGRAM_URL' => 'https://instagram.example.com/hilltop',
+    ]);
+    $html = $renderer->renderOrderConfirmationHtml(createValidPayload(), 'info@thehilltopshop.com');
+
+    assertTrue(strpos($html, 'Follow on Instagram') !== false);
+    assertNotContains('Follow on Facebook', $html);
+    assertNotContains('Join our email list', $html);
+});
+
+$runner->run('email renderer shows only a verified mailing-list footer link when configured alone', static function (): void {
+    $renderer = new \Forge\Server\EmailRenderer([
+        'FORGE_EMAIL_SIGNUP_URL' => 'https://signup.example.com/thehilltopshop',
+    ]);
+    $html = $renderer->renderOrderConfirmationHtml(createValidPayload(), 'info@thehilltopshop.com');
+    $text = $renderer->renderOrderConfirmationText(createValidPayload(), 'info@thehilltopshop.com');
+
+    assertTrue(strpos($html, 'Join our email list') !== false);
+    assertNotContains('Follow on Facebook', $html);
+    assertNotContains('Follow on Instagram', $html);
+    assertTrue(strpos($text, 'Join our email list: https://signup.example.com/thehilltopshop') !== false);
+});
+
+$runner->run('email renderer omits invalid footer URLs cleanly', static function (): void {
+    $renderer = new \Forge\Server\EmailRenderer([
+        'FORGE_FACEBOOK_URL' => 'javascript:alert(1)',
+        'FORGE_INSTAGRAM_URL' => 'mailto:test@example.com',
+        'FORGE_EMAIL_SIGNUP_URL' => 'not-a-url',
+    ]);
+    $html = $renderer->renderOrderConfirmationHtml(createValidPayload(), 'info@thehilltopshop.com');
+    $text = $renderer->renderOrderConfirmationText(createValidPayload(), 'info@thehilltopshop.com');
+
+    assertNotContains('Stay connected with The Hilltop Shop', $html);
+    assertNotContains('Follow on Facebook', $html);
+    assertNotContains('Follow on Instagram', $html);
+    assertNotContains('Join our email list', $html);
+    assertNotContains('Follow on Facebook:', $text);
 });
 
 $runner->run('outbound message repository enforces unique idempotency keys for logical order confirmations', static function (): void {
@@ -3174,6 +3335,9 @@ $runner->run('private bootstrap normalization preserves both staff auth and tray
         'FORGE_EMAIL_ENABLED' => false,
         'FORGE_EMAIL_HOST' => 'smtp.mail.me.com',
         'FORGE_EMAIL_FROM_NAME' => 'The Hilltop Shop',
+        'FORGE_FACEBOOK_URL' => 'https://facebook.example.com/hilltop',
+        'FORGE_INSTAGRAM_URL' => 'https://instagram.example.com/hilltop',
+        'FORGE_EMAIL_SIGNUP_URL' => 'https://signup.example.com/hilltop',
         'IGNORED_KEY' => 'ignored',
     ]);
 
@@ -3182,6 +3346,9 @@ $runner->run('private bootstrap normalization preserves both staff auth and tray
     assertSame(false, $normalized['FORGE_EMAIL_ENABLED']);
     assertSame('smtp.mail.me.com', $normalized['FORGE_EMAIL_HOST']);
     assertSame('The Hilltop Shop', $normalized['FORGE_EMAIL_FROM_NAME']);
+    assertSame('https://facebook.example.com/hilltop', $normalized['FORGE_FACEBOOK_URL']);
+    assertSame('https://instagram.example.com/hilltop', $normalized['FORGE_INSTAGRAM_URL']);
+    assertSame('https://signup.example.com/hilltop', $normalized['FORGE_EMAIL_SIGNUP_URL']);
     assertTrue(!array_key_exists('IGNORED_KEY', $normalized));
 });
 

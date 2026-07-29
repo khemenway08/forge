@@ -29,6 +29,9 @@ The server-side order-storage foundation reads database configuration only from:
 - `FORGE_EMAIL_REPLY_TO`
 - `FORGE_EMAIL_CONNECT_TIMEOUT`
 - `FORGE_EMAIL_SEND_TIMEOUT`
+- `FORGE_FACEBOOK_URL`
+- `FORGE_INSTAGRAM_URL`
+- `FORGE_EMAIL_SIGNUP_URL`
 
 No credentials belong in Git.
 
@@ -53,6 +56,9 @@ Private config placeholder:
 'FORGE_EMAIL_REPLY_TO' => 'orders@thehilltopshop.com',
 'FORGE_EMAIL_CONNECT_TIMEOUT' => 10,
 'FORGE_EMAIL_SEND_TIMEOUT' => 20,
+'FORGE_FACEBOOK_URL' => '',
+'FORGE_INSTAGRAM_URL' => '',
+'FORGE_EMAIL_SIGNUP_URL' => '',
 ```
 
 For manual shared-hosting deployment, a private `config.php` fallback is also supported.
@@ -83,9 +89,27 @@ Use placeholders only:
 'FORGE_EMAIL_FROM_ADDRESS' => 'orders@thehilltopshop.com',
 'FORGE_EMAIL_FROM_NAME' => 'The Hilltop Shop',
 'FORGE_EMAIL_REPLY_TO' => 'orders@thehilltopshop.com',
+'FORGE_FACEBOOK_URL' => '',
+'FORGE_INSTAGRAM_URL' => '',
+'FORGE_EMAIL_SIGNUP_URL' => '',
 ```
 
 For iCloud+ Custom Email Domain setups, the SMTP username may be the primary iCloud Mail address associated with the Apple Account, while the visible `From` and `Reply-To` addresses may remain `orders@thehilltopshop.com`. Apple requires an app-specific password for SMTP authentication.
+
+## Optional Customer Email Footer Links
+
+The branded customer order-confirmation email can show up to three optional buttons in a visually secondary footer:
+
+- `FORGE_FACEBOOK_URL`
+- `FORGE_INSTAGRAM_URL`
+- `FORGE_EMAIL_SIGNUP_URL`
+
+Rules:
+
+- Each value must be a valid `http` or `https` URL to render.
+- Empty, missing, or invalid URLs are omitted cleanly.
+- `FORGE_EMAIL_SIGNUP_URL` must point to a public signup page or form and must never subscribe customers automatically.
+- The order-confirmation details remain the dominant content; the optional footer is secondary.
 
 ## Email Rollout Sequence
 

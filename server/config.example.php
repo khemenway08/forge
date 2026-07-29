@@ -24,4 +24,7 @@ return [
     'FORGE_EMAIL_REPLY_TO' => 'orders@thehilltopshop.com',
     'FORGE_EMAIL_CONNECT_TIMEOUT' => 10,
     'FORGE_EMAIL_SEND_TIMEOUT' => 20,
+    'FORGE_FACEBOOK_URL' => '',
+    'FORGE_INSTAGRAM_URL' => '',
+    'FORGE_EMAIL_SIGNUP_URL' => '',
 ];
