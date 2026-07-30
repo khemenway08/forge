@@ -778,6 +778,60 @@ test('hosted cancellation returns the refreshed shared order and released tray s
   assert.equal(result.assignmentHistory.release_reason, 'cancelled');
 });
 
+test('hosted order completion returns the refreshed shared order and released tray safely', async () => {
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'https:', hostname: 'forge.example.com' },
+    staffApiClient: {
+      async completeOrder(forgeOrderUuid) {
+        assert.equal(forgeOrderUuid, 'order-ready-1');
+        return {
+          ok: true,
+          authenticated: true,
+          alreadyApplied: false,
+          order: {
+            forge_order_uuid: 'order-ready-1',
+            forge_order_number: 1042,
+            submitted_at: '2026-07-20T09:00:00Z',
+            received_at: '2026-07-20T09:00:30Z',
+            production_status: 'completed',
+            current_tray_number: null,
+            completed_at: '2026-07-20T11:15:00Z',
+            completed_tray_release: {
+              tray_assignment_id: 'assignment-ready-1',
+              tray_number: 9,
+              forge_order_uuid: 'order-ready-1',
+              assigned_at: '2026-07-20T09:05:00Z',
+              released_at: '2026-07-20T11:15:00Z',
+              release_reason: 'completed'
+            },
+            payload: { customer: { full_name: 'Ready Customer' }, items: [] }
+          },
+          tray: {
+            tray_number: 9,
+            tray_status: 'available',
+            current_order_uuid: null
+          },
+          assignmentHistory: {
+            tray_assignment_id: 'assignment-ready-1',
+            tray_number: 9,
+            release_reason: 'completed'
+          }
+        };
+      }
+    }
+  });
+
+  const result = await runtime.completeOrder('order-ready-1');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.alreadyApplied, false);
+  assert.equal(result.order.production_status, 'completed');
+  assert.equal(result.order.completed_at, '2026-07-20T11:15:00Z');
+  assert.equal(result.order.completed_tray_release.tray_number, 9);
+  assert.equal(result.tray.tray_number, 9);
+  assert.equal(result.assignmentHistory.release_reason, 'completed');
+});
+
 test('localhost test-order deletion stays on the local order-store path without hosted requests', async () => {
   const calls = [];
   const runtime = staffOrdersRuntime.createStaffOrdersRuntime({

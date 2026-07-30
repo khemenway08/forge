@@ -20,6 +20,7 @@
   const END_EVENT_ENDPOINT = 'end-event.php';
   const INTERNAL_NOTE_ENDPOINT = 'internal-note.php';
   const CANCEL_ORDER_ENDPOINT = 'cancel-order.php';
+  const COMPLETE_ORDER_ENDPOINT = 'complete-order.php';
   const DELETE_TEST_ORDER_ENDPOINT = 'delete-test-order.php';
   const LEGACY_TEST_CLEANUP_ENDPOINT = 'legacy-test-cleanup.php';
   const SHIPPING_EXPORT_PREVIEW_ENDPOINT = 'shipping-export-preview.php';
@@ -41,6 +42,7 @@
     event_conflict: 'That event could not be updated right now.',
     internal_note_too_long: 'Internal notes are too long.',
     order_not_cancellable: 'That order cannot be cancelled right now.',
+    order_not_completable: 'That order cannot be completed right now.',
     test_order_delete_not_allowed: 'Only Test Session orders can be permanently deleted.',
     cleanup_conflict: 'Legacy test cleanup changed. Run a new preview before deleting anything.',
     shipping_export_empty: 'No shipping orders with complete addresses are available for that event.',
@@ -353,6 +355,20 @@
         { forge_order_uuid: orderUuid },
         'Order cancellation could not be prepared.',
         normalizeCancelOrderPayload
+      );
+    }
+
+    async function completeOrder(forgeOrderUuid) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      if (!orderUuid) {
+        throw new ForgeStaffApiError('invalid_request', 'A saved order is required.');
+      }
+
+      return submitStaffMutation(
+        `${baseUrl}/${COMPLETE_ORDER_ENDPOINT}`,
+        { forge_order_uuid: orderUuid },
+        'Order completion could not be prepared.',
+        normalizeCompleteOrderPayload
       );
     }
 
@@ -729,6 +745,7 @@
       listOrders,
       listTrays,
       cancelOrder,
+      completeOrder,
       assignTray,
       completeItemQuantity,
       updateInternalNote,
@@ -912,6 +929,32 @@
       tray: data.tray && typeof data.tray === 'object' ? normalizeTrayRecord(data.tray) : null,
       assignmentHistory: data.assignment_history && typeof data.assignment_history === 'object'
         ? normalizeAssignmentHistoryRecord(data.assignment_history)
+        : null
+    };
+  }
+
+  function normalizeCompleteOrderPayload(payload) {
+    const application = asTrimmedString(payload && payload.application);
+    const apiVersion = asTrimmedString(payload && payload.api_version);
+    const status = asTrimmedString(payload && payload.status);
+    const data = payload && typeof payload === 'object' ? payload.data : null;
+    const order = data && typeof data === 'object' ? data.order : null;
+    const tray = data && typeof data === 'object' ? data.tray : null;
+    const assignmentHistory = data && typeof data === 'object' ? data.assignment_history : null;
+    const alreadyApplied = data && typeof data === 'object' ? data.already_applied : null;
+
+    if (application !== 'Forge' || apiVersion !== '1' || status !== 'ok' || !order || typeof order !== 'object' || typeof alreadyApplied !== 'boolean') {
+      throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+    }
+
+    return {
+      ok: true,
+      authenticated: true,
+      alreadyApplied,
+      order: order,
+      tray: tray && typeof tray === 'object' ? normalizeTrayRecord(tray) : null,
+      assignmentHistory: assignmentHistory && typeof assignmentHistory === 'object'
+        ? normalizeAssignmentHistoryRecord(assignmentHistory)
         : null
     };
   }

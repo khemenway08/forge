@@ -246,9 +246,9 @@ final class PdoOutboundMessageRepository
     }
 
     /**
-     * @return array<string, string>
+     * @return array<string, array{status: string, sent_at: ?string, last_attempt_at: ?string}>
      */
-    public function listLatestOrderConfirmationStatusesByOrderUuid(array $orderUuids): array
+    public function listLatestOrderConfirmationMetadataByOrderUuid(array $orderUuids): array
     {
         $normalizedOrderUuids = array_values(array_filter(array_map(static function ($value): string {
             return is_string($value) ? trim($value) : '';
@@ -264,7 +264,7 @@ final class PdoOutboundMessageRepository
         try {
             $statement = $this->pdo->prepare(
                 sprintf(
-                    'SELECT entity_uuid, status
+                    'SELECT entity_uuid, status, sent_at, last_attempt_at
                      FROM forge_outbound_messages
                      WHERE entity_type = %s
                        AND message_type = %s
@@ -297,7 +297,29 @@ final class PdoOutboundMessageRepository
             if (!in_array($status, OutboundMessageStatus::all(), true)) {
                 continue;
             }
-            $statuses[$entityUuid] = $status;
+            $statuses[$entityUuid] = [
+                'status' => $status,
+                'sent_at' => normalizeNullableDatabaseDateTime($row['sent_at'] ?? null),
+                'last_attempt_at' => normalizeNullableDatabaseDateTime($row['last_attempt_at'] ?? null),
+            ];
+        }
+
+        return $statuses;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function listLatestOrderConfirmationStatusesByOrderUuid(array $orderUuids): array
+    {
+        $metadata = $this->listLatestOrderConfirmationMetadataByOrderUuid($orderUuids);
+        $statuses = [];
+        foreach ($metadata as $orderUuid => $record) {
+            $status = trim((string) ($record['status'] ?? ''));
+            if ($status === '') {
+                continue;
+            }
+            $statuses[$orderUuid] = $status;
         }
 
         return $statuses;

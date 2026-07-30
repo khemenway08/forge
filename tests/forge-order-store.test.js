@@ -173,6 +173,57 @@ test('cancelOrder preserves the stored order, clears the tray, closes assignment
   assert.equal(history[0].release_reason, 'cancelled');
 });
 
+test('completeOrder marks a ready order completed, releases the tray, and preserves order history safely', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore({
+    now: () => new Date('2026-07-21T15:30:00.000Z'),
+    initialOrders: [
+      createRecord({
+        forge_order_uuid: 'ready-order-1',
+        forge_order_number: 1043,
+        production_status: orderStoreModule.PRODUCTION_STATUSES.readyToPack,
+        current_tray_number: 7,
+        ready_to_pack_at: '2026-07-21T15:20:00.000Z',
+        payload: {
+          forge_order_uuid: 'ready-order-1',
+          customer: { full_name: 'Ready Customer' },
+          items: [{ line_id: 'line-1', quantity: 1, completed_quantity: 1, production_status: 'complete' }],
+          pricing: { estimated_total_cents: 4200 }
+        }
+      })
+    ],
+    initialTrays: [createAssignedTrayRecord({ tray_number: 7, current_order_uuid: 'ready-order-1' })],
+    initialTrayAssignmentHistory: [createActiveAssignmentHistoryRecord({
+      tray_assignment_id: 'assignment-ready-order-1',
+      tray_number: 7,
+      forge_order_uuid: 'ready-order-1'
+    })]
+  });
+
+  const result = await store.completeOrder('ready-order-1');
+  const storedOrder = await store.getOrder('ready-order-1');
+  const tray = await store.getTray(7);
+  const history = await store.listTrayAssignmentHistory();
+  const repeated = await store.completeOrder('ready-order-1');
+
+  assert.equal(result.order.production_status, orderStoreModule.PRODUCTION_STATUSES.completed);
+  assert.equal(result.order.current_tray_number, null);
+  assert.equal(result.order.ready_to_pack_at, '2026-07-21T15:20:00.000Z');
+  assert.equal(result.order.completed_at, '2026-07-21T15:30:00.000Z');
+  assert.equal(result.order.completed_tray_release.tray_number, 7);
+  assert.equal(result.order.completed_tray_release.release_reason, 'completed');
+  assert.equal(storedOrder.production_status, orderStoreModule.PRODUCTION_STATUSES.completed);
+  assert.equal(storedOrder.current_tray_number, null);
+  assert.equal(storedOrder.completed_at, '2026-07-21T15:30:00.000Z');
+  assert.equal(storedOrder.completed_tray_release.tray_number, 7);
+  assert.equal(storedOrder.completed_tray_release.released_at, '2026-07-21T15:30:00.000Z');
+  assert.equal(tray.tray_status, orderStoreModule.TRAY_STATUSES.available);
+  assert.equal(tray.current_order_uuid, null);
+  assert.equal(history[0].released_at, '2026-07-21T15:30:00.000Z');
+  assert.equal(history[0].release_reason, 'completed');
+  assert.equal(repeated.alreadyApplied, true);
+  assert.equal(repeated.order.production_status, orderStoreModule.PRODUCTION_STATUSES.completed);
+});
+
 test('deleteTestOrder removes the saved test order, creates a tombstone, releases the tray, and blocks stale UUID re-save', async () => {
   const store = orderStoreModule.createInMemoryOrderStore({
     now: () => new Date('2026-07-21T16:00:00.000Z'),

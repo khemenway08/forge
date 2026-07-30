@@ -27,8 +27,8 @@
   ];
   const ITEM_FILTER_KEYS = ['product', 'ornamentType', 'size', 'treeColor', 'bowColor', 'year', 'productionStatus'];
   const ORDER_FILTER_KEYS = ['orderScope', 'fulfillment', 'event', 'tray', 'syncStatus', 'openFlags'];
-  const TERMINAL_ORDER_STATUSES = new Set(['ready_to_pack', 'packed', 'shipped', 'picked_up', 'cancelled']);
-  const ACTIVE_PRODUCTION_ORDER_STATUSES = new Set(['submitted', 'tray_assigned', 'in_production']);
+  const TERMINAL_ORDER_STATUSES = new Set(['completed', 'packed', 'shipped', 'picked_up', 'cancelled']);
+  const ACTIVE_PRODUCTION_ORDER_STATUSES = new Set(['submitted', 'tray_assigned', 'in_production', 'ready_to_pack']);
   const ISSUE_PRIORITY = ['waiting_for_tray', 'custom_icon_required', 'blocked_items', 'other_open_flags'];
   const PRODUCT_DISPLAY_NAMES = {
     tree_ornament: 'Tree Ornament',

@@ -171,6 +171,7 @@ const staffOrdersState = {
   detailInternalNoteSaving: false,
   detailInternalNoteStatus: '',
   detailInternalNoteStatusTone: 'success',
+  detailMoreActionsExpanded: false,
   detailDestructiveAction: '',
   detailDestructiveConfirmationText: '',
   detailDestructiveSaving: false,
@@ -186,12 +187,9 @@ const staffOrdersState = {
   packingDialogOpen: false,
   packingDialogOrderUuid: '',
   packingDialogRecord: null,
-  packingDialogPackingVerification: null,
   packingDialogLoading: false,
   packingDialogSaving: false,
-  packingDialogError: '',
-  packingDialogNote: '',
-  packingDialogCheckedLineIds: []
+  packingDialogError: ''
 };
 const customerEventState = {
   loading: true,
@@ -2402,9 +2400,9 @@ function getStaffEnvironmentEyebrow() {
 function getStaffSourceConfig() {
   if (staffOrdersState.dataSource === 'server') {
     return {
-      sourceBadge: 'Shared Server Orders',
-      ordersLead: 'View authenticated shared server orders for Forge staff.',
-      readyLead: 'View the shared read-only ready-to-pack queue for authenticated staff.',
+      sourceBadge: 'Live shared orders',
+      ordersLead: 'Manage production orders and tray workflow.',
+      readyLead: 'Review packed orders, complete fulfillment, and release trays.',
       adminLead: 'Use protected administrative tools without pushing active order cards lower on the screen.',
       loadingOrders: 'Loading shared server orders...',
       emptyOrdersHeading: 'No shared orders match these filters',
@@ -2419,8 +2417,8 @@ function getStaffSourceConfig() {
       totalSummaryLabel: 'Total Shared Orders',
       queueUnavailableLabel: 'Shared queue unavailable',
       emptyReadyHeading: 'No shared orders are ready to pack',
-      emptyReadyCopy: 'Shared server orders will appear here when the hosted production workflow begins reporting ready-to-pack status.',
-      readOnlyNote: 'Shared server orders support tray assignment and item completion in this build. Customer and order details remain read-only.',
+      emptyReadyCopy: 'Shared server orders will appear here when every item is complete and the assigned tray is ready to release.',
+      readOnlyNote: '',
       syncAttemptsLabel: 'Data Source',
       syncAttemptsValue: 'Shared Server'
     };
@@ -2429,7 +2427,7 @@ function getStaffSourceConfig() {
   return {
     sourceBadge: 'Local Development Orders',
     ordersLead: 'View durable local orders on this device and assign one production tray per active order.',
-    readyLead: 'Completed orders waiting for packing verification.',
+    readyLead: 'Review packed orders, complete fulfillment, and release trays.',
     adminLead: 'Use local staff-only tools separately while testing Forge on this device.',
     loadingOrders: 'Loading durable local orders...',
     emptyOrdersHeading: 'No orders match these filters',
@@ -2454,6 +2452,7 @@ function getStaffSourceConfig() {
 function renderStaffSourceUi() {
   const config = getStaffSourceConfig();
   const eyebrow = getStaffEnvironmentEyebrow();
+  const showHostedLogout = isHostedStaffMode();
   if (staffOrdersLead) {
     staffOrdersLead.textContent = config.ordersLead;
   }
@@ -2766,6 +2765,17 @@ function openStaffCatalogScreen() {
 
 function openStaffAdminScreen() {
   return openStaffAccessScreen('staff-admin');
+}
+
+function refreshStaffCatalogScreen() {
+  renderStaffCatalog();
+}
+
+function refreshStaffAdminScreen() {
+  renderStaffAdminTools();
+  if (staffOrdersState.dataSource === 'server') {
+    loadStaffEvents().catch(() => {});
+  }
 }
 
 function returnToWelcomeFromStaff() {
@@ -3121,10 +3131,10 @@ function renderCustomerOrderContext() {
       <strong>${itemCount}</strong>
     </div>
     <div class="stat-row">
-      <span>Item Subtotal</span>
+      <span>Order Subtotal</span>
       <strong>${formatPrice(subtotal)}</strong>
     </div>
-    <p class="customer-context-note">Shipping and tax will be reviewed later.</p>
+    <p class="customer-context-note">Applicable sales tax is added during payment.</p>
   `;
 }
 
@@ -3321,7 +3331,7 @@ function renderEntries(focusId) {
               spellcheck="false"
               autocorrect="off"
               autocomplete="off"
-              autocapitalize="off"
+              autocapitalize="words"
             >
           </div>
 
@@ -4808,10 +4818,11 @@ function renderCurrentOrder() {
           <strong>${itemCount}</strong>
         </div>
         <div class="stat-row">
-          <span>Item Subtotal</span>
+          <span>Order Subtotal</span>
           <strong>${formatPrice(subtotal)}</strong>
         </div>
       </div>
+      <p class="current-order-note">Applicable sales tax is added during payment.</p>
       <p class="current-order-note" data-current-order-note aria-live="polite">${escapeHtml(orderUiState.note)}</p>
       <button class="secondary-button current-order-secondary" type="button" data-action="add-another-ornament">Add Another Ornament</button>
       <button class="primary-button current-order-primary" type="button" data-action="continue-customer-info" ${hasItems ? '' : 'disabled'}>Continue to Customer Information</button>
@@ -4868,6 +4879,11 @@ function getPaymentMethodLabel(value) {
     return 'Venmo';
   }
   return '';
+}
+
+function getRecordedPaymentMethodLabel(record) {
+  const method = sanitizeText(record?.payload?.external_payment_method || '');
+  return getPaymentMethodLabel(method) || 'Recorded payment method unavailable';
 }
 
 function renderPaymentMethodChoices() {
@@ -5102,6 +5118,7 @@ function ensureStaffOrderDetailUi() {
     }
 
     if (action === 'staff-open-cancel-order' && orderUuid) {
+      staffOrdersState.detailMoreActionsExpanded = true;
       staffOrdersState.detailDestructiveAction = 'cancel_order';
       staffOrdersState.detailDestructiveConfirmationText = '';
       staffOrdersState.detailDestructiveSaving = false;
@@ -5111,10 +5128,21 @@ function ensureStaffOrderDetailUi() {
     }
 
     if (action === 'staff-open-delete-test-order' && orderUuid) {
+      staffOrdersState.detailMoreActionsExpanded = true;
       staffOrdersState.detailDestructiveAction = 'delete_test_order';
       staffOrdersState.detailDestructiveConfirmationText = '';
       staffOrdersState.detailDestructiveSaving = false;
       staffOrdersState.detailDestructiveError = '';
+      renderStaffOrderDetail();
+      return;
+    }
+
+    if (action === 'staff-toggle-more-order-actions') {
+      const nextExpanded = !staffOrdersState.detailMoreActionsExpanded;
+      staffOrdersState.detailMoreActionsExpanded = nextExpanded;
+      if (!nextExpanded && !staffOrdersState.detailDestructiveSaving) {
+        resetStaffOrderDetailDestructiveState();
+      }
       renderStaffOrderDetail();
       return;
     }
@@ -5357,37 +5385,9 @@ function ensureStaffPackingUi() {
       return;
     }
 
-    if (action === 'staff-pack-order-confirm') {
-      submitStaffPackingVerification();
+    if (action === 'staff-complete-order-confirm') {
+      submitStaffOrderCompletion();
     }
-  });
-
-  staffPackingDialog?.addEventListener('change', (event) => {
-    const checkbox = event.target.closest('[data-packing-line-id]');
-    if (!(checkbox instanceof HTMLInputElement) || checkbox.type !== 'checkbox' || staffOrdersState.packingDialogSaving) {
-      return;
-    }
-    const lineId = String(checkbox.dataset.packingLineId || '').trim();
-    if (!lineId) {
-      return;
-    }
-    const checkedIds = new Set(staffOrdersState.packingDialogCheckedLineIds);
-    if (checkbox.checked) {
-      checkedIds.add(lineId);
-    } else {
-      checkedIds.delete(lineId);
-    }
-    staffOrdersState.packingDialogCheckedLineIds = [...checkedIds];
-    staffOrdersState.packingDialogError = '';
-    renderStaffPackingDialog();
-  });
-
-  staffPackingDialog?.addEventListener('input', (event) => {
-    const noteField = event.target.closest('[data-staff-packing-note]');
-    if (!(noteField instanceof HTMLTextAreaElement) || staffOrdersState.packingDialogSaving) {
-      return;
-    }
-    staffOrdersState.packingDialogNote = noteField.value.slice(0, 500);
   });
 
   staffPackingBackdrop?.addEventListener('click', (event) => {
@@ -5443,6 +5443,9 @@ function getOrderProductionStatusLabel(record) {
   if (status === forgeOrderStore.PRODUCTION_STATUSES?.readyToPack) {
     return 'Ready to Pack';
   }
+  if (status === forgeOrderStore.PRODUCTION_STATUSES?.completed) {
+    return 'Completed';
+  }
   if (status === forgeOrderStore.PRODUCTION_STATUSES?.packed) {
     return 'Packed';
   }
@@ -5472,6 +5475,9 @@ function getOrderProductionStatusBadgeClass(record) {
   if (status === forgeOrderStore.PRODUCTION_STATUSES?.readyToPack) {
     return 'staff-status-badge--production-ready-to-pack';
   }
+  if (status === forgeOrderStore.PRODUCTION_STATUSES?.completed) {
+    return 'staff-status-badge--production-complete';
+  }
   if (status === forgeOrderStore.PRODUCTION_STATUSES?.packed) {
     return 'staff-status-badge--production-packed';
   }
@@ -5495,6 +5501,9 @@ function getOrderTrayLabel(record) {
   if (trayNumber) {
     return `TRAY ${trayNumber}`;
   }
+  if (getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.completed && record?.completed_at) {
+    return 'TRAY RELEASED';
+  }
   if (getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.packed && record?.packed_at) {
     return 'TRAY RELEASED';
   }
@@ -5504,6 +5513,9 @@ function getOrderTrayLabel(record) {
 function getOrderTrayBadgeClass(record) {
   if (getOrderTrayNumber(record)) {
     return 'staff-tray-badge--assigned';
+  }
+  if (getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.completed && record?.completed_at) {
+    return 'staff-tray-badge--released';
   }
   if (getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.packed && record?.packed_at) {
     return 'staff-tray-badge--released';
@@ -5521,6 +5533,12 @@ function canStaffAssignTray(record) {
 
 function isCancelledOrder(record) {
   return getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.cancelled;
+}
+
+function isCompletedOrder(record) {
+  const status = getOrderProductionStatus(record);
+  return status === forgeOrderStore.PRODUCTION_STATUSES?.completed
+    || status === forgeOrderStore.PRODUCTION_STATUSES?.packed;
 }
 
 function isTestSessionOrder(record) {
@@ -5621,6 +5639,7 @@ function canDeleteStaffTestOrder(record) {
 }
 
 function resetStaffOrderDetailDestructiveState() {
+  staffOrdersState.detailMoreActionsExpanded = false;
   staffOrdersState.detailDestructiveAction = '';
   staffOrdersState.detailDestructiveConfirmationText = '';
   staffOrdersState.detailDestructiveSaving = false;
@@ -5644,6 +5663,51 @@ function getOrderCompletionCounts(record) {
 function getOrderCompletionSummary(record) {
   const counts = getOrderCompletionCounts(record);
   return `${counts.completedItemCount} of ${counts.totalItemCount} Complete`;
+}
+
+function canCompleteStaffOrder(record) {
+  if (!record) {
+    return false;
+  }
+
+  const counts = getOrderCompletionCounts(record);
+  return (!isStaffReadOnlyRecord(record) || record?.staff_can_complete_order === true)
+    && getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.readyToPack
+    && Boolean(getOrderTrayNumber(record))
+    && counts.totalItemCount > 0
+    && counts.completedItemCount === counts.totalItemCount
+    && !Boolean(record?.has_open_flags);
+}
+
+function getOrderCompletionTimestamp(record) {
+  return sanitizeText(record?.completed_at || record?.packed_at || '');
+}
+
+function getCompletedTrayRelease(record) {
+  return record?.completed_tray_release && typeof record.completed_tray_release === 'object'
+    ? record.completed_tray_release
+    : null;
+}
+
+function getOrderProductionTrayDetail(record) {
+  const activeTrayNumber = getOrderTrayNumber(record);
+  if (!isCompletedOrder(record)) {
+    return activeTrayNumber ? `Tray ${activeTrayNumber}` : 'No tray assigned';
+  }
+
+  const completedTrayRelease = getCompletedTrayRelease(record);
+  const releasedTrayNumber = Number.isInteger(completedTrayRelease?.tray_number) && completedTrayRelease.tray_number > 0
+    ? completedTrayRelease.tray_number
+    : null;
+  if (!releasedTrayNumber) {
+    return 'Released tray history unavailable';
+  }
+
+  const releasedAt = sanitizeText(completedTrayRelease?.released_at || '');
+  const releasedCopy = releasedAt
+    ? `Released when order was completed on ${formatReadableDateTime(releasedAt)}`
+    : 'Released when order was completed';
+  return `Tray ${releasedTrayNumber} — ${releasedCopy}`;
 }
 
 function getCurrentSyncSnapshot() {
@@ -5709,6 +5773,29 @@ function buildStaffSyncBadgeMarkup(record) {
     return '';
   }
   return `<span class="staff-status-badge ${escapeHtml(getStaffSyncStatusBadgeClass(record))}">${escapeHtml(getStaffSyncStatusLabel(record))}</span>`;
+}
+
+function getOrderEmailStatusLabel(record) {
+  return sanitizeText(record?.confirmation_email_status || 'Email Not Scheduled');
+}
+
+function getOrderEmailStatusTimestamp(record) {
+  return sanitizeText(record?.confirmation_email_timestamp || '');
+}
+
+function getOrderEmailStatusDetail(record) {
+  const label = getOrderEmailStatusLabel(record);
+  const timestamp = getOrderEmailStatusTimestamp(record);
+  if (!timestamp) {
+    return label;
+  }
+  if (/failed/i.test(label)) {
+    return `${label} • ${formatReadableDateTime(timestamp)}`;
+  }
+  if (/sent/i.test(label)) {
+    return `${label} • ${formatReadableDateTime(timestamp)}`;
+  }
+  return label;
 }
 
 function getOrderEventSnapshot(record) {
@@ -5830,32 +5917,44 @@ function buildStaffOrderDestructiveActionsMarkup(record) {
   const isDeleteAction = action === 'delete_test_order';
   const expectedDeleteConfirmation = getDeleteTestOrderConfirmationText();
   const deleteConfirmationMatches = getDeleteTestOrderConfirmationMatches();
+  const destructivePanelId = 'staff-order-detail-more-actions-panel';
+  const isExpanded = staffOrdersState.detailMoreActionsExpanded;
 
   return `
-    <section class="staff-order-detail-section">
-      <h3>Order Actions</h3>
-      <p class="staff-order-detail-note">Cancelled orders remain stored for history, but they leave active production immediately. Ending a Test Session order here permanently removes only that saved test order.</p>
-      ${buildStaffDestructiveErrorMarkup(staffOrdersState.detailDestructiveError)}
+    <section class="staff-order-detail-section staff-order-detail-section--danger">
       <div class="staff-order-card-actions">
-        ${canCancel ? `
-          <button
-            class="secondary-button"
-            type="button"
-            data-action="staff-open-cancel-order"
-            data-order-uuid="${escapeHtml(record.forge_order_uuid)}"
-            ${staffOrdersState.detailDestructiveSaving ? 'disabled' : ''}
-          >${isCancelAction ? 'Review Cancellation' : 'Cancel Order'}</button>
-        ` : ''}
-        ${canDeleteTestOrder ? `
-          <button
-            class="secondary-button"
-            type="button"
-            data-action="staff-open-delete-test-order"
-            data-order-uuid="${escapeHtml(record.forge_order_uuid)}"
-            ${staffOrdersState.detailDestructiveSaving ? 'disabled' : ''}
-          >${isDeleteAction ? 'Review Test Deletion' : 'Delete Test Order'}</button>
-        ` : ''}
+        <button
+          class="secondary-button"
+          type="button"
+          data-action="staff-toggle-more-order-actions"
+          aria-expanded="${isExpanded ? 'true' : 'false'}"
+          aria-controls="${escapeHtml(destructivePanelId)}"
+          ${staffOrdersState.detailDestructiveSaving ? 'disabled' : ''}
+        >More order actions</button>
       </div>
+      <div id="${escapeHtml(destructivePanelId)}"${isExpanded ? '' : ' hidden'}>
+        <p class="staff-order-detail-note">Use these only when an order must leave active production or a saved Test Session order must be removed.</p>
+        ${buildStaffDestructiveErrorMarkup(staffOrdersState.detailDestructiveError)}
+        <div class="staff-order-card-actions">
+          ${canCancel ? `
+            <button
+              class="secondary-button"
+              type="button"
+              data-action="staff-open-cancel-order"
+              data-order-uuid="${escapeHtml(record.forge_order_uuid)}"
+              ${staffOrdersState.detailDestructiveSaving ? 'disabled' : ''}
+            >Cancel Order</button>
+          ` : ''}
+          ${canDeleteTestOrder ? `
+            <button
+              class="secondary-button"
+              type="button"
+              data-action="staff-open-delete-test-order"
+              data-order-uuid="${escapeHtml(record.forge_order_uuid)}"
+              ${staffOrdersState.detailDestructiveSaving ? 'disabled' : ''}
+            >Delete Test Order</button>
+          ` : ''}
+        </div>
       ${isCancelAction ? `
         <div class="staff-order-detail-row">
           <span>Cancel Order</span>
@@ -5865,7 +5964,7 @@ function buildStaffOrderDestructiveActionsMarkup(record) {
           <div><span>Assigned Tray</span><strong>${escapeHtml(trayNumber ? `Tray ${trayNumber}` : 'No tray assigned')}</strong></div>
           <div><span>Result</span><strong>Stored order remains, active production stops</strong></div>
         </div>
-        <p class="staff-order-detail-note">This removes the order from active production, clears any assigned tray, and preserves customer, event, pricing, note, and completion history.</p>
+        <p class="staff-order-detail-note">This removes the order from active production but keeps it stored in order history.</p>
         <div class="staff-order-card-actions">
           <button
             class="primary-button"
@@ -5873,13 +5972,13 @@ function buildStaffOrderDestructiveActionsMarkup(record) {
             data-action="staff-confirm-cancel-order"
             data-order-uuid="${escapeHtml(record.forge_order_uuid)}"
             ${staffOrdersState.detailDestructiveSaving ? 'disabled' : ''}
-          >${staffOrdersState.detailDestructiveSaving ? 'Cancelling...' : 'Confirm Cancel Order'}</button>
+          >${staffOrdersState.detailDestructiveSaving ? 'Cancelling...' : 'Cancel Order'}</button>
           <button
             class="text-button"
             type="button"
             data-action="staff-close-destructive-action"
             ${staffOrdersState.detailDestructiveSaving ? 'disabled' : ''}
-          >Keep Order Active</button>
+          >Keep Order</button>
         </div>
       ` : ''}
       ${isDeleteAction ? `
@@ -5921,6 +6020,7 @@ function buildStaffOrderDestructiveActionsMarkup(record) {
           >Keep Test Order</button>
         </div>
       ` : ''}
+      </div>
     </section>
   `;
 }
@@ -6371,7 +6471,7 @@ function buildReadyToPackCardMarkup(record) {
     ? `Ready since ${formatReadableDateTime(record.ready_to_pack_at)}`
     : `Ready since ${formatReadableDateTime(record.submitted_at || record.local_saved_at || '')}`;
   const fulfillmentMethod = payload.fulfillment?.method === 'pickup' ? 'Pickup' : 'Shipping';
-  const canPackOrder = !isStaffReadOnlyRecord(record);
+  const canFinalizeOrder = canCompleteStaffOrder(record);
 
   return `
     <article class="staff-order-card staff-ready-card">
@@ -6394,7 +6494,7 @@ function buildReadyToPackCardMarkup(record) {
       <p class="staff-ready-card-timestamp">${escapeHtml(readyTimestamp)}</p>
       <div class="staff-order-card-actions">
         <button class="secondary-button" type="button" data-action="staff-view-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">View Order</button>
-        ${canPackOrder ? `<button class="primary-button" type="button" data-action="staff-pack-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Pack Order</button>` : ''}
+        ${canFinalizeOrder ? `<button class="primary-button" type="button" data-action="staff-complete-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Complete Order</button>` : ''}
       </div>
     </article>
   `;
@@ -7398,7 +7498,7 @@ function buildStaffOrderCardMarkup(record, filters) {
   const completionSummary = getOrderCompletionSummary(record);
   const syncStatusLabel = getStaffSyncStatusLabel(record);
   const syncStatusBadgeClass = getStaffSyncStatusBadgeClass(record);
-  const canPackOrder = !isStaffReadOnlyRecord(record) && forgeLocalOrdersQueue.isOrderEligibleForReadyToPack(record);
+  const canFinalizeOrder = canCompleteStaffOrder(record);
 
   return `
     <article class="staff-order-card">
@@ -7424,16 +7524,17 @@ function buildStaffOrderCardMarkup(record, filters) {
       </div>
       <div class="staff-order-card-meta staff-order-card-meta--secondary">
         <div><span>${hasActiveItemFilters ? 'Matching Pieces' : 'Items'}</span><strong>${escapeHtml(String(itemCount))}</strong></div>
-        <div><span>Estimated Total</span><strong>${Number.isInteger(estimatedTotalCents) ? escapeHtml(formatPrice(estimatedTotalCents / 100)) : 'Quote Required'}</strong></div>
+        <div><span>Order Subtotal</span><strong>${Number.isInteger(estimatedTotalCents) ? escapeHtml(formatPrice(estimatedTotalCents / 100)) : 'Quote Required'}</strong></div>
         <div><span>Fulfillment</span><strong>${escapeHtml(fulfillmentMethod)}</strong></div>
       </div>
+      <p class="staff-order-detail-note">Applicable sales tax is added during payment.</p>
       <div class="staff-order-products">
         <span>Products</span>
         <ul>${productSummary.map((line) => `<li><span>${escapeHtml(line)}</span></li>`).join('')}</ul>
       </div>
       <div class="staff-order-card-actions">
         <button class="secondary-button" type="button" data-action="staff-view-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">View Order</button>
-        ${canPackOrder ? `<button class="primary-button" type="button" data-action="staff-pack-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Pack Order</button>` : ''}
+        ${canFinalizeOrder ? `<button class="primary-button" type="button" data-action="staff-complete-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Complete Order</button>` : ''}
       </div>
     </article>
   `;
@@ -7633,6 +7734,7 @@ function renderStaffOrderDetail() {
   const productionStatusLabel = getOrderProductionStatusLabel(record);
   const trayLabel = getOrderTrayLabel(record);
   const showAssignTrayAction = canStaffAssignTray(record);
+  const showCompleteOrderAction = canCompleteStaffOrder(record);
   const completionCounts = getOrderCompletionCounts(record);
   const completionSummary = getOrderCompletionSummary(record);
   const showNoTrayMessage = !getOrderTrayNumber(record);
@@ -7640,6 +7742,7 @@ function renderStaffOrderDetail() {
   const isPackedOrder = getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.packed;
   const syncStatusLabel = getStaffSyncStatusLabel(record);
   const syncStatusBadgeClass = getStaffSyncStatusBadgeClass(record);
+  const emailStatusDetail = getOrderEmailStatusDetail(record);
   const showRawJsonAction = isLoopbackHost(window.location);
   const internalNote = sanitizeText(record.internal_note || '');
   const hasInternalNote = Boolean(record.has_internal_note) || internalNote !== '';
@@ -7668,6 +7771,7 @@ function renderStaffOrderDetail() {
       </div>
       <div class="staff-order-card-actions staff-order-detail-actions">
         ${showAssignTrayAction ? `<button class="primary-button" type="button" data-action="staff-open-tray-assignment" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Assign Tray</button>` : ''}
+        ${showCompleteOrderAction ? `<button class="primary-button" type="button" data-action="staff-complete-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Complete Order</button>` : ''}
         <button class="text-button" type="button" data-action="close-staff-order-detail">Close</button>
       </div>
     </div>
@@ -7683,33 +7787,30 @@ function renderStaffOrderDetail() {
       <div><span>Fulfillment</span><strong>${escapeHtml(fulfillment.method === 'pickup' ? 'Pickup' : 'Shipping')}</strong></div>
       <div><span>Submitted</span><strong>${escapeHtml(formatReadableDateTime(record.submitted_at || ''))}</strong></div>
       <div><span>${escapeHtml(sourceConfig.savedTimestampLabel)}</span><strong>${escapeHtml(formatReadableDateTime(record.local_saved_at || record.received_at || ''))}</strong></div>
+      ${record.ready_to_pack_at ? `<div><span>Ready to Pack</span><strong>${escapeHtml(formatReadableDateTime(record.ready_to_pack_at))}</strong></div>` : ''}
+      ${record.completed_at ? `<div><span>Completed</span><strong>${escapeHtml(formatReadableDateTime(record.completed_at))}</strong></div>` : ''}
+      <div><span>Payment Method</span><strong>${escapeHtml(getRecordedPaymentMethodLabel(record))}</strong></div>
       <div><span>Sync Status</span><strong>${escapeHtml(syncStatusLabel)}</strong></div>
+      <div><span>Customer Email</span><strong>${escapeHtml(emailStatusDetail)}</strong></div>
     </div>
-
-    <section class="staff-order-detail-section">
-      <h3>System Details</h3>
-      <div class="staff-order-detail-grid">
-        <div><span>UUID</span><strong>${escapeHtml(record.forge_order_uuid)}</strong></div>
-      </div>
-    </section>
 
     <section class="staff-order-detail-section">
       <h3>Order</h3>
       <div class="staff-order-detail-grid">
-        <div><span>Tray State</span><strong>${escapeHtml(trayLabel)}</strong></div>
+        <div><span>Production Tray</span><strong>${escapeHtml(getOrderProductionTrayDetail(record))}</strong></div>
         <div><span>Production Progress</span><strong>${escapeHtml(completionSummary)}</strong></div>
         <div><span>Event</span><strong>${escapeHtml(eventSnapshot?.event_name || 'Not attached')}</strong></div>
         <div><span>Event Type</span><strong>${escapeHtml(eventSnapshot?.event_type === 'test_session' ? 'Test Session' : (eventSnapshot ? 'Live Event' : 'Not attached'))}</strong></div>
+        <div><span>Order Subtotal</span><strong>${Number.isInteger(payload.pricing?.estimated_total_cents) ? escapeHtml(formatPrice(payload.pricing.estimated_total_cents / 100)) : 'Quote Required'}</strong></div>
       </div>
+      <p class="staff-order-detail-note">Applicable sales tax is added during payment.</p>
       ${showOpenFlagProgressNote ? '<p class="staff-order-detail-note">All required pieces are complete, but this order still has an open flag and cannot move to Ready to Pack yet.</p>' : ''}
       ${isCancelledRecord ? '<p class="staff-order-detail-note">This order is cancelled and remains stored for history. Tray assignment, item completion, packing, and Ready-to-Pack progression are disabled.</p>' : ''}
-      <div class="staff-order-detail-flags">
+      ${openFlags.length ? `<div class="staff-order-detail-flags">
         <span>Open Flags</span>
-        ${openFlags.length ? `<ul>${openFlags.map((flag) => `<li>${escapeHtml(flag.message || flag.code || 'Open flag')}</li>`).join('')}</ul>` : '<p>No order-level open flags.</p>'}
-      </div>
+        <ul>${openFlags.map((flag) => `<li>${escapeHtml(flag.message || flag.code || 'Open flag')}</li>`).join('')}</ul>
+      </div>` : ''}
     </section>
-
-    ${buildStaffOrderDestructiveActionsMarkup(record)}
 
     <section class="staff-order-detail-section">
       <h3>Internal Notes</h3>
@@ -7791,13 +7892,17 @@ function renderStaffOrderDetail() {
       <h3>Items</h3>
       ${isCancelledRecord
         ? '<p class="staff-order-detail-note">Cancelled orders stay visible for history, but item completion is permanently disabled.</p>'
+        : (isCompletedOrder(record)
+        ? '<p class="staff-order-detail-note">This order is completed and its tray has already been released back to the available pool.</p>'
         : (isPackedOrder
         ? '<p class="staff-order-detail-note">Packing has been verified and the assigned tray has already been released.</p>'
         : (showNoTrayMessage
           ? '<p class="staff-order-detail-note">Assign a tray before marking any finished piece complete.</p>'
-          : '<p class="staff-order-detail-note">Mark complete only after the finished piece has been placed in the assigned tray.</p>'))}
+          : '<p class="staff-order-detail-note">Mark complete only after the finished piece has been placed in the assigned tray.</p>')))}
       ${getStaffOrderItemsMarkup(record, payload.items || [])}
     </section>
+
+    ${buildStaffOrderDestructiveActionsMarkup(record)}
   `;
 
   if (showAssignTrayAction) {
@@ -8268,9 +8373,6 @@ function closeStaffPackingDialog(options = {}) {
   staffOrdersState.packingDialogError = '';
   staffOrdersState.packingDialogOrderUuid = '';
   staffOrdersState.packingDialogRecord = null;
-  staffOrdersState.packingDialogPackingVerification = null;
-  staffOrdersState.packingDialogCheckedLineIds = [];
-  staffOrdersState.packingDialogNote = '';
   renderStaffPackingDialog();
   if (restoreFocus && lastStaffPackingFocusTarget) {
     lastStaffPackingFocusTarget.focus();
@@ -8287,18 +8389,17 @@ async function retryStaffPackingDialogLoad() {
   staffOrdersState.packingDialogSaving = false;
   staffOrdersState.packingDialogError = '';
   staffOrdersState.packingDialogRecord = null;
-  staffOrdersState.packingDialogPackingVerification = null;
-  staffOrdersState.packingDialogCheckedLineIds = [];
-  staffOrdersState.packingDialogNote = '';
   renderStaffPackingDialog();
 
   try {
-    const result = await loadStaffPackingDialogData(staffOrdersState.packingDialogOrderUuid);
-    if (!result.record) {
+    const record = await loadStaffPackingDialogData(staffOrdersState.packingDialogOrderUuid);
+    if (!record) {
       throw new Error('That saved order could not be found.');
     }
-    staffOrdersState.packingDialogRecord = result.record;
-    staffOrdersState.packingDialogPackingVerification = result.packingVerification;
+    if (!canCompleteStaffOrder(record)) {
+      throw new Error('That order cannot be completed right now.');
+    }
+    staffOrdersState.packingDialogRecord = record;
   } catch (error) {
     console.error('Forge packing dialog failed to load', error);
     staffOrdersState.packingDialogError = formatStaffPackingLoadError(error);
@@ -8314,18 +8415,14 @@ async function retryStaffPackingDialogLoad() {
 async function loadStaffPackingDialogData(forgeOrderUuid) {
   const orderUuid = sanitizeText(forgeOrderUuid);
   if (!orderUuid) {
-    throw new Error('Packing verification requires a saved order.');
+    throw new Error('Order completion requires a saved order.');
   }
 
-  const [record, packingVerification] = await Promise.all([
-    orderStore.getOrder(orderUuid),
-    orderStore.getPackingVerificationForOrder(orderUuid)
-  ]);
+  if (staffOrdersState.readOnly || staffOrdersState.demoMode) {
+    return staffOrdersState.records.find((candidate) => candidate?.forge_order_uuid === orderUuid) || null;
+  }
 
-  return {
-    record,
-    packingVerification: packingVerification || null
-  };
+  return orderStore.getOrder(orderUuid);
 }
 
 function formatStaffPackingLoadError(error) {
@@ -8336,7 +8433,10 @@ function formatStaffPackingLoadError(error) {
   if (/could not be found/i.test(message)) {
     return 'That saved order could not be found.';
   }
-  return 'Packing verification could not be loaded on this device.';
+  if (/cannot be completed right now/i.test(message)) {
+    return 'That order cannot be completed right now.';
+  }
+  return 'Order completion could not be loaded on this device.';
 }
 
 function renderStaffPackingDialogErrorState(message) {
@@ -8348,13 +8448,13 @@ function renderStaffPackingDialogErrorState(message) {
   staffPackingDialog.innerHTML = `
     <div class="staff-order-detail-header">
       <div>
-        <p class="eyebrow staff-orders-eyebrow">Packing Verification</p>
-        <h2 id="staff-packing-title">Packing Unavailable</h2>
+        <p class="eyebrow staff-orders-eyebrow">Order Completion</p>
+        <h2 id="staff-packing-title">Completion Unavailable</h2>
       </div>
       <button class="text-button" type="button" data-action="close-staff-packing">Cancel</button>
     </div>
     <div class="staff-empty-state">
-      <h3>Unable to open this packing checklist</h3>
+      <h3>Unable to open this completion prompt</h3>
       <p>${errorMessage}</p>
       <div class="staff-order-card-actions staff-empty-actions">
         <button class="primary-button" type="button" data-action="staff-retry-packing-load">Retry</button>
@@ -8382,18 +8482,18 @@ function renderStaffPackingDialog() {
     staffPackingDialog.innerHTML = `
       <div class="staff-order-detail-header">
         <div>
-          <p class="eyebrow staff-orders-eyebrow">Packing Verification</p>
-          <h2 id="staff-packing-title">Loading Packing Checklist</h2>
+          <p class="eyebrow staff-orders-eyebrow">Order Completion</p>
+          <h2 id="staff-packing-title">Loading Order Completion</h2>
         </div>
         <button class="text-button" type="button" data-action="close-staff-packing">Cancel</button>
       </div>
-      <p class="staff-orders-status">Loading the assigned tray and expected items...</p>
+      <p class="staff-orders-status">Loading the assigned tray and order status...</p>
     `;
     return;
   }
 
   if (staffOrdersState.packingDialogError || !staffOrdersState.packingDialogRecord) {
-    renderStaffPackingDialogErrorState(staffOrdersState.packingDialogError || 'Packing verification is unavailable.');
+    renderStaffPackingDialogErrorState(staffOrdersState.packingDialogError || 'Order completion is unavailable.');
     return;
   }
 
@@ -8402,18 +8502,14 @@ function renderStaffPackingDialog() {
     const payload = record.payload || {};
     const customerName = payload.customer?.full_name || 'Unknown customer';
     const trayNumber = getOrderTrayNumber(record);
-    const activeItems = getOrderActivePackingItems(record);
-    const checkedIds = new Set(staffOrdersState.packingDialogCheckedLineIds);
-    const verificationCounts = getOrderVerifiedPieceCounts(record, staffOrdersState.packingDialogCheckedLineIds);
-    const allVerified = activeItems.length > 0 && activeItems.every((item) => checkedIds.has(String(item.line_id || '').trim()));
-    const disableSubmit = !allVerified || staffOrdersState.packingDialogSaving;
     const fulfillmentMethod = payload.fulfillment?.method === 'pickup' ? 'Pickup' : 'Shipping';
+    const disableSubmit = staffOrdersState.packingDialogSaving;
 
     staffPackingDialog.innerHTML = `
       <div class="staff-order-detail-header">
         <div>
-          <p class="eyebrow staff-orders-eyebrow">Packing Verification</p>
-          <h2 id="staff-packing-title">Pack Order</h2>
+          <p class="eyebrow staff-orders-eyebrow">Order Completion</p>
+          <h2 id="staff-packing-title">Complete ${escapeHtml(getOrderDisplayReference(record))}?</h2>
           <p>${escapeHtml(getOrderDisplayReference(record))} • ${escapeHtml(customerName)}</p>
         </div>
         <button class="text-button" type="button" data-action="close-staff-packing"${staffOrdersState.packingDialogSaving ? ' disabled' : ''}>Cancel</button>
@@ -8430,64 +8526,24 @@ function renderStaffPackingDialog() {
           <div><span>Production Progress</span><strong>${escapeHtml(getOrderCompletionSummary(record))}</strong></div>
           <div><span>Status</span><strong>${escapeHtml(getOrderProductionStatusLabel(record))}</strong></div>
         </div>
-        <p class="staff-order-detail-note">Verify every item in the assigned tray before packing.</p>
-        <p class="staff-order-detail-note">Packing this order will mark it Packed and release Tray ${escapeHtml(String(trayNumber || ''))}.</p>
-      </section>
-
-      <section class="staff-order-detail-section staff-packing-section">
-        <div class="staff-section-heading">
-          <div>
-            <p class="eyebrow staff-orders-eyebrow">Tray Checklist</p>
-            <h3>Verify Physical Items</h3>
-          </div>
-          <p class="staff-orders-status">${escapeHtml(`${verificationCounts.verifiedPieces} of ${verificationCounts.totalPieces} pieces verified`)}</p>
-        </div>
-        <div class="staff-packing-list">
-          ${activeItems.map((item, index) => {
-            const lineId = String(item.line_id || '').trim();
-            const checkboxId = `staff-packing-item-${escapeHtml(lineId)}`;
-            const itemIdentifier = getStaffPackingItemIdentifier(item);
-            const quantity = Number.isInteger(item.quantity) && item.quantity > 0 ? item.quantity : 1;
-            return `
-              <label class="staff-packing-item${checkedIds.has(lineId) ? ' is-checked' : ''}" for="${checkboxId}">
-                <input
-                  id="${checkboxId}"
-                  type="checkbox"
-                  data-packing-line-id="${escapeHtml(lineId)}"
-                  ${checkedIds.has(lineId) ? 'checked' : ''}
-                  ${staffOrdersState.packingDialogSaving ? 'disabled' : ''}
-                >
-                <span class="staff-packing-item-order">${escapeHtml(String(index + 1))}.</span>
-                <span class="staff-packing-item-body">
-                  <strong>${escapeHtml(`${quantity} × ${item.product_display_name || item.product_definition_id || 'Custom Item'}`)}</strong>
-                  ${itemIdentifier ? `<span>${escapeHtml(itemIdentifier)}</span>` : ''}
-                </span>
-              </label>
-            `;
-          }).join('')}
-        </div>
-      </section>
-
-      <section class="staff-order-detail-section">
-        <label class="staff-field-label" for="staff-packing-note">Packing Note (Optional)</label>
-        <textarea id="staff-packing-note" class="staff-packing-note" data-staff-packing-note maxlength="500" rows="4" placeholder="Add an optional internal packing note"${staffOrdersState.packingDialogSaving ? ' disabled' : ''}>${escapeHtml(staffOrdersState.packingDialogNote)}</textarea>
+        <p class="staff-order-detail-note">Confirm this order has been packed. Tray ${escapeHtml(String(trayNumber || ''))} will be released and returned to the available tray pool.</p>
       </section>
 
       <div class="staff-order-card-actions">
-        <button class="primary-button" type="button" data-action="staff-pack-order-confirm"${disableSubmit ? ' disabled' : ''}>
-          ${staffOrdersState.packingDialogSaving ? 'Packing Order...' : 'Pack Order & Release Tray'}
+        <button class="primary-button" type="button" data-action="staff-complete-order-confirm"${disableSubmit ? ' disabled' : ''}>
+          ${staffOrdersState.packingDialogSaving ? 'Completing Order...' : 'Complete & Release Tray'}
         </button>
-        <button class="secondary-button" type="button" data-action="close-staff-packing"${staffOrdersState.packingDialogSaving ? ' disabled' : ''}>Cancel</button>
+        <button class="secondary-button" type="button" data-action="close-staff-packing"${staffOrdersState.packingDialogSaving ? ' disabled' : ''}>Keep Order</button>
       </div>
     `;
   } catch (error) {
     console.error('Forge packing dialog render failed', error);
-    staffOrdersState.packingDialogError = 'Packing checklist could not be rendered on this device.';
+    staffOrdersState.packingDialogError = 'Order completion could not be rendered on this device.';
     renderStaffPackingDialogErrorState(staffOrdersState.packingDialogError);
   }
 }
 
-async function submitStaffPackingVerification() {
+async function submitStaffOrderCompletion() {
   if (
     staffOrdersState.packingDialogSaving
     || !staffOrdersState.packingDialogRecord
@@ -8501,27 +8557,36 @@ async function submitStaffPackingVerification() {
 
   try {
     const record = staffOrdersState.packingDialogRecord;
-    const result = await orderStore.completePackingVerification(
-      record.forge_order_uuid,
-      staffOrdersState.packingDialogCheckedLineIds,
-      staffOrdersState.packingDialogNote
-    );
+    const result = await staffRuntime.completeOrder(record.forge_order_uuid);
+    if (!result?.ok) {
+      if (result?.unauthenticated) {
+        closeStaffPackingDialog({ restoreFocus: false });
+        showUnauthenticatedStaffAccess();
+        return;
+      }
+      throw new Error(result?.errorMessage || 'Order completion could not be saved.');
+    }
 
-    staffOrdersState.notice = `Order ${getOrderShortReference(result.order)} packed. Tray ${result.packingVerification.tray_number} is now available.`;
+    const releasedTrayNumber = result?.tray?.tray_number || getOrderTrayNumber(record);
+    staffOrdersState.notice = result?.alreadyApplied
+      ? `${getOrderDisplayReference(result.order || record)} was already completed.`
+      : `${getOrderDisplayReference(result.order || record)} completed. Tray ${releasedTrayNumber} is now available.`;
     staffOrdersState.noticeTone = 'success';
     closeStaffPackingDialog({ restoreFocus: false });
     await loadStaffOrdersQueue();
 
     if (staffOrdersState.detailOpen && staffOrdersState.detailOrderUuid === result.order.forge_order_uuid) {
-      staffOrdersState.detailRecord = await orderStore.getOrder(result.order.forge_order_uuid);
-      staffOrdersState.detailPackingVerification = await orderStore.getPackingVerificationForOrder(result.order.forge_order_uuid);
+      staffOrdersState.detailRecord = staffOrdersState.records.find((candidate) => candidate?.forge_order_uuid === result.order.forge_order_uuid)
+        || result.order
+        || null;
+      staffOrdersState.detailPackingVerification = null;
       renderStaffOrderDetail();
     }
   } catch (error) {
-    console.error('Forge packing verification failed', error);
+    console.error('Forge order completion failed', error);
     staffOrdersState.notice = '';
     staffOrdersState.noticeTone = 'error';
-    staffOrdersState.packingDialogError = error?.message || 'Packing verification could not be saved.';
+    staffOrdersState.packingDialogError = error?.message || 'Order completion could not be saved.';
     staffOrdersState.packingDialogSaving = false;
     renderStaffPackingDialog();
   }
@@ -9212,10 +9277,11 @@ function renderFinalReview() {
           <strong>${itemCount}</strong>
         </div>
         <div class="stat-row">
-          <span>Item Subtotal</span>
+          <span>Order Subtotal</span>
           <strong>${formatPrice(subtotal)}</strong>
         </div>
       </div>
+      <p class="current-order-note">Applicable sales tax is added during payment.</p>
     `;
   }
 
@@ -10540,10 +10606,7 @@ if (treeForm) {
       }
     }
 
-    if (action === 'staff-pack-order' && orderUuid) {
-      if (staffOrdersState.readOnly) {
-        return;
-      }
+    if (action === 'staff-complete-order' && orderUuid) {
       staffOrdersState.notice = '';
       openStaffPackingDialog(orderUuid);
     }
@@ -10590,6 +10653,12 @@ if (treeForm) {
 
     if (action === 'staff-view-order' && orderUuid) {
       openStaffOrderDetail(orderUuid);
+      return;
+    }
+
+    if (action === 'staff-complete-order' && orderUuid) {
+      staffOrdersState.notice = '';
+      openStaffPackingDialog(orderUuid);
     }
   });
 
@@ -10611,6 +10680,11 @@ if (treeForm) {
 
     if (action === 'staff-open-admin') {
       openStaffAdminScreen();
+      return;
+    }
+
+    if (action === 'staff-refresh-catalog') {
+      refreshStaffCatalogScreen();
       return;
     }
 
@@ -10751,6 +10825,11 @@ if (treeForm) {
 
     if (action === 'staff-open-catalog') {
       openStaffCatalogScreen();
+      return;
+    }
+
+    if (action === 'staff-refresh-admin') {
+      refreshStaffAdminScreen();
       return;
     }
 

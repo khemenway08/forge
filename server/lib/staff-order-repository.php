@@ -51,6 +51,10 @@ final class CancelOrderNotAllowedException extends \RuntimeException
 {
 }
 
+final class CompleteOrderNotAllowedException extends \RuntimeException
+{
+}
+
 final class TestOrderDeletionNotAllowedException extends \RuntimeException
 {
 }
@@ -71,6 +75,7 @@ final class PdoStaffOrderRepository
     public const LEGACY_TEST_CLEANUP_EXCLUDED_PREVIEW_LIMIT = 5;
     public const LEGACY_TEST_CLEANUP_RELEASE_REASON = 'legacy_test_cleanup';
     public const CANCELLED_RELEASE_REASON = 'cancelled';
+    public const COMPLETED_RELEASE_REASON = 'completed';
     public const DELETE_TEST_ORDER_RELEASE_REASON = 'deleted_test_order';
     public const TEST_ORDER_DELETE_CONFIRMATION_TEXT = 'DELETE TEST ORDER';
     public const SHIPPING_EXPORT_REQUIRED_ADDRESS_FIELDS = [
@@ -84,6 +89,7 @@ final class PdoStaffOrderRepository
     private const ORDER_STATUS_TRAY_ASSIGNED = 'tray_assigned';
     private const ORDER_STATUS_IN_PRODUCTION = 'in_production';
     private const ORDER_STATUS_READY_TO_PACK = 'ready_to_pack';
+    private const ORDER_STATUS_COMPLETED = 'completed';
     private const ORDER_STATUS_CANCELLED = 'cancelled';
     private const TRAY_STATUS_AVAILABLE = 'available';
     private const TRAY_STATUS_ASSIGNED = 'assigned';
@@ -135,7 +141,8 @@ final class PdoStaffOrderRepository
                     production_status,
                     current_tray_number,
                     ready_to_pack_at,
-                    cancelled_at
+                    cancelled_at,
+                    completed_at
                  FROM forge_orders
                  ORDER BY received_at DESC, forge_order_uuid DESC
                  LIMIT :limit OFFSET :offset'
@@ -163,13 +170,15 @@ final class PdoStaffOrderRepository
         }
 
         $itemProductionRowsByOrder = $this->loadItemProductionRowsForOrders($orderUuids);
-        $emailStatusesByOrderUuid = $this->loadOrderConfirmationStatuses($orderUuids);
+        $emailStatusesByOrderUuid = $this->loadOrderConfirmationMetadata($orderUuids);
+        $completedTrayReleaseByOrderUuid = $this->loadCompletedTrayReleaseHistory($orderUuids);
         $normalized = [];
         foreach ($recordsByOrderUuid as $orderUuid => $record) {
             $normalized[] = normalizeStoredStaffOrderRecord(
                 $record,
                 $itemProductionRowsByOrder[$orderUuid] ?? [],
-                $emailStatusesByOrderUuid[$orderUuid] ?? null
+                $emailStatusesByOrderUuid[$orderUuid] ?? null,
+                $completedTrayReleaseByOrderUuid[$orderUuid] ?? null
             );
         }
 
@@ -216,7 +225,8 @@ final class PdoStaffOrderRepository
                     production_status,
                     current_tray_number,
                     ready_to_pack_at,
-                    cancelled_at
+                    cancelled_at,
+                    completed_at
                  FROM forge_orders
                  WHERE forge_order_uuid = :forge_order_uuid
                  LIMIT 1'
@@ -236,7 +246,8 @@ final class PdoStaffOrderRepository
         return normalizeStoredStaffOrderRecord(
             $record,
             $this->loadItemProductionRowsForOrder($orderUuid),
-            $this->loadOrderConfirmationStatuses([$orderUuid])[$orderUuid] ?? null
+            $this->loadOrderConfirmationMetadata([$orderUuid])[$orderUuid] ?? null,
+            $this->loadCompletedTrayReleaseHistory([$orderUuid])[$orderUuid] ?? null
         );
     }
 
@@ -716,6 +727,167 @@ final class PdoStaffOrderRepository
                 $this->pdo->rollBack();
             }
             throw new StorageUnavailableException('Internal notes are currently unavailable.', 0, $exception);
+        }
+    }
+
+    /**
+     * @return array{
+     *   already_applied: bool,
+     *   order: array<string, mixed>,
+     *   tray: ?array<string, mixed>,
+     *   assignment_history: ?array<string, mixed>
+     * }
+     */
+    public function completeOrder(string $forgeOrderUuid): array
+    {
+        $orderUuid = trim($forgeOrderUuid);
+        if ($orderUuid === '') {
+            throw new StaffOrderNotFoundException('That order could not be found.');
+        }
+
+        $timestamp = currentUtcDatabaseDateTime();
+
+        try {
+            $this->pdo->beginTransaction();
+
+            $orderRow = $this->loadOrderRowForUpdate($orderUuid);
+            if ($orderRow === null) {
+                throw new StaffOrderNotFoundException('That order could not be found.');
+            }
+
+            $lockedOrder = normalizeStoredStaffOrderRecord(
+                $orderRow,
+                $this->loadItemProductionRowsForOrderForUpdate($orderUuid),
+                $this->loadOrderConfirmationMetadata([$orderUuid])[$orderUuid] ?? null
+            );
+            $productionStatus = is_string($lockedOrder['production_status'] ?? null)
+                ? $lockedOrder['production_status']
+                : self::ORDER_STATUS_SUBMITTED;
+
+            if ($productionStatus === self::ORDER_STATUS_COMPLETED) {
+                $this->pdo->commit();
+                return [
+                    'already_applied' => true,
+                    'order' => $lockedOrder,
+                    'tray' => null,
+                    'assignment_history' => null,
+                ];
+            }
+
+            if ($productionStatus === self::ORDER_STATUS_CANCELLED) {
+                throw new CompleteOrderNotAllowedException('Cancelled orders cannot be completed.');
+            }
+
+            if ($productionStatus !== self::ORDER_STATUS_READY_TO_PACK) {
+                throw new CompleteOrderNotAllowedException('Only ready-to-pack orders can be completed.');
+            }
+
+            $currentTrayNumber = normalizeNullableTrayNumber($lockedOrder['current_tray_number'] ?? null);
+            if ($currentTrayNumber === null) {
+                throw new CompleteOrderNotAllowedException('This order no longer has an assigned tray.');
+            }
+
+            $counts = deriveStaffOrderCompletionCounts($lockedOrder['payload']['items'] ?? []);
+            if ($counts['total_item_count'] <= 0 || $counts['completed_item_count'] !== $counts['total_item_count']) {
+                throw new CompleteOrderNotAllowedException('Every required item must be complete before finishing this order.');
+            }
+            if (staffOrderHasBlockingFlags($lockedOrder['payload'] ?? [])) {
+                throw new CompleteOrderNotAllowedException('Resolve every open flag before finishing this order.');
+            }
+
+            $trayRow = $this->loadTrayRowForUpdate($currentTrayNumber);
+            if ($trayRow === null) {
+                throw new CompleteOrderNotAllowedException(sprintf('Tray %d could not be found.', $currentTrayNumber));
+            }
+
+            $normalizedTray = normalizeStoredTrayRecord($trayRow);
+            if (($normalizedTray['tray_status'] ?? '') !== self::TRAY_STATUS_ASSIGNED) {
+                throw new CompleteOrderNotAllowedException(sprintf('Tray %d is no longer assigned.', $currentTrayNumber));
+            }
+            if (trim((string) ($normalizedTray['current_order_uuid'] ?? '')) !== $orderUuid) {
+                throw new CompleteOrderNotAllowedException(sprintf('Tray %d is assigned to a different order.', $currentTrayNumber));
+            }
+
+            $activeHistory = $this->loadActiveAssignmentHistoryForUpdate($orderUuid, $currentTrayNumber);
+            if (!is_array($activeHistory)) {
+                throw new CompleteOrderNotAllowedException(sprintf('Tray %d does not have an active assignment record for this order.', $currentTrayNumber));
+            }
+
+            $updateOrder = $this->pdo->prepare(
+                'UPDATE forge_orders
+                 SET production_status = :production_status,
+                     current_tray_number = NULL,
+                     completed_at = :completed_at,
+                     updated_at = :updated_at
+                 WHERE forge_order_uuid = :forge_order_uuid'
+            );
+            $updateOrder->execute([
+                ':production_status' => self::ORDER_STATUS_COMPLETED,
+                ':completed_at' => $timestamp,
+                ':updated_at' => $timestamp,
+                ':forge_order_uuid' => $orderUuid,
+            ]);
+
+            $updateTray = $this->pdo->prepare(
+                'UPDATE forge_production_trays
+                 SET tray_status = :tray_status,
+                     current_order_uuid = NULL,
+                     assigned_at = NULL,
+                     updated_at = :updated_at
+                 WHERE tray_number = :tray_number'
+            );
+            $updateTray->execute([
+                ':tray_status' => self::TRAY_STATUS_AVAILABLE,
+                ':updated_at' => $timestamp,
+                ':tray_number' => $currentTrayNumber,
+            ]);
+
+            $updateHistory = $this->pdo->prepare(
+                'UPDATE forge_tray_assignment_history
+                 SET released_at = :released_at,
+                     release_reason = :release_reason
+                 WHERE tray_assignment_id = :tray_assignment_id'
+            );
+            $updateHistory->execute([
+                ':released_at' => $timestamp,
+                ':release_reason' => self::COMPLETED_RELEASE_REASON,
+                ':tray_assignment_id' => $activeHistory['tray_assignment_id'],
+            ]);
+
+            $updatedOrderRow = $this->loadOrderRowForUpdate($orderUuid);
+            $updatedTrayRow = $this->loadTrayRowForUpdate($currentTrayNumber);
+            $releasedHistory = $this->loadAssignmentHistoryById((string) $activeHistory['tray_assignment_id']);
+            if (!is_array($updatedOrderRow) || !is_array($updatedTrayRow) || !is_array($releasedHistory)) {
+                throw new StorageUnavailableException('Order completion is currently unavailable.');
+            }
+
+            $this->pdo->commit();
+
+            return [
+                'already_applied' => false,
+                'order' => normalizeStoredStaffOrderRecord(
+                    $updatedOrderRow,
+                    $this->loadItemProductionRowsForOrder($orderUuid),
+                    $this->loadOrderConfirmationMetadata([$orderUuid])[$orderUuid] ?? null,
+                    $releasedHistory
+                ),
+                'tray' => normalizeStoredTrayRecord($updatedTrayRow),
+                'assignment_history' => normalizeStoredTrayAssignmentHistoryRecord($releasedHistory),
+            ];
+        } catch (
+            StaffOrderNotFoundException
+            | CompleteOrderNotAllowedException
+            | StorageUnavailableException $exception
+        ) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $exception;
+        } catch (PDOException $exception) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw new StorageUnavailableException('Order completion is currently unavailable.', 0, $exception);
         }
     }
 
@@ -1262,10 +1434,11 @@ final class PdoStaffOrderRepository
                 internal_note,
                 payload_json,
                 payload_sha256,
-                production_status,
-                current_tray_number,
-                ready_to_pack_at,
-                cancelled_at
+                    production_status,
+                    current_tray_number,
+                    ready_to_pack_at,
+                    cancelled_at,
+                    completed_at
              FROM forge_orders
              WHERE forge_order_uuid = :forge_order_uuid
              LIMIT 1
@@ -1653,15 +1826,77 @@ final class PdoStaffOrderRepository
 
     /**
      * @param array<int, string> $orderUuids
-     * @return array<string, string>
+     * @return array<string, array{status: string, sent_at: ?string, last_attempt_at: ?string}>
      */
-    private function loadOrderConfirmationStatuses(array $orderUuids): array
+    private function loadOrderConfirmationMetadata(array $orderUuids): array
     {
         if ($this->outboundMessageRepository === null) {
             return [];
         }
 
-        return $this->outboundMessageRepository->listLatestOrderConfirmationStatusesByOrderUuid($orderUuids);
+        return $this->outboundMessageRepository->listLatestOrderConfirmationMetadataByOrderUuid($orderUuids);
+    }
+
+    /**
+     * @param array<int, string> $orderUuids
+     * @return array<string, array<string, mixed>>
+     */
+    private function loadCompletedTrayReleaseHistory(array $orderUuids): array
+    {
+        $normalizedOrderUuids = array_values(array_filter(array_map(static function ($value): string {
+            return is_string($value) ? trim($value) : '';
+        }, $orderUuids), static function (string $value): bool {
+            return $value !== '';
+        }));
+
+        if ($normalizedOrderUuids === []) {
+            return [];
+        }
+
+        $placeholders = implode(', ', array_fill(0, count($normalizedOrderUuids), '?'));
+
+        try {
+            $statement = $this->pdo->prepare(
+                "SELECT
+                    tray_assignment_id,
+                    tray_number,
+                    forge_order_uuid,
+                    assigned_at,
+                    released_at,
+                    release_reason
+                 FROM forge_tray_assignment_history
+                 WHERE forge_order_uuid IN ({$placeholders})
+                   AND release_reason = ?
+                   AND released_at IS NOT NULL
+                 ORDER BY forge_order_uuid ASC, released_at DESC, tray_assignment_id DESC"
+            );
+            foreach ($normalizedOrderUuids as $index => $orderUuid) {
+                $statement->bindValue($index + 1, $orderUuid, PDO::PARAM_STR);
+            }
+            $statement->bindValue(count($normalizedOrderUuids) + 1, PdoStaffOrderRepository::COMPLETED_RELEASE_REASON, PDO::PARAM_STR);
+            $statement->execute();
+            $rows = $statement->fetchAll();
+        } catch (PDOException $exception) {
+            throw new StorageUnavailableException('Forge order storage is currently unavailable.', 0, $exception);
+        }
+
+        $historyByOrderUuid = [];
+        if (!is_array($rows)) {
+            return $historyByOrderUuid;
+        }
+
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $orderUuid = trim((string) ($row['forge_order_uuid'] ?? ''));
+            if ($orderUuid === '' || array_key_exists($orderUuid, $historyByOrderUuid)) {
+                continue;
+            }
+            $historyByOrderUuid[$orderUuid] = $row;
+        }
+
+        return $historyByOrderUuid;
     }
 }
 
@@ -1677,9 +1912,10 @@ function normalizeStaffOrderLimit(int $limit): int
 /**
  * @param mixed $record
  * @param array<int, array<string, mixed>> $itemProductionRows
+ * @param array<string, mixed>|null $completedTrayRelease
  * @return array<string, mixed>
  */
-function normalizeStoredStaffOrderRecord($record, array $itemProductionRows = [], ?string $confirmationEmailStatus = null): array
+function normalizeStoredStaffOrderRecord($record, array $itemProductionRows = [], ?array $confirmationEmailStatus = null, ?array $completedTrayRelease = null): array
 {
     if (!is_array($record)) {
         throw new \InvalidArgumentException('A valid stored staff order record is required.');
@@ -1716,6 +1952,11 @@ function normalizeStoredStaffOrderRecord($record, array $itemProductionRows = []
         $hasOpenFlags
     );
     $readyToPackAt = normalizeStaffReadyToPackAt($record['ready_to_pack_at'] ?? null, $productionStatus);
+    $completedAt = normalizeStaffCompletedAt($record['completed_at'] ?? null, $productionStatus);
+    $confirmationEmailStatusRecord = normalizeStaffOrderConfirmationEmailStatus($confirmationEmailStatus);
+    $normalizedCompletedTrayRelease = is_array($completedTrayRelease)
+        ? normalizeStoredTrayAssignmentHistoryRecord($completedTrayRelease)
+        : null;
 
     return [
         'forge_order_uuid' => trim((string) ($record['forge_order_uuid'] ?? '')),
@@ -1740,19 +1981,51 @@ function normalizeStoredStaffOrderRecord($record, array $itemProductionRows = []
         'completed_item_count' => $counts['completed_item_count'],
         'ready_to_pack_at' => $readyToPackAt,
         'cancelled_at' => normalizeNullableDatabaseDateTime($record['cancelled_at'] ?? null),
+        'completed_at' => $completedAt,
+        'completed_tray_release' => $normalizedCompletedTrayRelease,
         'has_open_flags' => $hasOpenFlags,
-        'confirmation_email_status' => deriveStaffOrderConfirmationEmailStatusLabel($confirmationEmailStatus),
+        'confirmation_email_status' => $confirmationEmailStatusRecord['label'],
+        'confirmation_email_status_key' => $confirmationEmailStatusRecord['status_key'],
+        'confirmation_email_timestamp' => $confirmationEmailStatusRecord['timestamp'],
     ];
 }
 
-function deriveStaffOrderConfirmationEmailStatusLabel(?string $status): string
+/**
+ * @param array{status?: string, sent_at?: ?string, last_attempt_at?: ?string}|null $record
+ * @return array{label: string, status_key: string, timestamp: ?string}
+ */
+function normalizeStaffOrderConfirmationEmailStatus(?array $record): array
 {
+    $status = is_array($record) ? trim((string) ($record['status'] ?? '')) : '';
+    $sentAt = is_array($record) ? normalizeNullableDatabaseDateTime($record['sent_at'] ?? null) : null;
+    $lastAttemptAt = is_array($record) ? normalizeNullableDatabaseDateTime($record['last_attempt_at'] ?? null) : null;
+
     return match ($status) {
-        OutboundMessageStatus::SENT => 'Sent',
-        OutboundMessageStatus::PENDING => 'Pending',
-        OutboundMessageStatus::FAILED => 'Failed',
-        OutboundMessageStatus::SKIPPED_TEST => 'Skipped/Test',
-        default => 'Not Scheduled',
+        OutboundMessageStatus::SENT => [
+            'label' => 'Email Sent',
+            'status_key' => 'sent',
+            'timestamp' => $sentAt,
+        ],
+        OutboundMessageStatus::PENDING => [
+            'label' => 'Email Pending',
+            'status_key' => 'pending',
+            'timestamp' => null,
+        ],
+        OutboundMessageStatus::FAILED => [
+            'label' => 'Email Failed',
+            'status_key' => 'failed',
+            'timestamp' => $lastAttemptAt,
+        ],
+        OutboundMessageStatus::SKIPPED_TEST => [
+            'label' => 'Email Skipped — Test Order',
+            'status_key' => 'skipped_test',
+            'timestamp' => null,
+        ],
+        default => [
+            'label' => 'Email Not Scheduled',
+            'status_key' => 'not_scheduled',
+            'timestamp' => null,
+        ],
     };
 }
 
@@ -2475,7 +2748,19 @@ function deriveStaffOrderCompletionCounts(array $items): array
  */
 function normalizeStaffReadyToPackAt($value, string $productionStatus): ?string
 {
-    if ($productionStatus !== 'ready_to_pack') {
+    if (!in_array($productionStatus, ['ready_to_pack', 'completed'], true)) {
+        return null;
+    }
+
+    return normalizeNullableDatabaseDateTimeValue($value);
+}
+
+/**
+ * @param mixed $value
+ */
+function normalizeStaffCompletedAt($value, string $productionStatus): ?string
+{
+    if ($productionStatus !== 'completed') {
         return null;
     }
 
@@ -2488,7 +2773,7 @@ function normalizeStaffReadyToPackAt($value, string $productionStatus): ?string
 function deriveStaffOrderProductionStatus($explicitStatus, ?int $currentTrayNumber, int $completedItemCount, int $totalItemCount, bool $hasBlockingFlags): string
 {
     $normalizedExplicitStatus = normalizeProductionStatusValue($explicitStatus, $currentTrayNumber);
-    if (in_array($normalizedExplicitStatus, ['packed', 'shipped', 'picked_up', 'cancelled'], true)) {
+    if (in_array($normalizedExplicitStatus, ['completed', 'packed', 'shipped', 'picked_up', 'cancelled'], true)) {
         return $normalizedExplicitStatus;
     }
     if ($currentTrayNumber === null) {

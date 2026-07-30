@@ -2511,8 +2511,9 @@ test('shared server order detail assign tray button opens the tray picker after 
   await context.openStaffAccessScreen('staff-orders');
   await context.openStaffOrderDetail('shared-order-1');
   assert.match(String(detailDialog.innerHTML || ''), /Order 1001/);
-  assert.match(String(detailDialog.innerHTML || ''), /System Details/);
-  assert.match(String(detailDialog.innerHTML || ''), /shared-order-1/);
+  assert.doesNotMatch(String(detailDialog.innerHTML || ''), /System Details/);
+  assert.match(String(detailDialog.innerHTML || ''), /Customer Email/);
+  assert.match(String(detailDialog.innerHTML || ''), /Order Subtotal/);
 
   let assignTrayButton = getAssignTrayButton();
   assert.ok(assignTrayButton);
@@ -2887,13 +2888,95 @@ test('shared server order detail renders cancel-order confirmation with the stor
 
   await context.openStaffAccessScreen('staff-orders');
   await context.openStaffOrderDetail('shared-order-1');
-  vm.runInContext('staffOrdersState.detailDestructiveAction = "cancel_order"; renderStaffOrderDetail();', context);
+  vm.runInContext('staffOrdersState.detailMoreActionsExpanded = true; staffOrdersState.detailDestructiveAction = "cancel_order"; renderStaffOrderDetail();', context);
 
   assert.match(String(detailDialog.innerHTML || ''), /Cancel Order/);
   assert.match(String(detailDialog.innerHTML || ''), /Order 1001/);
   assert.match(String(detailDialog.innerHTML || ''), /Kyle Hemenway/);
   assert.match(String(detailDialog.innerHTML || ''), /Tray 3/);
   assert.match(String(detailDialog.innerHTML || ''), /active production stops/);
+});
+
+test('shared server completed order detail shows completed history payment method and released tray summary', async () => {
+  const { context, detailDialog, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
+
+  setSharedRecord({
+    production_status: 'completed',
+    current_tray_number: null,
+    ready_to_pack_at: '2026-07-20T11:10:00Z',
+    completed_at: '2026-07-20T11:15:00Z',
+    completed_tray_release: {
+      tray_assignment_id: 'assignment-complete-1',
+      tray_number: 7,
+      forge_order_uuid: 'shared-order-1',
+      assigned_at: '2026-07-20T10:00:00Z',
+      released_at: '2026-07-20T11:15:00Z',
+      release_reason: 'completed'
+    },
+    payload: {
+      customer: { full_name: 'Kyle Hemenway' },
+      fulfillment: { method: 'shipping' },
+      external_payment_method: 'venmo',
+      items: [{ line_id: 'shared-tree-line', quantity: 1, completed_quantity: 1, production_status: 'complete' }],
+      event: { event_id: 'event-live-1', event_name: 'Austin Market', event_type: 'live_event' },
+      pricing: { estimated_total_cents: 4200 },
+      forge_order_number: 1001
+    }
+  });
+
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+
+  const expectedReadyToPack = vm.runInContext('formatReadableDateTime("2026-07-20T11:10:00Z")', context);
+  const expectedCompleted = vm.runInContext('formatReadableDateTime("2026-07-20T11:15:00Z")', context);
+  const detailHtml = String(detailDialog.innerHTML || '');
+
+  assert.match(detailHtml, /Ready to Pack/);
+  assert.match(detailHtml, /Completed/);
+  assert.match(detailHtml, /Payment Method/);
+  assert.match(detailHtml, /Venmo/);
+  assert.match(detailHtml, /Production Tray/);
+  assert.match(detailHtml, /Tray 7 — Released when order was completed on/);
+  assert.match(detailHtml, new RegExp(expectedReadyToPack.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(detailHtml, new RegExp(expectedCompleted.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.doesNotMatch(detailHtml, /2026-07-20 11:15:00/);
+  assert.doesNotMatch(detailHtml, />UUID</);
+});
+
+test('shared server order detail keeps more order actions collapsed by default and resets on reopen', async () => {
+  const { context, detailDialog, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
+
+  setSharedRecord({
+    production_status: 'tray_assigned',
+    current_tray_number: 3,
+    payload: {
+      customer: { full_name: 'Kyle Hemenway' },
+      fulfillment: { method: 'shipping' },
+      items: [{ line_id: 'shared-tree-line', quantity: 1, completed_quantity: 0, production_status: 'pending' }],
+      event: { event_id: 'event-live-1', event_name: 'Austin Market', event_type: 'live_event' },
+      forge_order_number: 1001
+    }
+  });
+
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+
+  let detailHtml = String(detailDialog.innerHTML || '');
+  assert.match(detailHtml, /data-action="staff-toggle-more-order-actions"/);
+  assert.match(detailHtml, /aria-expanded="false"/);
+  assert.match(detailHtml, /id="staff-order-detail-more-actions-panel" hidden/);
+
+  vm.runInContext('staffOrdersState.detailMoreActionsExpanded = true; renderStaffOrderDetail();', context);
+  detailHtml = String(detailDialog.innerHTML || '');
+  assert.match(detailHtml, /aria-expanded="true"/);
+  assert.match(detailHtml, /data-action="staff-open-cancel-order"/);
+
+  context.closeStaffOrderDetail();
+  await context.openStaffOrderDetail('shared-order-1');
+
+  detailHtml = String(detailDialog.innerHTML || '');
+  assert.match(detailHtml, /aria-expanded="false"/);
+  assert.match(detailHtml, /id="staff-order-detail-more-actions-panel" hidden/);
 });
 
 test('shared server cancellation updates the detail view with a CANCELLED badge and disables active-production controls', async () => {
@@ -2958,7 +3041,7 @@ test('shared server Test Session orders render typed delete confirmation and hid
 
   await context.openStaffAccessScreen('staff-orders');
   await context.openStaffOrderDetail('shared-order-1');
-  vm.runInContext('staffOrdersState.detailDestructiveAction = "delete_test_order"; staffOrdersState.detailDestructiveConfirmationText = "DELETE TEST ORDER"; renderStaffOrderDetail();', context);
+  vm.runInContext('staffOrdersState.detailMoreActionsExpanded = true; staffOrdersState.detailDestructiveAction = "delete_test_order"; staffOrdersState.detailDestructiveConfirmationText = "DELETE TEST ORDER"; renderStaffOrderDetail();', context);
 
   assert.match(String(detailDialog.innerHTML || ''), /Delete Test Order/);
   assert.match(String(detailDialog.innerHTML || ''), /TEST/);
@@ -2988,7 +3071,7 @@ test('shared server Test Session delete confirmation preserves input identity an
 
   await context.openStaffAccessScreen('staff-orders');
   await context.openStaffOrderDetail('shared-order-1');
-  vm.runInContext('staffOrdersState.detailDestructiveAction = "delete_test_order"; renderStaffOrderDetail();', context);
+  vm.runInContext('staffOrdersState.detailMoreActionsExpanded = true; staffOrdersState.detailDestructiveAction = "delete_test_order"; renderStaffOrderDetail();', context);
 
   const input = detailDialog.querySelector('[data-staff-destructive-confirmation]');
   const deleteButton = detailDialog.querySelector('[data-action="staff-confirm-delete-test-order"]');
@@ -3055,7 +3138,7 @@ test('shared server Test Session deletion closes the detail dialog and refreshes
 
   await context.openStaffAccessScreen('staff-orders');
   await context.openStaffOrderDetail('shared-order-1');
-  vm.runInContext('staffOrdersState.detailDestructiveAction = "delete_test_order"; staffOrdersState.detailDestructiveConfirmationText = "DELETE TEST ORDER";', context);
+  vm.runInContext('staffOrdersState.detailMoreActionsExpanded = true; staffOrdersState.detailDestructiveAction = "delete_test_order"; staffOrdersState.detailDestructiveConfirmationText = "DELETE TEST ORDER";', context);
   await context.submitStaffDeleteTestOrder('shared-order-1');
 
   assert.equal(getDeleteTestOrderCallCount(), 1);
@@ -3086,7 +3169,7 @@ test('shared server Test Session deletion still invokes the runtime once after e
 
   await context.openStaffAccessScreen('staff-orders');
   await context.openStaffOrderDetail('shared-order-1');
-  vm.runInContext('staffOrdersState.detailDestructiveAction = "delete_test_order"; renderStaffOrderDetail();', context);
+  vm.runInContext('staffOrdersState.detailMoreActionsExpanded = true; staffOrdersState.detailDestructiveAction = "delete_test_order"; renderStaffOrderDetail();', context);
 
   const input = detailDialog.querySelector('[data-staff-destructive-confirmation]');
   input.value = 'DELETE TEST ORDER';
@@ -3120,7 +3203,7 @@ test('shared server Test Session deletion failures stay in the dialog and never 
 
   await context.openStaffAccessScreen('staff-orders');
   await context.openStaffOrderDetail('shared-order-1');
-  vm.runInContext('staffOrdersState.detailDestructiveAction = "delete_test_order"; staffOrdersState.detailDestructiveConfirmationText = "DELETE TEST ORDER";', context);
+  vm.runInContext('staffOrdersState.detailMoreActionsExpanded = true; staffOrdersState.detailDestructiveAction = "delete_test_order"; staffOrdersState.detailDestructiveConfirmationText = "DELETE TEST ORDER";', context);
   await context.submitStaffDeleteTestOrder('shared-order-1');
 
   assert.match(String(detailDialog.innerHTML || ''), /Test order deletion is currently unavailable\./);

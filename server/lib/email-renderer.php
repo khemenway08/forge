@@ -127,8 +127,9 @@ final class EmailRenderer
             . '<tr><td style="padding-top: 8px; padding-bottom: 22px;">'
             . '<table role="presentation" width="100%%" cellspacing="0" cellpadding="0" border="0" style="border: 1px solid #d8c0a7; border-radius: 16px; background-color: #fff8ee;">'
             . '<tr><td style="padding: 18px 20px; text-align: center;">'
-            . '<div style="font-size: 13px; line-height: 1.5; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #8c6b4f; padding-bottom: 6px;">Order total</div>'
+            . '<div style="font-size: 13px; line-height: 1.5; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #8c6b4f; padding-bottom: 6px;">Order subtotal</div>'
             . '<div style="font-size: 30px; line-height: 1.2; font-weight: 700; color: #221d19;">%s</div>'
+            . '<div style="font-size: 13px; line-height: 1.5; color: #6e5a49; padding-top: 8px;">Applicable sales tax is added during payment.</div>'
             . '</td></tr></table>'
             . '</td></tr>'
             . '<tr><td style="font-size: 15px; line-height: 1.7; color: #4b4038;">Reply to <a href="mailto:%s" style="color: #5a3d2b; font-weight: 700; text-decoration: underline;">%s</a> if you need help or need to request a correction.</td></tr>'
@@ -188,7 +189,8 @@ final class EmailRenderer
                 $lines[] = '  • ' . $detail;
             }
         }
-        $lines[] = 'Order total: ' . $summary['order_total'];
+        $lines[] = 'Order subtotal: ' . $summary['order_total'];
+        $lines[] = 'Applicable sales tax is added during payment.';
         $lines[] = '';
         $lines[] = 'Reply to ' . $replyToAddress . ' if you need help or need to request a correction.';
 

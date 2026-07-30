@@ -261,6 +261,46 @@
       };
     }
 
+    async function completeOrder(forgeOrderUuid) {
+      if (environment.dataSource === STAFF_DATA_SOURCES.local) {
+        assertLocalOrderStore(localOrderStore, 'completeOrder');
+        const result = await localOrderStore.completeOrder(forgeOrderUuid);
+        return {
+          ok: true,
+          authenticated: true,
+          dataSource: STAFF_DATA_SOURCES.local,
+          readOnly: false,
+          alreadyApplied: Boolean(result && result.alreadyApplied),
+          order: result && result.order ? result.order : null,
+          tray: result && result.tray ? result.tray : null,
+          assignmentHistory: result && result.assignmentHistoryRecord ? result.assignmentHistoryRecord : null
+        };
+      }
+
+      assertStaffApiClient(staffApiClient, 'completeOrder');
+      const result = await staffApiClient.completeOrder(forgeOrderUuid);
+      if (!result || (!result.ok && result.unauthenticated) || result.authenticated === false) {
+        return {
+          ok: false,
+          authenticated: false,
+          unauthenticated: true,
+          dataSource: STAFF_DATA_SOURCES.server,
+          readOnly: true
+        };
+      }
+
+      return {
+        ok: true,
+        authenticated: true,
+        dataSource: STAFF_DATA_SOURCES.server,
+        readOnly: true,
+        alreadyApplied: Boolean(result.alreadyApplied),
+        order: adaptServerOrderForQueue(result.order),
+        tray: result.tray || null,
+        assignmentHistory: result.assignmentHistory || null
+      };
+    }
+
     async function completeItemQuantity(forgeOrderUuid, lineId, expectedCompletedQuantity, targetCompletedQuantity) {
       if (environment.dataSource === STAFF_DATA_SOURCES.local) {
         assertLocalOrderStore(localOrderStore, 'incrementOrderItemCompletion');
@@ -516,6 +556,7 @@
       loadTrays,
       assignTrayToOrder,
       cancelOrder,
+      completeOrder,
       completeItemQuantity,
       updateInternalNote,
       previewLegacyTestCleanup,
@@ -630,8 +671,14 @@
     const totalItemCount = normalizeOptionalCount(record && record.total_item_count);
     const completedItemCount = normalizeOptionalCount(record && record.completed_item_count);
     const readyToPackAt = normalizeNullableString(record && record.ready_to_pack_at);
+    const completedAt = normalizeNullableString(record && record.completed_at);
+    const completedTrayRelease = record && record.completed_tray_release && typeof record.completed_tray_release === 'object'
+      ? deepCloneValue(record.completed_tray_release)
+      : null;
     const canCompleteItems = Boolean(trayNumber)
       && ['tray_assigned', 'in_production'].includes(productionStatus);
+    const canCompleteOrder = Boolean(trayNumber)
+      && productionStatus === 'ready_to_pack';
     const normalizedPayload = forgeOrderNumber === null
       ? payload
       : {
@@ -660,6 +707,8 @@
       cancelled_at: normalizeNullableString(record && record.cancelled_at),
       packed_at: null,
       ready_to_pack_at: readyToPackAt,
+      completed_at: completedAt,
+      completed_tray_release: completedTrayRelease,
       total_item_count: totalItemCount,
       completed_item_count: completedItemCount,
       has_open_flags: Boolean(record && record.has_open_flags) || Boolean(payload && payload.has_open_flags),
@@ -667,7 +716,8 @@
       staff_data_source: STAFF_DATA_SOURCES.server,
       staff_read_only: true,
       staff_can_assign_tray: productionStatus === 'submitted' && trayNumber === null,
-      staff_can_complete_items: canCompleteItems
+      staff_can_complete_items: canCompleteItems,
+      staff_can_complete_order: canCompleteOrder
     };
   }
 
@@ -740,6 +790,7 @@
       'tray_assigned',
       'in_production',
       'ready_to_pack',
+      'completed',
       'packed',
       'shipped',
       'picked_up',

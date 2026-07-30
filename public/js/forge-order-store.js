@@ -53,6 +53,7 @@
     trayAssigned: 'tray_assigned',
     inProduction: 'in_production',
     readyToPack: 'ready_to_pack',
+    completed: 'completed',
     packed: 'packed',
     shipped: 'shipped',
     pickedUp: 'picked_up',
@@ -833,6 +834,123 @@
       });
     }
 
+    async function completeOrder(forgeOrderUuid) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      if (!orderUuid) {
+        throw new Error('Order completion requires a Forge order UUID.');
+      }
+
+      const db = await openOrderStore();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(
+          [objectStoreNames.orders, objectStoreNames.trays, objectStoreNames.trayAssignmentHistory],
+          'readwrite'
+        );
+        const ordersStore = transaction.objectStore(objectStoreNames.orders);
+        const traysStore = transaction.objectStore(objectStoreNames.trays);
+        const trayAssignmentHistoryStore = transaction.objectStore(objectStoreNames.trayAssignmentHistory);
+        const timestamp = normalizeDateValue(getNow()).toISOString();
+        let completionResult = null;
+
+        transaction.oncomplete = () => resolve(completionResult);
+        transaction.onerror = () => reject(transaction.__forgeError || transaction.error || new Error('Order completion failed.'));
+        transaction.onabort = () => reject(transaction.__forgeError || transaction.error || new Error('Order completion was aborted.'));
+
+        const orderRequest = ordersStore.get(orderUuid);
+        orderRequest.onerror = () => abortTransaction(transaction, orderRequest.error || new Error('The selected order could not be loaded.'));
+        orderRequest.onsuccess = () => {
+          const storedOrder = orderRequest.result;
+          if (!storedOrder) {
+            abortTransaction(transaction, new Error('That saved order could not be found.'));
+            return;
+          }
+
+          const normalizedOrder = normalizeOrderRecordForRead(storedOrder);
+          const productionStatus = normalizeProductionStatus(normalizedOrder.production_status);
+          if (productionStatus === PRODUCTION_STATUSES.completed) {
+            completionResult = {
+              ok: true,
+              alreadyApplied: true,
+              order: normalizedOrder,
+              tray: null,
+              assignmentHistoryRecord: null
+            };
+            return;
+          }
+          if (productionStatus === PRODUCTION_STATUSES.cancelled) {
+            abortTransaction(transaction, new Error('Cancelled orders cannot be completed.'));
+            return;
+          }
+
+          const validation = validateOrderPackingEligibility(normalizedOrder);
+          if (!validation.ok) {
+            abortTransaction(transaction, new Error(validation.error));
+            return;
+          }
+
+          const trayNumber = validation.trayNumber;
+          const updatedOrder = normalizeLocalOrderRecord({
+            ...deepCloneValue(normalizedOrder),
+            updated_at: timestamp,
+            production_status: PRODUCTION_STATUSES.completed,
+            current_tray_number: null,
+            completed_at: timestamp,
+            ready_to_pack_at: normalizedOrder.ready_to_pack_at
+          });
+          const putOrderRequest = ordersStore.put(deepCloneValue(updatedOrder));
+          putOrderRequest.onerror = () => abortTransaction(transaction, putOrderRequest.error || new Error('The order could not be completed.'));
+
+          const trayRequest = traysStore.get(trayNumber);
+          trayRequest.onerror = () => abortTransaction(transaction, trayRequest.error || new Error('The assigned tray could not be loaded.'));
+          trayRequest.onsuccess = () => {
+            const storedTray = trayRequest.result;
+            const updatedTray = createTrayRecord({
+              ...(storedTray ? deepCloneValue(storedTray) : {}),
+              tray_number: trayNumber,
+              tray_status: TRAY_STATUSES.available,
+              current_order_uuid: null,
+              assigned_at: null,
+              updated_at: timestamp
+            });
+            const putTrayRequest = traysStore.put(deepCloneValue(updatedTray));
+            putTrayRequest.onerror = () => abortTransaction(transaction, putTrayRequest.error || new Error('The assigned tray could not be released.'));
+
+            const historyIndex = trayAssignmentHistoryStore.index(INDEX_NAMES.trayAssignmentHistory.forgeOrderUuid);
+            const historyRequest = historyIndex.getAll(orderUuid);
+            historyRequest.onerror = () => abortTransaction(transaction, historyRequest.error || new Error('Tray assignment history could not be loaded.'));
+            historyRequest.onsuccess = () => {
+              const historyRecords = Array.isArray(historyRequest.result) ? historyRequest.result : [];
+              const activeHistoryRecord = historyRecords
+                .map((record) => normalizeTrayAssignmentHistoryRecord(record))
+                .find((record) => record.tray_number === trayNumber && !record.released_at);
+
+              if (!activeHistoryRecord) {
+                abortTransaction(transaction, new Error(`Tray ${trayNumber} does not have an active assignment record for this order.`));
+                return;
+              }
+
+              const releasedHistoryRecord = createTrayAssignmentHistoryRecord({
+                ...deepCloneValue(activeHistoryRecord),
+                released_at: timestamp,
+                release_reason: 'completed'
+              });
+              updatedOrder.completed_tray_release = normalizeTrayAssignmentHistoryRecord(releasedHistoryRecord);
+              const putHistoryRequest = trayAssignmentHistoryStore.put(deepCloneValue(releasedHistoryRecord));
+              putHistoryRequest.onerror = () => abortTransaction(transaction, putHistoryRequest.error || new Error('Tray release history could not be saved.'));
+
+              completionResult = {
+                ok: true,
+                alreadyApplied: false,
+                order: normalizeOrderRecordForRead(updatedOrder),
+                tray: normalizeTrayRecord(updatedTray),
+                assignmentHistoryRecord: normalizeTrayAssignmentHistoryRecord(releasedHistoryRecord)
+              };
+            };
+          };
+        };
+      });
+    }
+
     async function deleteTestOrder(forgeOrderUuid, confirmationText) {
       const orderUuid = asTrimmedString(forgeOrderUuid);
       if (!orderUuid) {
@@ -1149,6 +1267,7 @@
       incrementOrderItemCompletion,
       updateInternalNote,
       cancelOrder,
+      completeOrder,
       deleteTestOrder,
       previewShippingExport,
       generateShippingExportCsv,
@@ -1530,6 +1649,82 @@
           order: normalizeOrderRecordForRead(updatedOrder),
           tray,
           assignmentHistoryRecord: assignmentHistoryRecord ? normalizeTrayAssignmentHistoryRecord(assignmentHistoryRecord) : null
+        };
+      },
+      async completeOrder(forgeOrderUuid) {
+        const orderUuid = asTrimmedString(forgeOrderUuid);
+        const storedOrder = records.get(orderUuid);
+        if (!storedOrder) {
+          throw new Error('That saved order could not be found.');
+        }
+
+        const normalizedOrder = normalizeOrderRecordForRead(storedOrder);
+        const productionStatus = normalizeProductionStatus(normalizedOrder.production_status);
+        if (productionStatus === PRODUCTION_STATUSES.completed) {
+          return {
+            ok: true,
+            alreadyApplied: true,
+            order: normalizedOrder,
+            tray: null,
+            assignmentHistoryRecord: null
+          };
+        }
+        if (productionStatus === PRODUCTION_STATUSES.cancelled) {
+          throw new Error('Cancelled orders cannot be completed.');
+        }
+
+        const validation = validateOrderPackingEligibility(normalizedOrder);
+        if (!validation.ok) {
+          throw new Error(validation.error);
+        }
+
+        const trayNumber = validation.trayNumber;
+        const timestamp = normalizeDateValue(getNow()).toISOString();
+        const updatedOrder = normalizeLocalOrderRecord({
+          ...deepCloneValue(normalizedOrder),
+          updated_at: timestamp,
+          production_status: PRODUCTION_STATUSES.completed,
+          current_tray_number: null,
+          completed_at: timestamp,
+          ready_to_pack_at: normalizedOrder.ready_to_pack_at
+        });
+        const existingTray = trays.get(trayNumber);
+        const updatedTray = createTrayRecord({
+          ...(existingTray ? deepCloneValue(existingTray) : {}),
+          tray_number: trayNumber,
+          tray_status: TRAY_STATUSES.available,
+          current_order_uuid: null,
+          assigned_at: null,
+          updated_at: timestamp
+        });
+
+        let assignmentHistoryRecord = null;
+        for (const [assignmentId, record] of trayAssignmentHistory.entries()) {
+          const normalizedRecord = normalizeTrayAssignmentHistoryRecord(record);
+          if (normalizedRecord.forge_order_uuid === orderUuid && normalizedRecord.tray_number === trayNumber && !normalizedRecord.released_at) {
+            assignmentHistoryRecord = createTrayAssignmentHistoryRecord({
+              ...deepCloneValue(normalizedRecord),
+              released_at: timestamp,
+              release_reason: 'completed'
+            });
+            trayAssignmentHistory.set(assignmentId, deepCloneValue(assignmentHistoryRecord));
+          }
+        }
+        if (!assignmentHistoryRecord) {
+          throw new Error(`Tray ${trayNumber} does not have an active assignment record for this order.`);
+        }
+
+        updatedOrder.completed_tray_release = normalizeTrayAssignmentHistoryRecord(assignmentHistoryRecord);
+
+        records.set(orderUuid, deepCloneValue(updatedOrder));
+        trays.set(trayNumber, deepCloneValue(updatedTray));
+
+        return {
+          ok: true,
+          alreadyApplied: false,
+          order: normalizeOrderRecordForRead(updatedOrder),
+          tray: normalizeTrayRecord(updatedTray),
+          assignmentHistoryRecord: normalizeTrayAssignmentHistoryRecord(assignmentHistoryRecord)
         };
       },
       async deleteTestOrder(forgeOrderUuid, confirmationText) {
@@ -1991,6 +2186,10 @@
       completed_item_count: derivedCounts.completed_item_count,
       ready_to_pack_at: readyToPackAt,
       cancelled_at: record.cancelled_at == null ? null : asTrimmedString(record.cancelled_at),
+      completed_at: record.completed_at == null ? null : asTrimmedString(record.completed_at),
+      completed_tray_release: record.completed_tray_release && typeof record.completed_tray_release === 'object'
+        ? normalizeTrayAssignmentHistoryRecord(record.completed_tray_release)
+        : null,
       packed_at: record.packed_at == null ? null : asTrimmedString(record.packed_at),
       fulfilled_at: record.fulfilled_at == null ? null : asTrimmedString(record.fulfilled_at),
       payload: payloadWithOrderNumber
@@ -2115,6 +2314,9 @@
     if (normalized === PRODUCTION_STATUSES.readyToPack) {
       return PRODUCTION_STATUSES.readyToPack;
     }
+    if (normalized === PRODUCTION_STATUSES.completed) {
+      return PRODUCTION_STATUSES.completed;
+    }
     if (normalized === PRODUCTION_STATUSES.inProduction) {
       return PRODUCTION_STATUSES.inProduction;
     }
@@ -2173,7 +2375,8 @@
 
   function isTerminalOrderProductionStatus(value) {
     const normalized = normalizeProductionStatus(value);
-    return normalized === PRODUCTION_STATUSES.packed
+    return normalized === PRODUCTION_STATUSES.completed
+      || normalized === PRODUCTION_STATUSES.packed
       || normalized === PRODUCTION_STATUSES.shipped
       || normalized === PRODUCTION_STATUSES.pickedUp
       || normalized === PRODUCTION_STATUSES.cancelled;
@@ -2815,6 +3018,7 @@
     incrementOrderItemCompletion: (...args) => defaultOrderStore.incrementOrderItemCompletion(...args),
     updateInternalNote: (...args) => defaultOrderStore.updateInternalNote(...args),
     cancelOrder: (...args) => defaultOrderStore.cancelOrder(...args),
+    completeOrder: (...args) => defaultOrderStore.completeOrder(...args),
     deleteTestOrder: (...args) => defaultOrderStore.deleteTestOrder(...args),
     previewShippingExport: (...args) => defaultOrderStore.previewShippingExport(...args),
     generateShippingExportCsv: (...args) => defaultOrderStore.generateShippingExportCsv(...args),

@@ -391,6 +391,57 @@ test('completeItemQuantity preserves the safe server invalid-request message', a
   );
 });
 
+test('completeOrder sends POST JSON and returns the completed order with released tray details safely', async () => {
+  const requests = [];
+  const client = staffApiClientModule.createForgeStaffApiClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return createJsonResponse(200, {
+        application: 'Forge',
+        api_version: '1',
+        status: 'ok',
+        data: {
+          already_applied: false,
+          order: {
+            forge_order_uuid: 'order-ready-1',
+            forge_order_number: 1042,
+            production_status: 'completed',
+            current_tray_number: null,
+            completed_at: '2026-07-20T11:15:00Z',
+            payload: { customer: { full_name: 'Kyle' }, items: [] }
+          },
+          tray: {
+            tray_number: 6,
+            tray_status: 'available',
+            current_order_uuid: null
+          },
+          assignment_history: {
+            tray_assignment_id: 'assignment-42',
+            tray_number: 6,
+            release_reason: 'completed'
+          }
+        }
+      });
+    }
+  });
+
+  const result = await client.completeOrder('order-ready-1');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.alreadyApplied, false);
+  assert.equal(result.order.production_status, 'completed');
+  assert.equal(result.order.completed_at, '2026-07-20T11:15:00Z');
+  assert.equal(result.tray.tray_number, 6);
+  assert.equal(result.assignmentHistory.release_reason, 'completed');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, '/api/v1/staff/complete-order.php');
+  assert.equal(requests[0].options.method, 'POST');
+  assert.equal(requests[0].options.credentials, 'same-origin');
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    forge_order_uuid: 'order-ready-1'
+  });
+});
+
 test('updateInternalNote sends POST JSON and same-origin credentials with the private note only', async () => {
   const requests = [];
   const client = staffApiClientModule.createForgeStaffApiClient({

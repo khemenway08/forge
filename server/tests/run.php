@@ -1826,7 +1826,7 @@ $runner->run('stored staff order records normalize payload JSON and UTC timestam
     assertSame('123e4567-e89b-42d3-a456-426614174000', $record['payload']['forge_order_uuid']);
     assertSame(null, $record['forge_order_number']);
     assertSame(false, array_key_exists('forge_order_number', $record['payload']));
-    assertSame('Not Scheduled', $record['confirmation_email_status']);
+    assertSame('Email Not Scheduled', $record['confirmation_email_status']);
 });
 
 $runner->run('stored staff order records default missing production fields to submitted with no tray', static function (): void {
@@ -2073,7 +2073,11 @@ $runner->run('stored staff order records expose staff-visible outbound email del
         'payload_json' => json_encode(createValidPayload(), JSON_THROW_ON_ERROR),
         'payload_sha256' => str_repeat('c', 64),
         'production_status' => 'submitted',
-    ], [], \Forge\Server\OutboundMessageStatus::SENT);
+    ], [], [
+        'status' => \Forge\Server\OutboundMessageStatus::SENT,
+        'sent_at' => '2026-07-19 10:07:00.123456',
+        'last_attempt_at' => '2026-07-19 10:07:00.123456',
+    ]);
     $skipped = \Forge\Server\normalizeStoredStaffOrderRecord([
         'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174404',
         'forge_order_number' => 1045,
@@ -2085,10 +2089,18 @@ $runner->run('stored staff order records expose staff-visible outbound email del
         'payload_json' => json_encode(createValidPayload(), JSON_THROW_ON_ERROR),
         'payload_sha256' => str_repeat('d', 64),
         'production_status' => 'submitted',
-    ], [], \Forge\Server\OutboundMessageStatus::SKIPPED_TEST);
+    ], [], [
+        'status' => \Forge\Server\OutboundMessageStatus::SKIPPED_TEST,
+        'sent_at' => null,
+        'last_attempt_at' => null,
+    ]);
 
-    assertSame('Sent', $sent['confirmation_email_status']);
-    assertSame('Skipped/Test', $skipped['confirmation_email_status']);
+    assertSame('Email Sent', $sent['confirmation_email_status']);
+    assertSame('sent', $sent['confirmation_email_status_key']);
+    assertSame('2026-07-19T10:07:00+00:00', $sent['confirmation_email_timestamp']);
+    assertSame('Email Skipped — Test Order', $skipped['confirmation_email_status']);
+    assertSame('skipped_test', $skipped['confirmation_email_status_key']);
+    assertSame(null, $skipped['confirmation_email_timestamp']);
 });
 
 $runner->run('staff repository lists historical orders as Not Scheduled and new outbound statuses when present', static function (): void {
@@ -2119,8 +2131,8 @@ $runner->run('staff repository lists historical orders as Not Scheduled and new 
         $statuses[$order['forge_order_uuid']] = $order['confirmation_email_status'];
     }
 
-    assertSame('Not Scheduled', $statuses['123e4567-e89b-42d3-a456-426614174501']);
-    assertSame('Sent', $statuses['123e4567-e89b-42d3-a456-426614174502']);
+    assertSame('Email Not Scheduled', $statuses['123e4567-e89b-42d3-a456-426614174501']);
+    assertSame('Email Sent', $statuses['123e4567-e89b-42d3-a456-426614174502']);
 });
 
 $runner->run('email renderer includes the branded Hilltop order details and excludes staff-only fields', static function (): void {
@@ -2227,7 +2239,10 @@ $runner->run('email renderer includes the branded Hilltop order details and excl
     assertTrue(strpos($html, 'Follow on Instagram') !== false);
     assertTrue(strpos($html, 'Join our email list') !== false);
     assertTrue(strpos($html, 'mailto:orders@thehilltopshop.com') !== false);
-    assertTrue(strpos($text, 'Order total: $83.00') !== false);
+    assertTrue(strpos($html, 'Order subtotal') !== false);
+    assertTrue(strpos($html, 'Applicable sales tax is added during payment.') !== false);
+    assertTrue(strpos($text, 'Order subtotal: $83.00') !== false);
+    assertTrue(strpos($text, 'Applicable sales tax is added during payment.') !== false);
     assertTrue(strpos($text, 'Please review all spelling and personalization carefully.') !== false);
     assertTrue(strpos($text, 'Follow on Facebook: https://example.com/facebook') !== false);
     assertTrue(strpos($text, 'Follow on Instagram: https://example.com/instagram') !== false);
@@ -5254,7 +5269,8 @@ function createStaffOrderRepositoryTestPdo(bool $includeCleanupTombstones = true
             production_status TEXT NOT NULL,
             current_tray_number INTEGER DEFAULT NULL,
             ready_to_pack_at TEXT DEFAULT NULL,
-            cancelled_at TEXT DEFAULT NULL
+            cancelled_at TEXT DEFAULT NULL,
+            completed_at TEXT DEFAULT NULL
         )'
     );
     $pdo->exec(
@@ -5402,7 +5418,8 @@ function seedStaffOrderRepositoryTestOrder(PDO $pdo, array $options = []): void
             production_status,
             current_tray_number,
             ready_to_pack_at,
-            cancelled_at
+            cancelled_at,
+            completed_at
          ) VALUES (
             :forge_order_uuid,
             :forge_order_number,
@@ -5419,7 +5436,8 @@ function seedStaffOrderRepositoryTestOrder(PDO $pdo, array $options = []): void
             :production_status,
             :current_tray_number,
             :ready_to_pack_at,
-            :cancelled_at
+            :cancelled_at,
+            :completed_at
          )'
     );
     $insertOrder->execute([
@@ -5439,6 +5457,7 @@ function seedStaffOrderRepositoryTestOrder(PDO $pdo, array $options = []): void
         ':current_tray_number' => $currentTrayNumber,
         ':ready_to_pack_at' => $options['ready_to_pack_at'] ?? null,
         ':cancelled_at' => $cancelledAt,
+        ':completed_at' => $options['completed_at'] ?? null,
     ]);
 
     $items = is_array($payload['items'] ?? null) ? $payload['items'] : [];
