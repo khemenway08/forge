@@ -11,6 +11,7 @@
   const MAX_SCALE = 6;
   const SCALE_STEP = 1.25;
   const BODY_LOCK_CLASS = 'forge-catalog-image-viewer-open';
+  const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
 
   function createCatalogImageViewer(options = {}) {
     const documentRef = options.document || (typeof document !== 'undefined' ? document : null);
@@ -113,7 +114,7 @@
               <div class="forge-catalog-image-viewer__center-anchor" data-viewer-center-anchor>
                 <div class="forge-catalog-image-viewer__pan-layer" data-viewer-pan-layer>
                   <div class="forge-catalog-image-viewer__image-frame" data-viewer-image-frame>
-                    <img class="forge-catalog-image-viewer__image" data-viewer-image alt="">
+                    <img class="forge-catalog-image-viewer__image" data-viewer-image alt=""${PINTEREST_NOPIN_IMAGE_ATTRIBUTES}>
                   </div>
                 </div>
               </div>

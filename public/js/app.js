@@ -1,5 +1,6 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260730-45';
+const FORGE_BUILD_VERSION = '20260730-46';
+const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
 
@@ -3731,7 +3732,7 @@ function getItemImageMarkup(item, imageClass = 'current-order-photo', options = 
   const decoding = options.decoding === 'sync' ? 'sync' : 'async';
 
   if (imageData) {
-    return `<img${className} src="${escapeAttribute(imageData.src)}" alt="${escapeAttribute(imageData.alt)}" width="${imageData.width}" height="${imageData.height}" decoding="${decoding}"${loading}>`;
+    return `<img${className} src="${escapeAttribute(imageData.src)}" alt="${escapeAttribute(imageData.alt)}" width="${imageData.width}" height="${imageData.height}" decoding="${decoding}"${loading}${PINTEREST_NOPIN_IMAGE_ATTRIBUTES}>`;
   }
 
   return `

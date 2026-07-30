@@ -32,6 +32,7 @@
     notes: ''
   };
   const MISSING_SWATCH_COPY = 'No swatch yet';
+  const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
   const SORT_OPTIONS = [
     { value: 'custom', label: 'Custom Order' },
     { value: 'az', label: 'A–Z' },
@@ -645,7 +646,7 @@
       }
 
       if (state.dialogSwatchPath) {
-        previewNode.innerHTML = `<img src="${escapeAttribute(state.dialogSwatchPath)}" alt="Current material swatch">`;
+        previewNode.innerHTML = `<img src="${escapeAttribute(state.dialogSwatchPath)}" alt="Current material swatch"${PINTEREST_NOPIN_IMAGE_ATTRIBUTES}>`;
       } else {
         previewNode.innerHTML = `<div class="staff-design-thumbnail-preview-placeholder">${escapeHtml(MISSING_SWATCH_COPY)}</div>`;
       }
@@ -947,7 +948,7 @@
       return {
         type: 'image',
         fitMode,
-        html: `<img class="staff-material-card-thumb-image staff-material-card-thumb-image--${escapeAttribute(fitMode)}" src="${escapeAttribute(normalized.swatch_path)}" alt="${escapeAttribute((normalized.material_name || 'Material') + ' swatch')}">`
+        html: `<img class="staff-material-card-thumb-image staff-material-card-thumb-image--${escapeAttribute(fitMode)}" src="${escapeAttribute(normalized.swatch_path)}" alt="${escapeAttribute((normalized.material_name || 'Material') + ' swatch')}"${PINTEREST_NOPIN_IMAGE_ATTRIBUTES}>`
       };
     }
     return {

@@ -33,6 +33,7 @@
     notes: ''
   };
   const MISSING_PHOTO_COPY = 'No photo yet';
+  const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
   const LINK_TYPES = ['design', 'hat', 'material'];
   const SORT_OPTIONS = [
     { value: 'custom', label: 'Custom Order' },
@@ -1494,7 +1495,7 @@
       status,
       statusLabel: getFinishedHatStatusLabel(status),
       thumbnailHtml: design.thumbnail_path
-        ? `<img class="staff-finished-hat-picker-image staff-finished-hat-picker-image--design" src="${escapeAttribute(design.thumbnail_path)}" alt="${escapeAttribute((primaryLabel || 'Design') + ' thumbnail')}">`
+        ? `<img class="staff-finished-hat-picker-image staff-finished-hat-picker-image--design" src="${escapeAttribute(design.thumbnail_path)}" alt="${escapeAttribute((primaryLabel || 'Design') + ' thumbnail')}"${PINTEREST_NOPIN_IMAGE_ATTRIBUTES}>`
         : `<span class="staff-finished-hat-picker-placeholder">No Thumbnail</span>`,
       ariaLabel: `Select design ${primaryLabel || 'record'}`,
       titleText: [primaryLabel, category, productionMethod].filter(Boolean).join(' • ') || `Select design ${primaryLabel || 'record'}`,
@@ -1523,7 +1524,7 @@
       status,
       statusLabel: getFinishedHatStatusLabel(status),
       thumbnailHtml: hat.photo_path
-        ? `<img class="staff-finished-hat-picker-image staff-finished-hat-picker-image--hat" src="${escapeAttribute(hat.photo_path)}" alt="${escapeAttribute((hatName || 'Hat') + ' photo')}">`
+        ? `<img class="staff-finished-hat-picker-image staff-finished-hat-picker-image--hat" src="${escapeAttribute(hat.photo_path)}" alt="${escapeAttribute((hatName || 'Hat') + ' photo')}"${PINTEREST_NOPIN_IMAGE_ATTRIBUTES}>`
         : `<span class="staff-finished-hat-picker-placeholder">No Photo</span>`,
       ariaLabel: `Select hat ${[manufacturer, model, color].filter(Boolean).join(' ') || hatName || 'record'}`,
       titleText: [manufacturer, model, color, hatName].filter(Boolean).join(' • ') || `Select hat ${hatName || 'record'}`,
@@ -1556,7 +1557,7 @@
       status,
       statusLabel: getFinishedHatStatusLabel(status),
       thumbnailHtml: material.swatch_path
-        ? `<img class="staff-finished-hat-picker-image staff-finished-hat-picker-image--material staff-finished-hat-picker-image--material-${escapeAttribute(fitMode)}" src="${escapeAttribute(material.swatch_path)}" alt="${escapeAttribute((materialName || 'Material') + ' swatch')}">`
+        ? `<img class="staff-finished-hat-picker-image staff-finished-hat-picker-image--material staff-finished-hat-picker-image--material-${escapeAttribute(fitMode)}" src="${escapeAttribute(material.swatch_path)}" alt="${escapeAttribute((materialName || 'Material') + ' swatch')}"${PINTEREST_NOPIN_IMAGE_ATTRIBUTES}>`
         : `<span class="staff-finished-hat-picker-placeholder">No Swatch</span>`,
       ariaLabel: `Select material ${materialName || 'record'}`,
       titleText: [materialName, materialType, color, productionMethod].filter(Boolean).join(' • ') || `Select material ${materialName || 'record'}`,
@@ -1672,7 +1673,7 @@
     const normalized = normalizeFinishedHatRecord(record);
     if (normalized.photo_path) {
       return {
-        html: `<img class="staff-finished-hat-card-thumb-image" src="${escapeAttribute(normalized.photo_path)}" alt="${escapeAttribute((normalized.finished_hat_name || 'Finished hat') + ' photo')}">`
+        html: `<img class="staff-finished-hat-card-thumb-image" src="${escapeAttribute(normalized.photo_path)}" alt="${escapeAttribute((normalized.finished_hat_name || 'Finished hat') + ' photo')}"${PINTEREST_NOPIN_IMAGE_ATTRIBUTES}>`
       };
     }
     return { html: `<span class="staff-design-card-thumb-placeholder">${escapeHtml(MISSING_PHOTO_COPY)}</span>` };
@@ -1725,12 +1726,12 @@
     if (file && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
       const objectUrl = URL.createObjectURL(file);
       return {
-        html: `<img src="${escapeAttribute(objectUrl)}" alt="${escapeAttribute((finishedHatName || 'Finished hat') + ' preview')}">`
+        html: `<img src="${escapeAttribute(objectUrl)}" alt="${escapeAttribute((finishedHatName || 'Finished hat') + ' preview')}"${PINTEREST_NOPIN_IMAGE_ATTRIBUTES}>`
       };
     }
     if (photoPath) {
       return {
-        html: `<img src="${escapeAttribute(photoPath)}" alt="${escapeAttribute((finishedHatName || 'Finished hat') + ' preview')}">`
+        html: `<img src="${escapeAttribute(photoPath)}" alt="${escapeAttribute((finishedHatName || 'Finished hat') + ' preview')}"${PINTEREST_NOPIN_IMAGE_ATTRIBUTES}>`
       };
     }
     return {

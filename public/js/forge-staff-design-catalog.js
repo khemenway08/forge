@@ -60,6 +60,7 @@
     notes: ''
   };
   const MISSING_THUMBNAIL_COPY = 'No thumbnail yet';
+  const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
   const SORT_OPTIONS = [
     { value: 'custom', label: 'Custom Order' },
     { value: 'az', label: 'A–Z' },
@@ -785,7 +786,7 @@
       }
 
       if (state.dialogThumbnailPath) {
-        previewNode.innerHTML = `<img src="${escapeAttribute(state.dialogThumbnailPath)}" alt="Current design thumbnail">`;
+        previewNode.innerHTML = `<img src="${escapeAttribute(state.dialogThumbnailPath)}" alt="Current design thumbnail"${PINTEREST_NOPIN_IMAGE_ATTRIBUTES}>`;
       } else {
         previewNode.innerHTML = `<div class="staff-design-thumbnail-preview-placeholder">${escapeHtml(MISSING_THUMBNAIL_COPY)}</div>`;
       }
@@ -1138,7 +1139,7 @@
         type: 'image',
         src: normalized.thumbnail_path,
         alt: `${normalized.design_name || 'Design'} thumbnail`,
-        html: `<img src="${escapeAttribute(normalized.thumbnail_path)}" alt="${escapeAttribute((normalized.design_name || 'Design') + ' thumbnail')}">`
+        html: `<img src="${escapeAttribute(normalized.thumbnail_path)}" alt="${escapeAttribute((normalized.design_name || 'Design') + ' thumbnail')}"${PINTEREST_NOPIN_IMAGE_ATTRIBUTES}>`
       };
     }
 

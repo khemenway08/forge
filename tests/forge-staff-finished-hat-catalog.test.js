@@ -7,6 +7,7 @@ const finishedHatCatalogModule = require('../public/js/forge-staff-finished-hat-
 
 const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
 const catalogCssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
+const finishedHatSource = fs.readFileSync(path.join(process.cwd(), 'public/js/forge-staff-finished-hat-catalog.js'), 'utf8');
 
 test('finished hat record normalization preserves links dimensions and nullable price', () => {
   const normalized = finishedHatCatalogModule.normalizeFinishedHatRecord({
@@ -155,6 +156,24 @@ test('visual picker design and hat frames use dedicated contain-based image trea
 test('material picker fit mode keeps wide stainless stripe swatches visible', () => {
   assert.equal(finishedHatCatalogModule.getMaterialSwatchFitMode({ image_width: 1800, image_height: 1200 }), 'contain');
   assert.equal(finishedHatCatalogModule.getMaterialSwatchFitMode({ image_width: 1200, image_height: 1800 }), 'cover');
+});
+
+test('finished hat catalog images and picker thumbnails add Pinterest opt-out attributes while preserving alt text', () => {
+  const photoDisplay = finishedHatCatalogModule.getFinishedHatPhotoDisplay({
+    finished_hat_name: 'Sample Finished Hat',
+    photo_path: '/uploads/finished-hat-photos/sample-finished-hat.jpg'
+  });
+
+  assert.match(photoDisplay.html, /\bnopin="nopin"/);
+  assert.match(photoDisplay.html, /\bdata-pin-nopin="true"/);
+  assert.match(photoDisplay.html, /\balt="/);
+  assert.match(finishedHatSource, /const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';/);
+  assert.match(finishedHatSource, /thumbnailHtml:\s*design\.thumbnail_path[\s\S]*staff-finished-hat-picker-image--design[\s\S]*\$\{PINTEREST_NOPIN_IMAGE_ATTRIBUTES\}/);
+  assert.match(finishedHatSource, /thumbnailHtml:\s*hat\.photo_path[\s\S]*staff-finished-hat-picker-image--hat[\s\S]*\$\{PINTEREST_NOPIN_IMAGE_ATTRIBUTES\}/);
+  assert.match(finishedHatSource, /thumbnailHtml:\s*material\.swatch_path[\s\S]*staff-finished-hat-picker-image--material[\s\S]*\$\{PINTEREST_NOPIN_IMAGE_ATTRIBUTES\}/);
+  assert.match(finishedHatSource, /function getFinishedHatPreviewDisplay\(file, photoPath, finishedHatName\)/);
+  assert.match(finishedHatSource, /html: `<img src="\$\{escapeAttribute\(objectUrl\)\}" alt="\$\{escapeAttribute\(\(finishedHatName \|\| 'Finished hat'\) \+ ' preview'\)\}"\$\{PINTEREST_NOPIN_IMAGE_ATTRIBUTES\}>`/);
+  assert.match(finishedHatSource, /html: `<img src="\$\{escapeAttribute\(photoPath\)\}" alt="\$\{escapeAttribute\(\(finishedHatName \|\| 'Finished hat'\) \+ ' preview'\)\}"\$\{PINTEREST_NOPIN_IMAGE_ATTRIBUTES\}>`/);
 });
 
 test('initial unauthenticated finished-hat render does not request protected records and authenticated render loads finished hats', async () => {

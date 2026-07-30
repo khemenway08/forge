@@ -23,6 +23,7 @@
     notes: ''
   };
   const MISSING_PHOTO_COPY = 'No photo yet';
+  const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
   const SORT_OPTIONS = [
     { value: 'custom', label: 'Custom Order' },
     { value: 'az', label: 'A–Z' },
@@ -667,7 +668,7 @@
       }
 
       if (state.dialogPhotoPath) {
-        previewNode.innerHTML = `<img src="${escapeAttribute(state.dialogPhotoPath)}" alt="Current hat photo">`;
+        previewNode.innerHTML = `<img src="${escapeAttribute(state.dialogPhotoPath)}" alt="Current hat photo"${PINTEREST_NOPIN_IMAGE_ATTRIBUTES}>`;
       } else {
         previewNode.innerHTML = `<div class="staff-design-thumbnail-preview-placeholder">${escapeHtml(MISSING_PHOTO_COPY)}</div>`;
       }
@@ -963,7 +964,7 @@
         type: 'image',
         src: normalized.photo_path,
         alt: `${normalized.hat_name || 'Hat'} photo`,
-        html: `<img src="${escapeAttribute(normalized.photo_path)}" alt="${escapeAttribute((normalized.hat_name || 'Hat') + ' photo')}">`
+        html: `<img src="${escapeAttribute(normalized.photo_path)}" alt="${escapeAttribute((normalized.hat_name || 'Hat') + ' photo')}"${PINTEREST_NOPIN_IMAGE_ATTRIBUTES}>`
       };
     }
 

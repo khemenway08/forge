@@ -48,6 +48,8 @@ test('catalog image viewer owns zoom pan navigation focus and scroll-lock behavi
   assert.match(viewerSource, /data-viewer-pan-layer/);
   assert.match(viewerSource, /data-viewer-image-frame/);
   assert.match(viewerSource, /data-viewer-canvas[\s\S]*data-viewer-center-anchor[\s\S]*data-viewer-pan-layer[\s\S]*data-viewer-image-frame[\s\S]*data-viewer-image/);
+  assert.match(viewerSource, /const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';/);
+  assert.match(viewerSource, /<img class="forge-catalog-image-viewer__image" data-viewer-image alt=""\$\{PINTEREST_NOPIN_IMAGE_ATTRIBUTES\}>/);
   assert.match(viewerSource, /event\.key === 'Escape'/);
   assert.match(viewerSource, /event\.key === 'ArrowLeft'/);
   assert.match(viewerSource, /event\.key === 'ArrowRight'/);
@@ -62,6 +64,16 @@ test('catalog image viewer owns zoom pan navigation focus and scroll-lock behavi
   assert.match(viewerSource, /applyFitToScreen\(\);[\s\S]*render\(\);/);
   assert.match(viewerSource, /addEventListener\?\.\('resize'/);
   assert.match(viewerSource, /orientationchange/);
+});
+
+test('hat and material catalog image builders add Pinterest opt-out attributes without changing classes or alt text', () => {
+  assert.match(hatSource, /const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';/);
+  assert.match(hatSource, /previewNode\.innerHTML = `<img src="\$\{escapeAttribute\(state\.dialogPhotoPath\)\}" alt="Current hat photo"\$\{PINTEREST_NOPIN_IMAGE_ATTRIBUTES\}>`;/);
+  assert.match(hatSource, /html: `<img src="\$\{escapeAttribute\(normalized\.photo_path\)\}" alt="\$\{escapeAttribute\(\(normalized\.hat_name \|\| 'Hat'\) \+ ' photo'\)\}"\$\{PINTEREST_NOPIN_IMAGE_ATTRIBUTES\}>`/);
+
+  assert.match(materialSource, /const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';/);
+  assert.match(materialSource, /previewNode\.innerHTML = `<img src="\$\{escapeAttribute\(state\.dialogSwatchPath\)\}" alt="Current material swatch"\$\{PINTEREST_NOPIN_IMAGE_ATTRIBUTES\}>`;/);
+  assert.match(materialSource, /html: `<img class="staff-material-card-thumb-image staff-material-card-thumb-image--\$\{escapeAttribute\(fitMode\)\}" src="\$\{escapeAttribute\(normalized\.swatch_path\)\}" alt="\$\{escapeAttribute\(\(normalized\.material_name \|\| 'Material'\) \+ ' swatch'\)\}"\$\{PINTEREST_NOPIN_IMAGE_ATTRIBUTES\}>`/);
 });
 
 test('fit to screen uses measured stage dimensions and handles common image shapes', () => {

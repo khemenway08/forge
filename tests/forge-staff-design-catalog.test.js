@@ -10,7 +10,7 @@ const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'
 const catalogApiSource = fs.readFileSync(path.join(process.cwd(), 'public/js/forge-staff-design-catalog-api.js'), 'utf8');
 const catalogModuleSource = fs.readFileSync(path.join(process.cwd(), 'public/js/forge-staff-design-catalog.js'), 'utf8');
 const catalogCssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
-const BUILD_VERSION = '20260730-45';
+const BUILD_VERSION = '20260730-46';
 
 test('catalog scripts load before app.js and only in the protected staff shell', () => {
   assert.match(
@@ -105,6 +105,12 @@ test('catalog thumbnail helper renders a restrained placeholder when no thumbnai
 
   assert.equal(display.type, 'placeholder');
   assert.match(display.html, /No thumbnail yet/);
+});
+
+test('design catalog image builders preserve existing image structure while adding Pinterest opt-out attributes', () => {
+  assert.match(catalogModuleSource, /const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';/);
+  assert.match(catalogModuleSource, /previewNode\.innerHTML = `<img src="\$\{escapeAttribute\(state\.dialogThumbnailPath\)\}" alt="Current design thumbnail"\$\{PINTEREST_NOPIN_IMAGE_ATTRIBUTES\}>`;/);
+  assert.match(catalogModuleSource, /html: `<img src="\$\{escapeAttribute\(normalized\.thumbnail_path\)\}" alt="\$\{escapeAttribute\(\(normalized\.design_name \|\| 'Design'\) \+ ' thumbnail'\)\}"\$\{PINTEREST_NOPIN_IMAGE_ATTRIBUTES\}>`/);
 });
 
 test('design edit preview uses the shared contain-based preview frame instead of the old wide-strip crop', () => {

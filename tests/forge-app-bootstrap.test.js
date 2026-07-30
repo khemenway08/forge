@@ -7,7 +7,7 @@ const vm = require('vm');
 const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'), 'utf8');
 const cssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
-const BUILD_VERSION = '20260730-45';
+const BUILD_VERSION = '20260730-46';
 
 function extractScreenMarkup(screenId) {
   const match = indexSource.match(new RegExp(`<section class="screen[\\s\\S]*?data-screen="${screenId}"[\\s\\S]*?<\\/section>`));
@@ -3517,7 +3517,7 @@ test('staff screens share the approved header structure, order, descriptions, an
   scenarios.forEach(({ screenId, description, activeAction, statusAttribute }) => {
     const screenMarkup = extractScreenMarkup(screenId);
     assert.match(screenMarkup, /<header class="staff-orders-header" data-staff-header>/);
-    assert.match(screenMarkup, /<div class="staff-orders-logo-plaque">[\s\S]*?<img class="staff-orders-logo" src="assets\/brand\/forge-logo\.png" alt="Forge">/);
+    assert.match(screenMarkup, /<div class="staff-orders-logo-plaque">[\s\S]*?<img class="staff-orders-logo" src="assets\/brand\/forge-logo\.png" alt="Forge" nopin="nopin" data-pin-nopin="true">/);
     assert.match(screenMarkup, /<div class="staff-orders-header-nav" aria-label="Staff workspace navigation">/);
     assert.match(screenMarkup, /staff-orders-header-nav-row staff-orders-header-nav-row--primary/);
     assert.match(screenMarkup, /staff-orders-header-nav-row staff-orders-header-nav-row--utility/);
@@ -3566,4 +3566,31 @@ test('admin tools shell containment and active navigation readability use the sc
     cssSource,
     /\.staff-header-catalog-button\s*\{[\s\S]*line-height:\s*1\.15;[\s\S]*align-items:\s*center;[\s\S]*justify-content:\s*center;[\s\S]*text-align:\s*center;/
   );
+});
+
+test('Forge entry point declares exactly one Pinterest nopin meta tag and all static images opt out', () => {
+  const metaMatches = indexSource.match(/<meta name="pinterest" content="nopin">/g) || [];
+  const imageTags = indexSource.match(/<img\b[^>]*>/g) || [];
+
+  assert.equal(metaMatches.length, 1);
+  assert.ok(indexSource.indexOf('<meta name="pinterest" content="nopin">') < indexSource.indexOf('</head>'));
+  assert.ok(imageTags.length > 0);
+  imageTags.forEach((tag) => {
+    assert.match(tag, /\bnopin="nopin"/);
+    assert.match(tag, /\bdata-pin-nopin="true"/);
+    assert.match(tag, /\balt="/);
+  });
+});
+
+test('customer runtime adds Pinterest opt-out attributes to dynamic product images without changing image metadata', () => {
+  assert.match(appSource, /const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';/);
+  assert.match(appSource, /function getItemImageMarkup\(item, imageClass = 'current-order-photo', options = \{\}\)/);
+  assert.match(appSource, /decoding="\$\{decoding\}"\$\{loading\}\$\{PINTEREST_NOPIN_IMAGE_ATTRIBUTES\}>/);
+  assert.match(indexSource, /data-tree-customization-image nopin="nopin" data-pin-nopin="true"/);
+});
+
+test('static staff and customer logos keep the same sources while adding Pinterest opt-out attributes', () => {
+  assert.match(indexSource, /<img class="brand-logo" src="assets\/brand\/hilltop-logo\.png" alt="The Hilltop Shop" nopin="nopin" data-pin-nopin="true">/);
+  assert.match(indexSource, /<img class="logo" src="assets\/brand\/hilltop-logo\.png" alt="The Hilltop Shop" nopin="nopin" data-pin-nopin="true">/);
+  assert.match(indexSource, /<img class="staff-orders-logo" src="assets\/brand\/forge-logo\.png" alt="Forge" nopin="nopin" data-pin-nopin="true">/);
 });

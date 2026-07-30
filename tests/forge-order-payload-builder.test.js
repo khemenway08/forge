@@ -10,7 +10,7 @@ const { buildForgeOrderPayload } = require('../public/js/forge-order-payload-bui
 const appSource = fs.readFileSync(path.join(__dirname, '../public/js/app.js'), 'utf8');
 const builderSource = fs.readFileSync(path.join(__dirname, '../public/js/forge-order-payload-builder.js'), 'utf8');
 const indexSource = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
-const BUILD_VERSION = '20260730-45';
+const BUILD_VERSION = '20260730-46';
 
 function createContext(overrides = {}) {
   return {
@@ -133,7 +133,11 @@ test('ornament-selection screen markup remains unchanged from commit 43b5ef4', (
 
   assert.ok(currentSection);
   assert.ok(committedSection);
-  assert.equal(currentSection, committedSection);
+  const normalizePinterestOptOut = (markup) => markup
+    .replace(/\s+nopin="nopin"/g, '')
+    .replace(/\s+data-pin-nopin="true"/g, '');
+
+  assert.equal(normalizePinterestOptOut(currentSection), normalizePinterestOptOut(committedSection));
 });
 
 test('submitted payloads preserve approved external payment metadata and reject unsupported values', () => {
