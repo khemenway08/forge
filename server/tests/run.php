@@ -2204,6 +2204,78 @@ $runner->run('staff repository listOrders accepts ISO outbound-message timestamp
     assertSame(null, $indexed['123e4567-e89b-42d3-a456-426614174604']['confirmation_email_timestamp']);
 });
 
+$runner->run('staff repository preserves stored completed orders after tray release and keeps sent email metadata', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174605',
+        'forge_order_number' => 1065,
+        'production_status' => 'completed',
+        'current_tray_number' => 1,
+        'ready_to_pack_at' => '2026-07-30 12:24:00.000000',
+        'completed_at' => '2026-07-30 12:25:14.946115',
+        'tray_assignment_id' => 'assignment-complete-1',
+        'tray_updated_at' => '2026-07-30 11:00:00.000000',
+        'payload' => createValidPayload([
+            'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174605',
+            'forge_order_number' => 1065,
+            'items' => [
+                [
+                    'line_id' => 'line-complete-1',
+                    'line_number' => 1,
+                    'product_id' => 'antler-ornament',
+                    'product_name' => 'Antler Ornament',
+                    'quantity' => 2,
+                    'completed_quantity' => 2,
+                    'production_status' => 'complete',
+                    'completed_at' => '2026-07-30 12:25:14.946115',
+                    'unit_price_cents' => 2100,
+                    'line_total_cents' => 4200,
+                ],
+            ],
+        ]),
+    ]);
+    $pdo->exec("UPDATE forge_orders SET current_tray_number = NULL WHERE forge_order_uuid = '123e4567-e89b-42d3-a456-426614174605'");
+    $pdo->exec("UPDATE forge_production_trays SET tray_status = 'available', current_order_uuid = NULL WHERE tray_number = 1");
+    $pdo->exec("UPDATE forge_tray_assignment_history SET released_at = '2026-07-30 12:25:14.946115', release_reason = 'completed' WHERE tray_assignment_id = 'assignment-complete-1'");
+    seedOutboundMessage($pdo, [
+        'message_id' => 'msg-complete-sent',
+        'entity_uuid' => '123e4567-e89b-42d3-a456-426614174605',
+        'status' => \Forge\Server\OutboundMessageStatus::SENT,
+        'sent_at' => '2026-07-30 12:26:00.000000',
+        'last_attempt_at' => '2026-07-30 12:26:00.000000',
+    ]);
+
+    $repository = new \Forge\Server\PdoStaffOrderRepository(
+        $pdo,
+        [],
+        new \Forge\Server\PdoOutboundMessageRepository($pdo)
+    );
+
+    $orders = $repository->listOrders(50, 0);
+
+    $record = null;
+    foreach ($orders as $order) {
+        if (($order['forge_order_uuid'] ?? '') === '123e4567-e89b-42d3-a456-426614174605') {
+            $record = $order;
+            break;
+        }
+    }
+
+    assertTrue(is_array($record));
+    assertSame('completed', $record['production_status']);
+    assertSame('2026-07-30T12:25:14+00:00', $record['completed_at']);
+    assertSame(null, $record['current_tray_number']);
+    assertSame(false, $record['has_open_flags']);
+    assertSame(2, $record['total_item_count']);
+    assertSame(2, $record['completed_item_count']);
+    assertSame('Email Sent', $record['confirmation_email_status']);
+    assertSame('sent', $record['confirmation_email_status_key']);
+    assertSame('2026-07-30T12:26:00+00:00', $record['confirmation_email_timestamp']);
+    assertTrue(is_array($record['completed_tray_release']));
+    assertSame(1, $record['completed_tray_release']['tray_number']);
+    assertSame('completed', $record['completed_tray_release']['release_reason']);
+});
+
 $runner->run('email renderer includes the branded Hilltop order details and excludes staff-only fields', static function (): void {
     $payload = createValidPayload([
         'forge_order_number' => 1099,

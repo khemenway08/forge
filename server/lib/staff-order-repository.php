@@ -2572,6 +2572,7 @@ function normalizeProductionStatusValue($value, ?int $currentTrayNumber): string
         'tray_assigned',
         'in_production',
         'ready_to_pack',
+        'completed',
         'packed',
         'shipped',
         'picked_up',

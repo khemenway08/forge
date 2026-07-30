@@ -832,6 +832,68 @@ test('hosted order completion returns the refreshed shared order and released tr
   assert.equal(result.assignmentHistory.release_reason, 'completed');
 });
 
+test('hosted orders preserve completed status tray release and confirmation email metadata from the server record', async () => {
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'https:', hostname: 'forge.example.com' },
+    staffApiClient: {
+      async listOrders() {
+        return {
+          ok: true,
+          authenticated: true,
+          orders: [
+            {
+              forge_order_uuid: 'order-complete-1',
+              forge_order_number: 1092,
+              submitted_at: '2026-07-30T11:00:00Z',
+              received_at: '2026-07-30T11:01:00Z',
+              updated_at: '2026-07-30T12:26:00Z',
+              production_status: 'completed',
+              current_tray_number: null,
+              completed_at: '2026-07-30T12:25:14Z',
+              completed_tray_release: {
+                tray_assignment_id: 'assignment-complete-1',
+                forge_order_uuid: 'order-complete-1',
+                tray_number: 1,
+                assigned_at: '2026-07-30T11:05:00Z',
+                released_at: '2026-07-30T12:25:14Z',
+                release_reason: 'completed'
+              },
+              confirmation_email_status: 'Email Sent',
+              confirmation_email_status_key: 'sent',
+              confirmation_email_timestamp: '2026-07-30T12:26:00Z',
+              total_item_count: 2,
+              completed_item_count: 2,
+              payload: {
+                customer: { full_name: 'Completed Customer' },
+                items: [
+                  { line_id: 'line-1', quantity: 2, completed_quantity: 2, production_status: 'complete' }
+                ]
+              }
+            }
+          ],
+          totalCount: 1,
+          limit: 50,
+          offset: 0
+        };
+      }
+    }
+  });
+
+  const result = await runtime.loadOrders();
+  const [record] = result.records;
+
+  assert.equal(record.production_status, 'completed');
+  assert.equal(record.completed_at, '2026-07-30T12:25:14Z');
+  assert.equal(record.current_tray_number, null);
+  assert.equal(record.staff_can_assign_tray, false);
+  assert.equal(record.staff_can_complete_order, false);
+  assert.equal(record.confirmation_email_status, 'Email Sent');
+  assert.equal(record.confirmation_email_status_key, 'sent');
+  assert.equal(record.confirmation_email_timestamp, '2026-07-30T12:26:00Z');
+  assert.equal(record.completed_tray_release.tray_number, 1);
+  assert.equal(record.completed_tray_release.release_reason, 'completed');
+});
+
 test('localhost test-order deletion stays on the local order-store path without hosted requests', async () => {
   const calls = [];
   const runtime = staffOrdersRuntime.createStaffOrdersRuntime({

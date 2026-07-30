@@ -2906,6 +2906,9 @@ test('shared server completed order detail shows completed history payment metho
     current_tray_number: null,
     ready_to_pack_at: '2026-07-20T11:10:00Z',
     completed_at: '2026-07-20T11:15:00Z',
+    confirmation_email_status: 'Email Sent',
+    confirmation_email_status_key: 'sent',
+    confirmation_email_timestamp: '2026-07-20T11:16:00Z',
     completed_tray_release: {
       tray_assignment_id: 'assignment-complete-1',
       tray_number: 7,
@@ -2936,12 +2939,15 @@ test('shared server completed order detail shows completed history payment metho
   assert.match(detailHtml, /Completed/);
   assert.match(detailHtml, /Payment Method/);
   assert.match(detailHtml, /Venmo/);
+  assert.match(detailHtml, /Customer Email/);
+  assert.match(detailHtml, /Email Sent/);
   assert.match(detailHtml, /Production Tray/);
   assert.match(detailHtml, /Tray 7 — Released when order was completed on/);
   assert.match(detailHtml, new RegExp(expectedReadyToPack.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(detailHtml, new RegExp(expectedCompleted.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.doesNotMatch(detailHtml, /2026-07-20 11:15:00/);
   assert.doesNotMatch(detailHtml, />UUID</);
+  assert.doesNotMatch(detailHtml, /Assign Tray/);
 });
 
 test('shared server order detail keeps more order actions collapsed by default and resets on reopen', async () => {

@@ -675,6 +675,9 @@
     const completedTrayRelease = record && record.completed_tray_release && typeof record.completed_tray_release === 'object'
       ? deepCloneValue(record.completed_tray_release)
       : null;
+    const confirmationEmailStatus = normalizeNullableString(record && record.confirmation_email_status);
+    const confirmationEmailStatusKey = normalizeNullableString(record && record.confirmation_email_status_key);
+    const confirmationEmailTimestamp = normalizeNullableString(record && record.confirmation_email_timestamp);
     const canCompleteItems = Boolean(trayNumber)
       && ['tray_assigned', 'in_production'].includes(productionStatus);
     const canCompleteOrder = Boolean(trayNumber)
@@ -709,6 +712,9 @@
       ready_to_pack_at: readyToPackAt,
       completed_at: completedAt,
       completed_tray_release: completedTrayRelease,
+      confirmation_email_status: confirmationEmailStatus,
+      confirmation_email_status_key: confirmationEmailStatusKey,
+      confirmation_email_timestamp: confirmationEmailTimestamp,
       total_item_count: totalItemCount,
       completed_item_count: completedItemCount,
       has_open_flags: Boolean(record && record.has_open_flags) || Boolean(payload && payload.has_open_flags),
