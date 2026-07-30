@@ -2075,8 +2075,8 @@ $runner->run('stored staff order records expose staff-visible outbound email del
         'production_status' => 'submitted',
     ], [], [
         'status' => \Forge\Server\OutboundMessageStatus::SENT,
-        'sent_at' => '2026-07-19 10:07:00.123456',
-        'last_attempt_at' => '2026-07-19 10:07:00.123456',
+        'sent_at' => '2026-07-19T10:07:00+00:00',
+        'last_attempt_at' => '2026-07-19T10:07:00+00:00',
     ]);
     $skipped = \Forge\Server\normalizeStoredStaffOrderRecord([
         'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174404',
@@ -2133,6 +2133,75 @@ $runner->run('staff repository lists historical orders as Not Scheduled and new 
 
     assertSame('Email Not Scheduled', $statuses['123e4567-e89b-42d3-a456-426614174501']);
     assertSame('Email Sent', $statuses['123e4567-e89b-42d3-a456-426614174502']);
+});
+
+$runner->run('staff repository listOrders accepts ISO outbound-message timestamps and preserves email status timestamps', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174601',
+        'forge_order_number' => 1061,
+    ]);
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174602',
+        'forge_order_number' => 1062,
+    ]);
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174603',
+        'forge_order_number' => 1063,
+    ]);
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => '123e4567-e89b-42d3-a456-426614174604',
+        'forge_order_number' => 1064,
+    ]);
+
+    seedOutboundMessage($pdo, [
+        'message_id' => 'msg-iso-sent',
+        'entity_uuid' => '123e4567-e89b-42d3-a456-426614174601',
+        'status' => \Forge\Server\OutboundMessageStatus::SENT,
+        'sent_at' => '2026-07-30 12:01:00.000000',
+        'last_attempt_at' => '2026-07-30 12:00:00.000000',
+    ]);
+    seedOutboundMessage($pdo, [
+        'message_id' => 'msg-iso-failed',
+        'entity_uuid' => '123e4567-e89b-42d3-a456-426614174602',
+        'status' => \Forge\Server\OutboundMessageStatus::FAILED,
+        'sent_at' => null,
+        'last_attempt_at' => '2026-07-30 12:02:00.000000',
+    ]);
+    seedOutboundMessage($pdo, [
+        'message_id' => 'msg-iso-pending',
+        'entity_uuid' => '123e4567-e89b-42d3-a456-426614174603',
+        'status' => \Forge\Server\OutboundMessageStatus::PENDING,
+        'sent_at' => null,
+        'last_attempt_at' => null,
+    ]);
+
+    $repository = new \Forge\Server\PdoStaffOrderRepository(
+        $pdo,
+        [],
+        new \Forge\Server\PdoOutboundMessageRepository($pdo)
+    );
+
+    $orders = $repository->listOrders(50, 0);
+
+    $indexed = [];
+    foreach ($orders as $order) {
+        $indexed[$order['forge_order_uuid']] = $order;
+    }
+
+    assertSame('Email Sent', $indexed['123e4567-e89b-42d3-a456-426614174601']['confirmation_email_status']);
+    assertSame('2026-07-30T12:01:00+00:00', $indexed['123e4567-e89b-42d3-a456-426614174601']['confirmation_email_timestamp']);
+    assertSame('submitted', $indexed['123e4567-e89b-42d3-a456-426614174601']['production_status']);
+
+    assertSame('Email Failed', $indexed['123e4567-e89b-42d3-a456-426614174602']['confirmation_email_status']);
+    assertSame('2026-07-30T12:02:00+00:00', $indexed['123e4567-e89b-42d3-a456-426614174602']['confirmation_email_timestamp']);
+    assertSame('submitted', $indexed['123e4567-e89b-42d3-a456-426614174602']['production_status']);
+
+    assertSame('Email Pending', $indexed['123e4567-e89b-42d3-a456-426614174603']['confirmation_email_status']);
+    assertSame(null, $indexed['123e4567-e89b-42d3-a456-426614174603']['confirmation_email_timestamp']);
+
+    assertSame('Email Not Scheduled', $indexed['123e4567-e89b-42d3-a456-426614174604']['confirmation_email_status']);
+    assertSame(null, $indexed['123e4567-e89b-42d3-a456-426614174604']['confirmation_email_timestamp']);
 });
 
 $runner->run('email renderer includes the branded Hilltop order details and excludes staff-only fields', static function (): void {

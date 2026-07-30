@@ -1997,8 +1997,8 @@ function normalizeStoredStaffOrderRecord($record, array $itemProductionRows = []
 function normalizeStaffOrderConfirmationEmailStatus(?array $record): array
 {
     $status = is_array($record) ? trim((string) ($record['status'] ?? '')) : '';
-    $sentAt = is_array($record) ? normalizeNullableDatabaseDateTime($record['sent_at'] ?? null) : null;
-    $lastAttemptAt = is_array($record) ? normalizeNullableDatabaseDateTime($record['last_attempt_at'] ?? null) : null;
+    $sentAt = is_array($record) ? normalizeNullableIso8601Value($record['sent_at'] ?? null) : null;
+    $lastAttemptAt = is_array($record) ? normalizeNullableIso8601Value($record['last_attempt_at'] ?? null) : null;
 
     return match ($status) {
         OutboundMessageStatus::SENT => [
