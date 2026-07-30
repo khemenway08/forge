@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260730-46';
+const FORGE_BUILD_VERSION = '20260730-47';
 const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
@@ -9,8 +9,15 @@ const treeForm = document.querySelector('[data-form="tree-ornament"]');
 const treeStatus = document.querySelector('[data-form-status]');
 const entryList = document.querySelector('[data-entry-list]');
 const capacityMessage = document.querySelector('[data-capacity-message]');
+const addPersonInput = document.querySelector('[data-add-person-input]');
+const addPersonError = document.querySelector('[data-entry-add-error]');
 const addPersonButton = document.querySelector('[data-action="add-person"]');
 const addPetButton = document.querySelector('[data-action="add-pet"]');
+const pendingPetControls = document.querySelector('[data-pending-pet-controls]');
+const pendingPetIconSelect = document.querySelector('[data-pending-pet-icon]');
+const pendingPetCustomGroup = document.querySelector('[data-pending-pet-custom-group]');
+const pendingPetCustomInput = document.querySelector('[data-pending-pet-custom]');
+const pendingPetCustomActions = document.querySelector('[data-pending-pet-custom-actions]');
 const treeSubmitButton = document.querySelector('[data-tree-submit-button]');
 const treeCustomizationImage = document.querySelector('[data-tree-customization-image]');
 const customizationEyebrow = document.querySelector('[data-customization-eyebrow]');
@@ -665,6 +672,11 @@ const reviewState = {
   saving: false,
   lastAddedItemId: '',
   error: ''
+};
+const pendingPetEntryState = {
+  open: false,
+  icon: '',
+  iconOther: ''
 };
 
 const addConfirmationState = {
@@ -2016,6 +2028,10 @@ function sanitizeText(value) {
   return value == null ? '' : String(value).replace(/\s+/g, ' ').trim();
 }
 
+function trimText(value) {
+  return value == null ? '' : String(value).trim();
+}
+
 function createId() {
   return `entry-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -3279,6 +3295,76 @@ function renderCapacityMessage() {
   addPetButton.disabled = reachedLimit;
 }
 
+function clearAddPersonError() {
+  if (addPersonError) {
+    addPersonError.textContent = '';
+  }
+}
+
+function setAddPersonError(message) {
+  if (addPersonError) {
+    addPersonError.textContent = message;
+  }
+}
+
+function resetPendingPetEntryState() {
+  pendingPetEntryState.open = false;
+  pendingPetEntryState.icon = '';
+  pendingPetEntryState.iconOther = '';
+}
+
+function renderPendingPetComposer() {
+  if (!pendingPetControls || !pendingPetIconSelect) {
+    return;
+  }
+
+  const isOpen = pendingPetEntryState.open;
+  pendingPetControls.hidden = !isOpen;
+
+  if (!isOpen) {
+    pendingPetIconSelect.innerHTML = '<option value="">Select an icon</option>';
+    pendingPetIconSelect.value = '';
+    if (pendingPetCustomGroup) {
+      pendingPetCustomGroup.hidden = true;
+    }
+    if (pendingPetCustomActions) {
+      pendingPetCustomActions.hidden = true;
+    }
+    if (pendingPetCustomInput) {
+      pendingPetCustomInput.value = '';
+    }
+    return;
+  }
+
+  const iconOptions = getAllowedPetIconLabels().map((option) => (
+    `<option value="${escapeAttribute(option)}" ${pendingPetEntryState.icon === option ? 'selected' : ''}>${escapeHtml(option)}</option>`
+  )).join('');
+  pendingPetIconSelect.innerHTML = `<option value="">Select an icon</option>${iconOptions}`;
+  pendingPetIconSelect.value = pendingPetEntryState.icon || '';
+
+  const showCustomIcon = pendingPetEntryState.icon === 'Custom Icon';
+  if (pendingPetCustomGroup) {
+    pendingPetCustomGroup.hidden = !showCustomIcon;
+  }
+  if (pendingPetCustomActions) {
+    pendingPetCustomActions.hidden = !showCustomIcon;
+  }
+  if (pendingPetCustomInput) {
+    pendingPetCustomInput.value = pendingPetEntryState.iconOther;
+  }
+}
+
+function cancelPendingPetEntry({ preserveName = true, restoreFocus = true } = {}) {
+  if (!preserveName && addPersonInput) {
+    addPersonInput.value = '';
+  }
+  resetPendingPetEntryState();
+  renderPendingPetComposer();
+  if (restoreFocus) {
+    addPersonInput?.focus();
+  }
+}
+
 function renderEntries(focusId) {
   if (!entryList) {
     return;
@@ -3290,10 +3376,11 @@ function renderEntries(focusId) {
     entryList.innerHTML = `
       <li class="entry-empty-state">
         <strong>No people or pets added yet.</strong>
-        <span>Use Add Person or Add Pet below. Names will appear in engraving order.</span>
+        <span>Use Add or Add Pet above. Names will appear in engraving order.</span>
       </li>
     `;
     renderCapacityMessage();
+    renderPendingPetComposer();
     renderCurrentOrderUtilityButtons();
     renderDiscardPanels();
     return;
@@ -3366,6 +3453,7 @@ function renderEntries(focusId) {
   }).join('');
 
   renderCapacityMessage();
+  renderPendingPetComposer();
 
   if (focusId) {
     const focusRow = entryList.querySelector(`[data-entry-id="${focusId}"]`);
@@ -4058,7 +4146,7 @@ function getOrnamentOrderItemValidationIssues(item) {
       issues.push('Each ornament entry must be a person or pet.');
       return;
     }
-    if (!sanitizeText(entry.name || '')) {
+    if (!trimText(entry.name || '')) {
       issues.push(`${entry.kind === 'pet' ? 'Pet' : 'Person'} names are required.`);
     }
     if (entry.kind === 'pet') {
@@ -4167,7 +4255,7 @@ function getReviewEntriesMarkup(entries) {
         <span class="review-entry-position">${index + 1}.</span>
         <div class="review-entry-body">
           <div class="review-entry-primary">
-            <span class="review-entry-name">${escapeHtml(sanitizeText(entry.name) || 'Unnamed')}</span>
+            <span class="review-entry-name">${escapeHtml(trimText(entry.name) || 'Unnamed')}</span>
             <span class="review-entry-badge">${entry.kind === 'pet' ? 'Pet' : 'Person'}</span>
           </div>
           ${details.length > 0 ? `<div class="review-entry-detail">${details.join(' • ')}</div>` : ''}
@@ -4232,7 +4320,7 @@ function normalizeTreeOrderItem() {
   const entries = draft.entries.map((entry, index) => ({
     position: index + 1,
     kind: entry.kind,
-    name: sanitizeText(entry.name),
+    name: trimText(entry.name),
     icon: entry.kind === 'pet' ? entry.icon : null,
     customIconDescription: entry.kind === 'pet' && entry.icon === 'Custom Icon'
       ? sanitizeText(entry.iconOther || '')
@@ -4297,7 +4385,7 @@ function normalizeOrderItemRecord(record) {
         return {
           position: Number.isFinite(entry.position) ? entry.position : index + 1,
           kind: entry.kind,
-          name: typeof entry.name === 'string' ? sanitizeText(entry.name) : '',
+          name: typeof entry.name === 'string' ? trimText(entry.name) : '',
           icon: normalizePetIconLabel(entry.icon, record.productDefinitionId),
           customIconDescription: typeof entry.customIconDescription === 'string'
             ? sanitizeText(entry.customIconDescription)
@@ -9300,6 +9388,7 @@ function openFinalReview() {
 
 function resetTreeDraftForNewItem() {
   resetDraftState('tree_ornament');
+  resetPendingPetEntryState();
   renderAddConfirmation();
   saveDraft();
   saveAppState();
@@ -9324,6 +9413,7 @@ function loadCartItemIntoDraft(itemId) {
   draft.year = draftSource.year;
   draft.entries = draftSource.entries;
   draft.productDefinitionId = resolveConfiguredProductDefinitionId(draftSource.productDefinitionId);
+  resetPendingPetEntryState();
   appState.editingItemId = item.itemId;
   appState.reviewedItemId = item.itemId;
   clearOrderUiNote();
@@ -9443,6 +9533,117 @@ function addEntry(kind) {
   renderEntries(entry.id);
 }
 
+function createCommittedPetEntry() {
+  const normalizedName = trimText(addPersonInput?.value || '');
+  if (!normalizedName) {
+    setAddPersonError('Enter a name before adding a pet.');
+    addPersonInput?.focus();
+    return false;
+  }
+
+  const { reachedLimit } = getCapacityDetails();
+  if (reachedLimit) {
+    renderCapacityMessage();
+    addPersonInput?.focus();
+    return false;
+  }
+
+  const normalizedIcon = normalizePetIconLabel(pendingPetEntryState.icon, draft.productDefinitionId);
+  if (!normalizedIcon) {
+    setAddPersonError('Choose a pet icon before adding it.');
+    pendingPetIconSelect?.focus();
+    return false;
+  }
+
+  const normalizedIconOther = normalizedIcon === 'Custom Icon'
+    ? trimText(pendingPetEntryState.iconOther || '')
+    : '';
+  if (normalizedIcon === 'Custom Icon' && !normalizedIconOther) {
+    setAddPersonError('Describe the custom icon before adding the pet.');
+    pendingPetCustomInput?.focus();
+    return false;
+  }
+
+  clearAddPersonError();
+  setFieldError('entries', '');
+  treeStatus.textContent = '';
+
+  draft.entries.push({
+    id: createId(),
+    kind: 'pet',
+    name: normalizedName,
+    icon: normalizedIcon,
+    iconOther: normalizedIconOther
+  });
+
+  saveDraft();
+  resetPendingPetEntryState();
+  renderEntries();
+
+  if (addPersonInput) {
+    addPersonInput.value = '';
+    addPersonInput.focus();
+  }
+  return true;
+}
+
+function openPendingPetEntry() {
+  const { reachedLimit } = getCapacityDetails();
+  if (reachedLimit) {
+    renderCapacityMessage();
+    return;
+  }
+
+  const normalizedName = trimText(addPersonInput?.value || '');
+  if (!normalizedName) {
+    setAddPersonError('Enter a name before adding a pet.');
+    addPersonInput?.focus();
+    return;
+  }
+
+  clearAddPersonError();
+  pendingPetEntryState.open = true;
+  pendingPetEntryState.icon = '';
+  pendingPetEntryState.iconOther = '';
+  renderPendingPetComposer();
+  pendingPetIconSelect?.focus();
+}
+
+function addPersonFromField() {
+  const { reachedLimit } = getCapacityDetails();
+  if (reachedLimit) {
+    renderCapacityMessage();
+    return;
+  }
+
+  const normalizedName = trimText(addPersonInput?.value || '');
+  if (!normalizedName) {
+    setAddPersonError('Enter a person name before adding it.');
+    addPersonInput?.focus();
+    return;
+  }
+
+  clearAddPersonError();
+  setFieldError('entries', '');
+  treeStatus.textContent = '';
+  resetPendingPetEntryState();
+  renderPendingPetComposer();
+
+  draft.entries.push({
+    id: createId(),
+    kind: 'person',
+    name: normalizedName
+  });
+
+  saveDraft();
+  renderEntries();
+
+  if (addPersonInput) {
+    addPersonInput.value = '';
+    addPersonInput.focus();
+  }
+}
+
 function findEntry(entryId) {
   return draft.entries.find((entry) => entry.id === entryId);
 }
@@ -9476,8 +9677,7 @@ function updateEntryField(entryId, field, value) {
     return;
   }
 
-  const normalizedValue = field.includes('name') || field.includes('Other') ? value.replace(/\s{2,}/g, ' ') : value;
-  entry[field] = normalizedValue;
+  entry[field] = value;
 
   if (field === 'icon' && value !== 'Custom Icon') {
     entry.iconOther = '';
@@ -9570,7 +9770,7 @@ function validateTreeForm() {
     const errorNode = row?.querySelector('[data-entry-error]');
     const messages = [];
 
-    if (!sanitizeText(entry.name)) {
+    if (!trimText(entry.name)) {
       messages.push(`${entry.kind === 'person' ? 'Person' : 'Pet'} name is required.`);
     }
 
@@ -9958,8 +10158,57 @@ if (treeForm) {
     }
   });
 
-  addPersonButton.addEventListener('click', () => addEntry('person'));
-  addPetButton.addEventListener('click', () => addEntry('pet'));
+  addPersonButton.addEventListener('click', () => addPersonFromField());
+  addPetButton.addEventListener('click', () => openPendingPetEntry());
+
+  addPersonInput?.addEventListener('input', () => {
+    clearAddPersonError();
+    setFieldError('entries', '');
+    treeStatus.textContent = '';
+  });
+
+  addPersonInput?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') {
+      return;
+    }
+    event.preventDefault();
+  });
+
+  pendingPetIconSelect?.addEventListener('change', () => {
+    pendingPetEntryState.icon = normalizePetIconLabel(pendingPetIconSelect.value, draft.productDefinitionId);
+    if (pendingPetEntryState.icon !== 'Custom Icon') {
+      pendingPetEntryState.iconOther = '';
+    }
+    clearAddPersonError();
+    renderPendingPetComposer();
+    if (pendingPetEntryState.icon && pendingPetEntryState.icon !== 'Custom Icon') {
+      createCommittedPetEntry();
+      return;
+    }
+    if (pendingPetEntryState.icon === 'Custom Icon') {
+      pendingPetCustomInput?.focus();
+    }
+  });
+
+  pendingPetCustomInput?.addEventListener('input', () => {
+    pendingPetEntryState.iconOther = pendingPetCustomInput.value;
+    clearAddPersonError();
+  });
+
+  pendingPetCustomInput?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') {
+      return;
+    }
+    event.preventDefault();
+  });
+
+  document.querySelector('[data-action="cancel-pet-entry"]')?.addEventListener('click', () => {
+    cancelPendingPetEntry({ preserveName: true, restoreFocus: true });
+  });
+
+  document.querySelector('[data-action="confirm-pet-custom"]')?.addEventListener('click', () => {
+    createCommittedPetEntry();
+  });
 
   utilityOrderButtons.forEach((button) => {
     button.addEventListener('click', () => {
@@ -10104,7 +10353,9 @@ if (treeForm) {
     }
 
     if (event.target.tagName === 'INPUT') {
-      event.target.value = sanitizeText(event.target.value);
+      event.target.value = field === 'name'
+        ? trimText(event.target.value)
+        : sanitizeText(event.target.value);
       updateEntryField(row.dataset.entryId, field, event.target.value);
     }
 

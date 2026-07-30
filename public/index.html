@@ -9,7 +9,7 @@
   <meta name="pinterest" content="nopin">
   <title>The Hilltop Shop Custom Orders</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="css/app.css?v=20260730-46">
+  <link rel="stylesheet" href="css/app.css?v=20260730-47">
 </head>
 <body>
   <div class="app-shell">
@@ -528,19 +528,40 @@
               <div class="section-heading">
                 <div>
                   <p class="section-label">People and Pets</p>
-                  <p class="section-copy">Add each person and pet in the exact order you want on the ornament.</p>
+                  <p class="section-copy">Add each person or pet in the exact engraving order.</p>
                 </div>
+              </div>
+
+              <div class="entry-controls">
+                <div class="entry-composer">
+                  <div class="form-group entry-composer-input">
+                    <label for="entry-person-name">Name</label>
+                    <input id="entry-person-name" name="entryPersonName" type="text" maxlength="32" placeholder="Enter name" data-add-person-input spellcheck="false" autocorrect="off" autocomplete="off" autocapitalize="off">
+                  </div>
+                  <button class="secondary-button" type="button" data-action="add-person">Add</button>
+                  <button class="secondary-button" type="button" data-action="add-pet">Add Pet</button>
+                </div>
+                <div class="entry-pet-composer" data-pending-pet-controls hidden>
+                  <div class="form-group entry-pet-icon-group">
+                    <label for="entry-pet-icon">Pet Icon</label>
+                    <select id="entry-pet-icon" data-pending-pet-icon aria-label="Pet Icon">
+                      <option value="">Select an icon</option>
+                    </select>
+                  </div>
+                  <button class="secondary-button" type="button" data-action="cancel-pet-entry">Cancel</button>
+                </div>
+                <div class="form-group entry-pet-custom-group" data-pending-pet-custom-group hidden>
+                  <label for="entry-pet-icon-other">Custom Icon</label>
+                  <input id="entry-pet-icon-other" type="text" maxlength="24" placeholder="Describe the custom icon" data-pending-pet-custom spellcheck="false" autocorrect="off" autocomplete="off" autocapitalize="off">
+                </div>
+                <div class="entry-pet-custom-actions" data-pending-pet-custom-actions hidden>
+                  <button class="secondary-button" type="button" data-action="confirm-pet-custom">Add Pet</button>
+                </div>
+                <p class="field-error" data-entry-add-error aria-live="polite"></p>
+                <p class="capacity-message" data-capacity-message aria-live="polite"></p>
               </div>
 
               <ol class="entry-list" id="people-pets-list" data-entry-list></ol>
-
-              <div class="entry-controls">
-                <p class="capacity-message" data-capacity-message aria-live="polite"></p>
-                <div class="entry-actions">
-                  <button class="secondary-button" type="button" data-action="add-person">Add Person</button>
-                  <button class="secondary-button" type="button" data-action="add-pet">Add Pet</button>
-                </div>
-              </div>
 
               <p class="field-error" data-error-for="entries" aria-live="polite"></p>
             </div>
@@ -784,28 +805,28 @@
     </div>
   </div>
 
-  <script src="js/forge-product-catalog.js?v=20260730-46"></script>
-  <script src="js/forge-order-payload-builder.js?v=20260730-46"></script>
-  <script src="js/forge-order-payload-preview.js?v=20260730-46"></script>
-  <script src="js/forge-api-client.js?v=20260730-46"></script>
-  <script src="js/forge-order-store.js?v=20260730-46"></script>
-  <script src="js/forge-order-server-sync.js?v=20260730-46"></script>
-  <script src="js/forge-sync-status.js?v=20260730-46"></script>
-  <script src="js/forge-order-submission.js?v=20260730-46"></script>
-  <script src="js/forge-event-state.js?v=20260730-46"></script>
-  <script src="js/forge-staff-api-client.js?v=20260730-46"></script>
-  <script src="js/forge-staff-catalog-ordering.js?v=20260730-46"></script>
-  <script src="js/forge-catalog-image-viewer.js?v=20260730-46"></script>
-  <script src="js/forge-staff-design-catalog-api.js?v=20260730-46"></script>
-  <script src="js/forge-staff-design-catalog.js?v=20260730-46"></script>
-  <script src="js/forge-staff-hat-catalog-api.js?v=20260730-46"></script>
-  <script src="js/forge-staff-hat-catalog.js?v=20260730-46"></script>
-  <script src="js/forge-staff-material-catalog-api.js?v=20260730-46"></script>
-  <script src="js/forge-staff-material-catalog.js?v=20260730-46"></script>
-  <script src="js/forge-staff-finished-hat-catalog-api.js?v=20260730-46"></script>
-  <script src="js/forge-staff-finished-hat-catalog.js?v=20260730-46"></script>
-  <script src="js/forge-staff-orders-runtime.js?v=20260730-46"></script>
-  <script src="js/forge-local-orders-queue.js?v=20260730-46"></script>
-  <script src="js/app.js?v=20260730-46"></script>
+  <script src="js/forge-product-catalog.js?v=20260730-47"></script>
+  <script src="js/forge-order-payload-builder.js?v=20260730-47"></script>
+  <script src="js/forge-order-payload-preview.js?v=20260730-47"></script>
+  <script src="js/forge-api-client.js?v=20260730-47"></script>
+  <script src="js/forge-order-store.js?v=20260730-47"></script>
+  <script src="js/forge-order-server-sync.js?v=20260730-47"></script>
+  <script src="js/forge-sync-status.js?v=20260730-47"></script>
+  <script src="js/forge-order-submission.js?v=20260730-47"></script>
+  <script src="js/forge-event-state.js?v=20260730-47"></script>
+  <script src="js/forge-staff-api-client.js?v=20260730-47"></script>
+  <script src="js/forge-staff-catalog-ordering.js?v=20260730-47"></script>
+  <script src="js/forge-catalog-image-viewer.js?v=20260730-47"></script>
+  <script src="js/forge-staff-design-catalog-api.js?v=20260730-47"></script>
+  <script src="js/forge-staff-design-catalog.js?v=20260730-47"></script>
+  <script src="js/forge-staff-hat-catalog-api.js?v=20260730-47"></script>
+  <script src="js/forge-staff-hat-catalog.js?v=20260730-47"></script>
+  <script src="js/forge-staff-material-catalog-api.js?v=20260730-47"></script>
+  <script src="js/forge-staff-material-catalog.js?v=20260730-47"></script>
+  <script src="js/forge-staff-finished-hat-catalog-api.js?v=20260730-47"></script>
+  <script src="js/forge-staff-finished-hat-catalog.js?v=20260730-47"></script>
+  <script src="js/forge-staff-orders-runtime.js?v=20260730-47"></script>
+  <script src="js/forge-local-orders-queue.js?v=20260730-47"></script>
+  <script src="js/app.js?v=20260730-47"></script>
 </body>
 </html>

@@ -896,15 +896,59 @@ h1 {
   gap: 10px;
 }
 
-.entry-actions {
-  display: flex;
-  flex-wrap: wrap;
+.entry-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 12px;
+  align-items: end;
 }
 
-.entry-actions .secondary-button {
+.entry-composer .secondary-button {
   min-height: 50px;
   padding-inline: 18px;
+}
+
+.entry-composer-input {
+  min-width: 0;
+}
+
+.entry-composer-input label {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.entry-composer-input input {
+  width: 100%;
+  min-height: 50px;
+}
+
+.entry-pet-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.entry-pet-composer .secondary-button,
+.entry-pet-custom-actions .secondary-button {
+  min-height: 50px;
+  padding-inline: 18px;
+}
+
+.entry-pet-icon-group,
+.entry-pet-custom-group {
+  min-width: 0;
+}
+
+.entry-pet-icon-group select,
+.entry-pet-custom-group input {
+  width: 100%;
+  min-height: 50px;
+}
+
+.entry-pet-custom-actions {
+  display: flex;
+  justify-content: flex-start;
 }
 
 .capacity-message {
@@ -915,7 +959,7 @@ h1 {
 }
 
 .entry-list {
-  margin: 16px 0 0;
+  margin: 12px 0 0;
   padding: 0;
   list-style: none;
   border: 1px solid var(--line);
@@ -4032,6 +4076,23 @@ body.forge-catalog-image-viewer-open {
 }
 
 @media (max-width: 767px) {
+  .entry-composer {
+    grid-template-columns: 1fr;
+  }
+
+  .entry-composer .secondary-button {
+    width: 100%;
+  }
+
+  .entry-pet-composer {
+    grid-template-columns: 1fr;
+  }
+
+  .entry-pet-composer .secondary-button,
+  .entry-pet-custom-actions .secondary-button {
+    width: 100%;
+  }
+
   .staff-catalog-designs-filters {
     grid-template-columns: 1fr;
   }

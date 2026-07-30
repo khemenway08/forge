@@ -7,7 +7,7 @@ const vm = require('vm');
 const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'), 'utf8');
 const cssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
-const BUILD_VERSION = '20260730-46';
+const BUILD_VERSION = '20260730-47';
 
 function extractScreenMarkup(screenId) {
   const match = indexSource.match(new RegExp(`<section class="screen[\\s\\S]*?data-screen="${screenId}"[\\s\\S]*?<\\/section>`));
@@ -103,6 +103,7 @@ function createElement(name = 'div') {
       });
     },
     focus() {},
+    select() {},
     matches() {
       return false;
     }
@@ -224,6 +225,22 @@ function loadForgeAppWithoutStaffModules({
   const finalReviewCancelPanel = createElement('div');
   finalReviewCancelPanel.hidden = true;
   const finalReviewStatus = createElement('p');
+  const entryList = createElement('ol');
+  const capacityMessage = createElement('p');
+  const addPersonButton = attachActionDataset(createElement('button'), 'add-person');
+  const addPetButton = attachActionDataset(createElement('button'), 'add-pet');
+  const addPersonInput = createElement('input');
+  const addPersonError = createElement('p');
+  const pendingPetControls = createElement('div');
+  pendingPetControls.hidden = true;
+  const pendingPetIconSelect = createElement('select');
+  const pendingPetCustomGroup = createElement('div');
+  pendingPetCustomGroup.hidden = true;
+  const pendingPetCustomInput = createElement('input');
+  const pendingPetCustomActions = createElement('div');
+  pendingPetCustomActions.hidden = true;
+  const cancelPetButton = attachActionDataset(createElement('button'), 'cancel-pet-entry');
+  const confirmPetCustomButton = attachActionDataset(createElement('button'), 'confirm-pet-custom');
   const staffPanel = createElement('div');
   staffPanel.hidden = true;
   const staffDefaultActions = createElement('div');
@@ -293,6 +310,19 @@ function loadForgeAppWithoutStaffModules({
   env.registerSelector('[data-staff-actions="default"]', staffDefaultActions);
   env.registerSelector('[data-staff-actions="confirm"]', staffConfirmActions);
   env.registerSelector('[data-form="tree-ornament"]', treeForm);
+  env.registerSelector('[data-entry-list]', entryList);
+  env.registerSelector('[data-capacity-message]', capacityMessage);
+  env.registerSelector('[data-action="add-person"]', addPersonButton);
+  env.registerSelector('[data-action="add-pet"]', addPetButton);
+  env.registerSelector('[data-add-person-input]', addPersonInput);
+  env.registerSelector('[data-entry-add-error]', addPersonError);
+  env.registerSelector('[data-pending-pet-controls]', pendingPetControls);
+  env.registerSelector('[data-pending-pet-icon]', pendingPetIconSelect);
+  env.registerSelector('[data-pending-pet-custom-group]', pendingPetCustomGroup);
+  env.registerSelector('[data-pending-pet-custom]', pendingPetCustomInput);
+  env.registerSelector('[data-pending-pet-custom-actions]', pendingPetCustomActions);
+  env.registerSelector('[data-action="cancel-pet-entry"]', cancelPetButton);
+  env.registerSelector('[data-action="confirm-pet-custom"]', confirmPetCustomButton);
   env.registerSelector('[data-final-review-actions-card]', finalReviewActionsCard);
   env.registerSelector('[data-final-review-cancel-panel]', finalReviewCancelPanel);
   env.registerSelector('[data-final-review-status]', finalReviewStatus);
@@ -611,6 +641,15 @@ function loadForgeAppWithoutStaffModules({
   context.window.removeEventListener = () => {};
   context.window.dispatchEvent = () => true;
   context.window.scrollTo = () => {};
+  addPersonInput.focus = () => {
+    context.document.activeElement = addPersonInput;
+  };
+  pendingPetIconSelect.focus = () => {
+    context.document.activeElement = pendingPetIconSelect;
+  };
+  pendingPetCustomInput.focus = () => {
+    context.document.activeElement = pendingPetCustomInput;
+  };
 
   vm.createContext(context);
 
@@ -662,6 +701,18 @@ function loadForgeAppWithoutStaffModules({
     finalReviewDelivery,
     thankYouCopy,
     thankYouReference,
+    entryList,
+    addPersonInput,
+    addPersonButton,
+    addPetButton,
+    addPersonError,
+    pendingPetControls,
+    pendingPetIconSelect,
+    pendingPetCustomGroup,
+    pendingPetCustomInput,
+    pendingPetCustomActions,
+    cancelPetButton,
+    confirmPetCustomButton,
     getStaffAdminRenderCount() {
       return staffAdminRenderCount;
     }
@@ -1664,6 +1715,238 @@ test('no customer screen renders a staff PIN field', () => {
   assert.doesNotMatch(indexSource, /data-payment-handoff-pin/);
   assert.doesNotMatch(indexSource, /payment-handoff-pin/);
   assert.doesNotMatch(indexSource, /data-screen="payment-handoff"/);
+});
+
+test('tree customization shows a shared name field with adjacent Add and Add Pet controls plus pending pet icon controls', () => {
+  const treeMarkup = extractScreenMarkup('tree-customization');
+
+  assert.match(treeMarkup, /data-add-person-input/);
+  assert.match(treeMarkup, /<label for="entry-person-name">Name<\/label>/);
+  assert.match(treeMarkup, /data-action="add-person">Add<\/button>/);
+  assert.match(treeMarkup, /data-action="add-pet">Add Pet<\/button>/);
+  assert.match(treeMarkup, /data-pending-pet-icon/);
+  assert.match(treeMarkup, /data-action="cancel-pet-entry">Cancel<\/button>/);
+  assert.match(treeMarkup, /data-entry-add-error/);
+  assert.doesNotMatch(treeMarkup, />Add Person<\/button>/);
+  assert.doesNotMatch(treeMarkup, /Enter pet name/);
+  assert.doesNotMatch(treeMarkup, /Done Adding Names/);
+  assert.doesNotMatch(treeMarkup, />Save<\/button>/);
+});
+
+test('persistent name add appends ordered person entries, clears the field, and restores focus without reopening another control', () => {
+  const {
+    context,
+    entryList,
+    addPersonInput,
+    addPersonButton
+  } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    draft.productDefinitionId = 'tree_ornament';
+    draft.size = 'Large';
+    draft.entries = [];
+    renderEntries();
+  `, context);
+
+  addPersonInput.value = 'Kyle';
+  addPersonButton.click();
+
+  assert.equal(vm.runInContext('draft.entries.length', context), 1);
+  assert.equal(vm.runInContext('draft.entries[0].kind', context), 'person');
+  assert.equal(vm.runInContext('draft.entries[0].name', context), 'Kyle');
+  assert.equal(addPersonInput.value, '');
+  assert.equal(context.document.activeElement, addPersonInput);
+
+  addPersonInput.value = 'Meagan';
+  addPersonButton.click();
+  addPersonInput.value = 'Scout';
+  addPersonButton.click();
+
+  assert.equal(
+    JSON.stringify(vm.runInContext('draft.entries.map((entry) => entry.name)', context)),
+    JSON.stringify(['Kyle', 'Meagan', 'Scout'])
+  );
+  assert.doesNotMatch(entryList.innerHTML, /No people or pets added yet\./, 'empty state should be replaced after adding entries');
+});
+
+test('persistent name add trims outer whitespace, preserves internal spaces and punctuation, and rejects empty attempts', () => {
+  const {
+    context,
+    addPersonInput,
+    addPersonButton,
+    addPersonError
+  } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    draft.productDefinitionId = 'tree_ornament';
+    draft.size = 'Large';
+    draft.entries = [];
+    renderEntries();
+  `, context);
+
+  addPersonInput.value = '   ';
+  addPersonButton.click();
+  assert.equal(vm.runInContext('draft.entries.length', context), 0);
+  assert.equal(addPersonError.textContent, 'Enter a person name before adding it.');
+
+  addPersonInput.value = "  Mary  Ann O'Neil-Smith  ";
+  addPersonButton.click();
+
+  assert.equal(vm.runInContext('draft.entries[0].name', context), "Mary  Ann O'Neil-Smith");
+  assert.equal(addPersonError.textContent, '');
+  assert.equal(
+    vm.runInContext('normalizeTreeOrderItem().orderedEntries[0].name', context),
+    "Mary  Ann O'Neil-Smith"
+  );
+});
+
+test('shared Add Pet reveals icon selection without creating a blank row and uses the shared field name', () => {
+  const {
+    context,
+    addPersonInput,
+    addPetButton,
+    pendingPetControls,
+    pendingPetIconSelect
+  } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    draft.productDefinitionId = 'tree_ornament';
+    draft.size = 'Large';
+    draft.entries = [];
+    appState.currentScreen = 'tree-customization';
+    renderEntries();
+  `, context);
+
+  addPetButton.click();
+  assert.equal(vm.runInContext('draft.entries.length', context), 0);
+  assert.equal(pendingPetControls.hidden, true);
+
+  addPersonInput.value = 'Star';
+  addPetButton.click();
+  assert.equal(vm.runInContext('draft.entries.length', context), 0);
+  assert.equal(pendingPetControls.hidden, false);
+  assert.equal(addPersonInput.value, 'Star');
+
+  pendingPetIconSelect.value = 'Paw';
+  pendingPetIconSelect.dispatchEvent({
+    type: 'change',
+    target: pendingPetIconSelect,
+    currentTarget: pendingPetIconSelect,
+    preventDefault() {},
+    stopPropagation() {}
+  });
+
+  assert.equal(vm.runInContext('draft.entries.length', context), 1);
+  assert.equal(vm.runInContext('draft.entries[0].kind', context), 'pet');
+  assert.equal(vm.runInContext('draft.entries[0].name', context), 'Star');
+  assert.equal(vm.runInContext('draft.entries[0].icon', context), 'Paw Print');
+  assert.equal(addPersonInput.value, '');
+  assert.equal(pendingPetControls.hidden, true);
+});
+
+test('shared Add Pet cancel preserves the typed name and custom icon requires details before appending a pet', () => {
+  const {
+    context,
+    addPersonInput,
+    addPetButton,
+    pendingPetControls,
+    pendingPetIconSelect,
+    pendingPetCustomGroup,
+    pendingPetCustomInput,
+    pendingPetCustomActions,
+    cancelPetButton,
+    confirmPetCustomButton,
+    addPersonError
+  } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    draft.productDefinitionId = 'tree_ornament';
+    draft.size = 'Large';
+    draft.entries = [];
+    renderEntries();
+  `, context);
+
+  addPersonInput.value = 'Scout';
+  addPetButton.click();
+  assert.equal(pendingPetControls.hidden, false);
+  cancelPetButton.click();
+  assert.equal(vm.runInContext('draft.entries.length', context), 0);
+  assert.equal(addPersonInput.value, 'Scout');
+  assert.equal(pendingPetControls.hidden, true);
+
+  addPetButton.click();
+  pendingPetIconSelect.value = 'Custom Icon';
+  pendingPetIconSelect.dispatchEvent({
+    type: 'change',
+    target: pendingPetIconSelect,
+    currentTarget: pendingPetIconSelect,
+    preventDefault() {},
+    stopPropagation() {}
+  });
+
+  assert.equal(pendingPetCustomGroup.hidden, false);
+  assert.equal(pendingPetCustomActions.hidden, false);
+  confirmPetCustomButton.click();
+  assert.equal(vm.runInContext('draft.entries.length', context), 0);
+  assert.equal(addPersonError.textContent, 'Describe the custom icon before adding the pet.');
+
+  pendingPetCustomInput.value = 'Tiny baseball';
+  pendingPetCustomInput.dispatchEvent({
+    type: 'input',
+    target: pendingPetCustomInput,
+    currentTarget: pendingPetCustomInput,
+    preventDefault() {},
+    stopPropagation() {}
+  });
+  confirmPetCustomButton.click();
+
+  assert.equal(vm.runInContext('draft.entries.length', context), 1);
+  assert.equal(vm.runInContext('draft.entries[0].icon', context), 'Custom Icon');
+  assert.equal(vm.runInContext('draft.entries[0].iconOther', context), 'Tiny baseball');
+  assert.equal(pendingPetControls.hidden, true);
+});
+
+test('shared field person add cancels pending pet creation and Enter still does not advance the customization flow', () => {
+  const {
+    context,
+    addPersonInput,
+    addPetButton,
+    addPersonButton,
+    pendingPetControls
+  } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    draft.productDefinitionId = 'tree_ornament';
+    draft.size = 'Large';
+    draft.entries = [];
+    appState.currentScreen = 'tree-customization';
+    renderEntries();
+  `, context);
+
+  let prevented = false;
+  addPersonInput.dispatchEvent({
+    type: 'keydown',
+    key: 'Enter',
+    target: addPersonInput,
+    currentTarget: addPersonInput,
+    preventDefault() {
+      prevented = true;
+    },
+    stopPropagation() {}
+  });
+
+  assert.equal(prevented, true);
+  assert.equal(vm.runInContext('appState.currentScreen', context), 'tree-customization');
+  assert.equal(vm.runInContext('draft.entries.length', context), 0);
+
+  addPersonInput.value = 'Jordan';
+  addPetButton.click();
+  assert.equal(pendingPetControls.hidden, false);
+  addPersonButton.click();
+
+  assert.equal(vm.runInContext('draft.entries.length', context), 1);
+  assert.equal(vm.runInContext('draft.entries[0].kind', context), 'person');
+  assert.equal(pendingPetControls.hidden, true);
 });
 
 test('missing removed screens fall back safely instead of blanking the app', () => {

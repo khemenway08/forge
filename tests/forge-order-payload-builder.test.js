@@ -10,7 +10,7 @@ const { buildForgeOrderPayload } = require('../public/js/forge-order-payload-bui
 const appSource = fs.readFileSync(path.join(__dirname, '../public/js/app.js'), 'utf8');
 const builderSource = fs.readFileSync(path.join(__dirname, '../public/js/forge-order-payload-builder.js'), 'utf8');
 const indexSource = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
-const BUILD_VERSION = '20260730-46';
+const BUILD_VERSION = '20260730-47';
 
 function createContext(overrides = {}) {
   return {
