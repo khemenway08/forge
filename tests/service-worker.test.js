@@ -4,8 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const BUILD_VERSION = '20260729-41';
-const CACHE_NAME = 'forge-starter-v41';
+const BUILD_VERSION = '20260730-42';
+const CACHE_NAME = 'forge-starter-v42';
 
 function normalizeRequestUrl(input) {
   if (typeof input === 'string') {
@@ -172,6 +172,9 @@ test('service worker install fetches current precache assets with cache reload a
     'forge-starter-v22': {
       '/js/app.js?v=20260722-22': 'stale prior hat library build'
     },
+    'forge-starter-v41': {
+      '/js/app.js?v=20260729-41': 'stale prior staff orders build'
+    },
     'unrelated-cache': {
       '/misc.txt': 'keep me'
     }
@@ -205,6 +208,7 @@ test('service worker install fetches current precache assets with cache reload a
   assert.ok(!cacheKeys.includes('forge-starter-v20'));
   assert.ok(!cacheKeys.includes('forge-starter-v21'));
   assert.ok(!cacheKeys.includes('forge-starter-v22'));
+  assert.ok(!cacheKeys.includes('forge-starter-v41'));
   assert.ok(cacheKeys.includes('unrelated-cache'));
   assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-design-catalog-api.js?v=${BUILD_VERSION}`)));
   assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-catalog-ordering.js?v=${BUILD_VERSION}`)));
@@ -330,4 +334,11 @@ test('app bootstrap exposes the build marker and registers the versioned worker 
   assert.match(appSource, new RegExp(`window\\.FORGE_BUILD_VERSION\\s*=\\s*FORGE_BUILD_VERSION`));
   assert.match(appSource, new RegExp(`const FORGE_BUILD_VERSION = '${BUILD_VERSION}'`));
   assert.match(appSource, /serviceWorker\.register\(`\.\/service-worker\.js\?v=\$\{FORGE_BUILD_VERSION\}`, \{ updateViaCache: 'none' \}\)/);
+});
+
+test('current staff orders bundle keeps completed-order rendering and does not restore the removed System Details block', () => {
+  const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
+
+  assert.match(appSource, /record\.completed_at \? `<div><span>Completed<\/span><strong>\$\{escapeHtml\(formatReadableDateTime\(record\.completed_at\)\)\}<\/strong><\/div>` : ''/);
+  assert.doesNotMatch(appSource, /System Details/);
 });
