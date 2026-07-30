@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260730-44';
+const FORGE_BUILD_VERSION = '20260730-45';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
 

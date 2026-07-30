@@ -577,7 +577,7 @@
         getMatchingProductionItems(record, baseFilters).forEach((match) => {
           const value = getDimensionValue(match.attributes, dimension);
           const label = getDimensionLabel(match.attributes, dimension);
-          addOption(optionMap, value, label);
+          addOption(optionMap, value, label, dimension === 'productionStatus' ? match.attributes.orderUuid : '');
         });
         return;
       }
@@ -594,10 +594,12 @@
       optionMap.set(selectedValue, { value: selectedValue, label: formatFilterLabel(dimension, selectedValue), count: 0 });
     }
 
-    return [...optionMap.values()].sort((left, right) => compareFilterOptions(dimension, left, right));
+    return [...optionMap.values()]
+      .map(({ countedOrderKeys, ...option }) => option)
+      .sort((left, right) => compareFilterOptions(dimension, left, right));
   }
 
-  function addOption(optionMap, value, label) {
+  function addOption(optionMap, value, label, uniqueOrderKey = '') {
     const normalizedValue = normalizeFilterValue(value);
     if (!normalizedValue || normalizedValue === 'all') {
       return;
@@ -607,11 +609,21 @@
       optionMap.set(normalizedValue, {
         value: normalizedValue,
         label: label || formatGenericLabel(normalizedValue),
-        count: 0
+        count: 0,
+        countedOrderKeys: new Set()
       });
     }
 
-    optionMap.get(normalizedValue).count += 1;
+    const option = optionMap.get(normalizedValue);
+    if (uniqueOrderKey) {
+      const normalizedOrderKey = asTrimmedString(uniqueOrderKey);
+      if (!normalizedOrderKey || option.countedOrderKeys.has(normalizedOrderKey)) {
+        return;
+      }
+      option.countedOrderKeys.add(normalizedOrderKey);
+    }
+
+    option.count += 1;
   }
 
   function buildOpenFlagsOptionList(records, filters, searchTerm) {

@@ -860,6 +860,104 @@ test('order scope filters and available options separate active cancelled and Te
   );
 });
 
+test('production status counts unique completed orders instead of summed completed item quantities', () => {
+  const completedOrders = [
+    createRecord({
+      forge_order_uuid: 'completed-order-1',
+      production_status: 'completed',
+      current_tray_number: null,
+      total_item_count: 2,
+      completed_item_count: 2,
+      payload: {
+        forge_order_uuid: 'completed-order-1',
+        items: [
+          createItem({
+            line_id: 'completed-order-1-line-1',
+            production_status: 'complete',
+            quantity: 1,
+            completed_quantity: 1,
+            structured_attributes: { production_status: 'complete' }
+          }),
+          createItem({
+            line_id: 'completed-order-1-line-2',
+            production_status: 'complete',
+            quantity: 1,
+            completed_quantity: 1,
+            structured_attributes: { production_status: 'complete' }
+          })
+        ]
+      }
+    }),
+    createRecord({
+      forge_order_uuid: 'completed-order-2',
+      production_status: 'completed',
+      current_tray_number: null,
+      total_item_count: 2,
+      completed_item_count: 2,
+      payload: {
+        forge_order_uuid: 'completed-order-2',
+        items: [
+          createItem({
+            line_id: 'completed-order-2-line-1',
+            production_status: 'complete',
+            quantity: 1,
+            completed_quantity: 1,
+            structured_attributes: { production_status: 'complete' }
+          }),
+          createItem({
+            line_id: 'completed-order-2-line-2',
+            production_status: 'complete',
+            quantity: 1,
+            completed_quantity: 1,
+            structured_attributes: { production_status: 'complete' }
+          })
+        ]
+      }
+    }),
+    createRecord({
+      forge_order_uuid: 'completed-order-3',
+      production_status: 'completed',
+      current_tray_number: null,
+      total_item_count: 2,
+      completed_item_count: 2,
+      payload: {
+        forge_order_uuid: 'completed-order-3',
+        items: [
+          createItem({
+            line_id: 'completed-order-3-line-1',
+            production_status: 'complete',
+            quantity: 1,
+            completed_quantity: 1,
+            structured_attributes: { production_status: 'complete' }
+          }),
+          createItem({
+            line_id: 'completed-order-3-line-2',
+            production_status: 'complete',
+            quantity: 1,
+            completed_quantity: 1,
+            structured_attributes: { production_status: 'complete' }
+          })
+        ]
+      }
+    })
+  ];
+  const duplicateCompletedRecord = JSON.parse(JSON.stringify(completedOrders[0]));
+  const records = [...completedOrders, duplicateCompletedRecord];
+
+  const productionStatusOptions = queueHelpers.getAvailableOrderFilters(records).productionStatus;
+  const completedOption = productionStatusOptions.find((option) => option.value === 'complete');
+
+  assert.equal(completedOption.count, 3);
+  assert.equal(completedOrders.reduce((sum, record) => sum + record.completed_item_count, 0), 6);
+  const filteredCompletedOrderUuids = queueHelpers
+    .filterLocalOrders(records, { productionStatus: 'complete' }, '')
+    .map((record) => record.forge_order_uuid);
+
+  assert.equal(filteredCompletedOrderUuids.length, 4);
+  assert.equal(filteredCompletedOrderUuids.filter((uuid) => uuid === 'completed-order-1').length, 2);
+  assert.deepEqual(new Set(filteredCompletedOrderUuids), new Set(['completed-order-1', 'completed-order-2', 'completed-order-3']));
+});
+
 test('queue summary metrics use filtered physical quantity and do not double-count orders', () => {
   const record = createRecord({
     forge_order_uuid: 'metric-order',
