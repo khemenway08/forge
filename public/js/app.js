@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260730-42';
+const FORGE_BUILD_VERSION = '20260730-44';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
 
@@ -1525,7 +1525,7 @@ function showScreen(name) {
   screens.forEach((screen) => {
     screen.classList.toggle('active', screen.dataset.screen === name);
   });
-  const isStaffScreen = ['staff-orders', 'ready-to-pack', 'staff-catalog'].includes(name);
+  const isStaffScreen = ['staff-orders', 'ready-to-pack', 'staff-catalog', 'staff-admin'].includes(name);
   document.body.classList.toggle('is-staff-screen', isStaffScreen);
   appShell?.classList.toggle('is-staff-screen', isStaffScreen);
   appState.currentScreen = name;
@@ -2401,9 +2401,9 @@ function getStaffSourceConfig() {
   if (staffOrdersState.dataSource === 'server') {
     return {
       sourceBadge: 'Live shared orders',
-      ordersLead: 'Manage production orders and tray workflow.',
-      readyLead: 'Review packed orders, complete fulfillment, and release trays.',
-      adminLead: 'Use protected administrative tools without pushing active order cards lower on the screen.',
+      ordersLead: 'Search, review, and manage all Forge orders.',
+      readyLead: 'Orders with production complete and ready for packing.',
+      adminLead: 'Manage staff-only events, exports, and maintenance tools.',
       loadingOrders: 'Loading shared server orders...',
       emptyOrdersHeading: 'No shared orders match these filters',
       emptyOrdersCopy: 'Adjust the search or clear filters to see the shared server orders available to staff.',
@@ -2426,9 +2426,9 @@ function getStaffSourceConfig() {
 
   return {
     sourceBadge: 'Local Development Orders',
-    ordersLead: 'View durable local orders on this device and assign one production tray per active order.',
-    readyLead: 'Review packed orders, complete fulfillment, and release trays.',
-    adminLead: 'Use local staff-only tools separately while testing Forge on this device.',
+    ordersLead: 'Search, review, and manage all Forge orders.',
+    readyLead: 'Orders with production complete and ready for packing.',
+    adminLead: 'Manage staff-only events, exports, and maintenance tools.',
     loadingOrders: 'Loading durable local orders...',
     emptyOrdersHeading: 'No orders match these filters',
     emptyOrdersCopy: 'Adjust the search or clear filters to see the saved local orders on this device.',

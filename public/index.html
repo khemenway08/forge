@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>The Hilltop Shop Custom Orders</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="css/app.css?v=20260730-42">
+  <link rel="stylesheet" href="css/app.css?v=20260730-44">
 </head>
 <body>
   <div class="app-shell">
@@ -103,24 +103,33 @@
 
       <section class="screen staff-orders-screen" data-screen="staff-orders">
         <div class="staff-orders-shell">
-          <header class="staff-orders-header">
+          <header class="staff-orders-header" data-staff-header>
             <div class="staff-orders-brand">
-              <img class="staff-orders-logo" src="assets/brand/forge-logo.png" alt="Forge">
-              <div>
-                <p class="eyebrow staff-orders-eyebrow" data-staff-eyebrow>Forge Staff</p>
-                <h1>Staff Orders</h1>
-                <p class="lead" data-staff-orders-lead>View staff orders and production context.</p>
+              <div class="staff-orders-logo-plaque">
+                <img class="staff-orders-logo" src="assets/brand/forge-logo.png" alt="Forge">
               </div>
             </div>
-            <div class="staff-orders-header-actions">
-              <span class="staff-source-pill" data-staff-source-status aria-live="polite"></span>
-              <button class="secondary-button" type="button" data-action="staff-open-orders" disabled aria-current="page">Staff Orders</button>
-              <button class="secondary-button" type="button" data-action="staff-open-ready-to-pack">Ready to Pack</button>
-              <button class="secondary-button" type="button" data-action="staff-open-catalog">Hilltop Design Catalog</button>
-              <button class="secondary-button" type="button" data-action="staff-open-admin">Admin Tools</button>
-              <button class="secondary-button" type="button" data-action="staff-refresh-orders">Refresh Queue</button>
-              <button class="secondary-button" type="button" data-action="staff-logout" data-staff-logout-button hidden>Logout</button>
-              <button class="secondary-button" type="button" data-action="staff-return-welcome">Return to Welcome</button>
+            <div class="staff-orders-page-copy">
+              <p class="eyebrow staff-orders-eyebrow" data-staff-eyebrow>Forge Staff</p>
+              <h1>Staff Orders</h1>
+              <p class="lead" data-staff-orders-lead>Search, review, and manage all Forge orders.</p>
+            </div>
+            <div class="staff-orders-header-nav" aria-label="Staff workspace navigation">
+              <div class="staff-orders-header-nav-row staff-orders-header-nav-row--primary">
+                <button class="secondary-button staff-header-return-button" type="button" data-action="staff-return-welcome">
+                  <span class="staff-header-return-button__icon" aria-hidden="true">←</span>
+                  <span>Return to Welcome</span>
+                </button>
+                <button class="secondary-button" type="button" data-action="staff-open-orders" disabled aria-current="page">Staff Orders</button>
+                <button class="secondary-button" type="button" data-action="staff-open-ready-to-pack">Ready to Pack</button>
+                <button class="secondary-button staff-header-catalog-button" type="button" data-action="staff-open-catalog">Hilltop Design Catalog</button>
+              </div>
+              <div class="staff-orders-header-nav-row staff-orders-header-nav-row--utility">
+                <span class="staff-source-pill" data-staff-source-status aria-live="polite"></span>
+                <button class="secondary-button" type="button" data-action="staff-open-admin">Admin Tools</button>
+                <button class="secondary-button" type="button" data-action="staff-refresh-orders">Refresh</button>
+                <button class="secondary-button" type="button" data-action="staff-logout" data-staff-logout-button hidden>Logout</button>
+              </div>
             </div>
           </header>
 
@@ -170,24 +179,33 @@
 
       <section class="screen staff-orders-screen" data-screen="ready-to-pack">
         <div class="staff-orders-shell">
-          <header class="staff-orders-header">
+          <header class="staff-orders-header" data-staff-header>
             <div class="staff-orders-brand">
-              <img class="staff-orders-logo" src="assets/brand/forge-logo.png" alt="Forge">
-              <div>
-                <p class="eyebrow staff-orders-eyebrow" data-staff-eyebrow>Forge Staff</p>
-                <h1>Ready to Pack</h1>
-                <p class="lead" data-ready-to-pack-lead>Completed orders waiting for packing verification.</p>
+              <div class="staff-orders-logo-plaque">
+                <img class="staff-orders-logo" src="assets/brand/forge-logo.png" alt="Forge">
               </div>
             </div>
-            <div class="staff-orders-header-actions">
-              <span class="staff-source-pill" data-ready-source-status aria-live="polite"></span>
-              <button class="secondary-button" type="button" data-action="staff-open-orders">Staff Orders</button>
-              <button class="secondary-button" type="button" data-action="staff-open-ready-to-pack" disabled aria-current="page">Ready to Pack</button>
-              <button class="secondary-button" type="button" data-action="staff-open-catalog">Hilltop Design Catalog</button>
-              <button class="secondary-button" type="button" data-action="staff-open-admin">Admin Tools</button>
-              <button class="secondary-button" type="button" data-action="staff-refresh-ready-to-pack">Refresh Queue</button>
-              <button class="secondary-button" type="button" data-action="staff-logout" data-staff-logout-button hidden>Logout</button>
-              <button class="secondary-button" type="button" data-action="staff-return-welcome">Return to Welcome</button>
+            <div class="staff-orders-page-copy">
+              <p class="eyebrow staff-orders-eyebrow" data-staff-eyebrow>Forge Staff</p>
+              <h1>Ready to Pack</h1>
+              <p class="lead" data-ready-to-pack-lead>Orders with production complete and ready for packing.</p>
+            </div>
+            <div class="staff-orders-header-nav" aria-label="Staff workspace navigation">
+              <div class="staff-orders-header-nav-row staff-orders-header-nav-row--primary">
+                <button class="secondary-button staff-header-return-button" type="button" data-action="staff-return-welcome">
+                  <span class="staff-header-return-button__icon" aria-hidden="true">←</span>
+                  <span>Return to Welcome</span>
+                </button>
+                <button class="secondary-button" type="button" data-action="staff-open-orders">Staff Orders</button>
+                <button class="secondary-button" type="button" data-action="staff-open-ready-to-pack" disabled aria-current="page">Ready to Pack</button>
+                <button class="secondary-button staff-header-catalog-button" type="button" data-action="staff-open-catalog">Hilltop Design Catalog</button>
+              </div>
+              <div class="staff-orders-header-nav-row staff-orders-header-nav-row--utility">
+                <span class="staff-source-pill" data-ready-source-status aria-live="polite"></span>
+                <button class="secondary-button" type="button" data-action="staff-open-admin">Admin Tools</button>
+                <button class="secondary-button" type="button" data-action="staff-refresh-ready-to-pack">Refresh</button>
+                <button class="secondary-button" type="button" data-action="staff-logout" data-staff-logout-button hidden>Logout</button>
+              </div>
             </div>
           </header>
 
@@ -206,23 +224,33 @@
 
       <section class="screen staff-orders-screen" data-screen="staff-catalog">
         <div class="staff-orders-shell staff-catalog-shell">
-          <header class="staff-orders-header">
+          <header class="staff-orders-header" data-staff-header>
             <div class="staff-orders-brand">
-              <img class="staff-orders-logo" src="assets/brand/forge-logo.png" alt="Forge">
-              <div>
-                <p class="eyebrow staff-orders-eyebrow" data-staff-eyebrow>Forge Staff</p>
-                <h1>Hilltop Design Catalog</h1>
-                <p class="lead">Browse future catalog modules using the existing protected Forge staff workspace.</p>
+              <div class="staff-orders-logo-plaque">
+                <img class="staff-orders-logo" src="assets/brand/forge-logo.png" alt="Forge">
               </div>
             </div>
-            <div class="staff-orders-header-actions">
-              <span class="staff-source-pill" data-staff-source-status aria-live="polite"></span>
-              <button class="secondary-button" type="button" data-action="staff-open-orders">Staff Orders</button>
-              <button class="secondary-button" type="button" data-action="staff-open-ready-to-pack">Ready to Pack</button>
-              <button class="secondary-button" type="button" data-action="staff-open-catalog" disabled aria-current="page">Hilltop Design Catalog</button>
-              <button class="secondary-button" type="button" data-action="staff-open-admin">Admin Tools</button>
-              <button class="secondary-button" type="button" data-action="staff-logout" data-staff-logout-button hidden>Logout</button>
-              <button class="secondary-button" type="button" data-action="staff-return-welcome">Return to Welcome</button>
+            <div class="staff-orders-page-copy">
+              <p class="eyebrow staff-orders-eyebrow" data-staff-eyebrow>Forge Staff</p>
+              <h1>Hilltop Design Catalog</h1>
+              <p class="lead">Browse designs, hats, materials, and finished hat combinations.</p>
+            </div>
+            <div class="staff-orders-header-nav" aria-label="Staff workspace navigation">
+              <div class="staff-orders-header-nav-row staff-orders-header-nav-row--primary">
+                <button class="secondary-button staff-header-return-button" type="button" data-action="staff-return-welcome">
+                  <span class="staff-header-return-button__icon" aria-hidden="true">←</span>
+                  <span>Return to Welcome</span>
+                </button>
+                <button class="secondary-button" type="button" data-action="staff-open-orders">Staff Orders</button>
+                <button class="secondary-button" type="button" data-action="staff-open-ready-to-pack">Ready to Pack</button>
+                <button class="secondary-button staff-header-catalog-button" type="button" data-action="staff-open-catalog" disabled aria-current="page">Hilltop Design Catalog</button>
+              </div>
+              <div class="staff-orders-header-nav-row staff-orders-header-nav-row--utility">
+                <span class="staff-source-pill" data-staff-source-status aria-live="polite"></span>
+                <button class="secondary-button" type="button" data-action="staff-open-admin">Admin Tools</button>
+                <button class="secondary-button" type="button" data-action="staff-refresh-catalog">Refresh</button>
+                <button class="secondary-button" type="button" data-action="staff-logout" data-staff-logout-button hidden>Logout</button>
+              </div>
             </div>
           </header>
 
@@ -247,23 +275,33 @@
 
       <section class="screen staff-orders-screen" data-screen="staff-admin">
         <div class="staff-orders-shell">
-          <header class="staff-orders-header">
+          <header class="staff-orders-header" data-staff-header>
             <div class="staff-orders-brand">
-              <img class="staff-orders-logo" src="assets/brand/forge-logo.png" alt="Forge">
-              <div>
-                <p class="eyebrow staff-orders-eyebrow" data-staff-eyebrow>Forge Staff</p>
-                <h1>Admin Tools</h1>
-                <p class="lead" data-staff-admin-lead>Manage staff-only event and maintenance tools separately from the active order queue.</p>
+              <div class="staff-orders-logo-plaque">
+                <img class="staff-orders-logo" src="assets/brand/forge-logo.png" alt="Forge">
               </div>
             </div>
-            <div class="staff-orders-header-actions">
-              <span class="staff-source-pill" data-staff-source-status aria-live="polite"></span>
-              <button class="secondary-button" type="button" data-action="staff-open-orders">Staff Orders</button>
-              <button class="secondary-button" type="button" data-action="staff-open-ready-to-pack">Ready to Pack</button>
-              <button class="secondary-button" type="button" data-action="staff-open-catalog">Hilltop Design Catalog</button>
-              <button class="secondary-button" type="button" data-action="staff-open-admin" disabled aria-current="page">Admin Tools</button>
-              <button class="secondary-button" type="button" data-action="staff-logout" data-staff-logout-button hidden>Logout</button>
-              <button class="secondary-button" type="button" data-action="staff-return-welcome">Return to Welcome</button>
+            <div class="staff-orders-page-copy">
+              <p class="eyebrow staff-orders-eyebrow" data-staff-eyebrow>Forge Staff</p>
+              <h1>Admin Tools</h1>
+              <p class="lead" data-staff-admin-lead>Manage staff-only events, exports, and maintenance tools.</p>
+            </div>
+            <div class="staff-orders-header-nav" aria-label="Staff workspace navigation">
+              <div class="staff-orders-header-nav-row staff-orders-header-nav-row--primary">
+                <button class="secondary-button staff-header-return-button" type="button" data-action="staff-return-welcome">
+                  <span class="staff-header-return-button__icon" aria-hidden="true">←</span>
+                  <span>Return to Welcome</span>
+                </button>
+                <button class="secondary-button" type="button" data-action="staff-open-orders">Staff Orders</button>
+                <button class="secondary-button" type="button" data-action="staff-open-ready-to-pack">Ready to Pack</button>
+                <button class="secondary-button staff-header-catalog-button" type="button" data-action="staff-open-catalog">Hilltop Design Catalog</button>
+              </div>
+              <div class="staff-orders-header-nav-row staff-orders-header-nav-row--utility">
+                <span class="staff-source-pill" data-staff-source-status aria-live="polite"></span>
+                <button class="secondary-button" type="button" data-action="staff-open-admin" disabled aria-current="page">Admin Tools</button>
+                <button class="secondary-button" type="button" data-action="staff-refresh-admin">Refresh</button>
+                <button class="secondary-button" type="button" data-action="staff-logout" data-staff-logout-button hidden>Logout</button>
+              </div>
             </div>
           </header>
 
@@ -745,28 +783,28 @@
     </div>
   </div>
 
-  <script src="js/forge-product-catalog.js?v=20260730-42"></script>
-  <script src="js/forge-order-payload-builder.js?v=20260730-42"></script>
-  <script src="js/forge-order-payload-preview.js?v=20260730-42"></script>
-  <script src="js/forge-api-client.js?v=20260730-42"></script>
-  <script src="js/forge-order-store.js?v=20260730-42"></script>
-  <script src="js/forge-order-server-sync.js?v=20260730-42"></script>
-  <script src="js/forge-sync-status.js?v=20260730-42"></script>
-  <script src="js/forge-order-submission.js?v=20260730-42"></script>
-  <script src="js/forge-event-state.js?v=20260730-42"></script>
-  <script src="js/forge-staff-api-client.js?v=20260730-42"></script>
-  <script src="js/forge-staff-catalog-ordering.js?v=20260730-42"></script>
-  <script src="js/forge-catalog-image-viewer.js?v=20260730-42"></script>
-  <script src="js/forge-staff-design-catalog-api.js?v=20260730-42"></script>
-  <script src="js/forge-staff-design-catalog.js?v=20260730-42"></script>
-  <script src="js/forge-staff-hat-catalog-api.js?v=20260730-42"></script>
-  <script src="js/forge-staff-hat-catalog.js?v=20260730-42"></script>
-  <script src="js/forge-staff-material-catalog-api.js?v=20260730-42"></script>
-  <script src="js/forge-staff-material-catalog.js?v=20260730-42"></script>
-  <script src="js/forge-staff-finished-hat-catalog-api.js?v=20260730-42"></script>
-  <script src="js/forge-staff-finished-hat-catalog.js?v=20260730-42"></script>
-  <script src="js/forge-staff-orders-runtime.js?v=20260730-42"></script>
-  <script src="js/forge-local-orders-queue.js?v=20260730-42"></script>
-  <script src="js/app.js?v=20260730-42"></script>
+  <script src="js/forge-product-catalog.js?v=20260730-44"></script>
+  <script src="js/forge-order-payload-builder.js?v=20260730-44"></script>
+  <script src="js/forge-order-payload-preview.js?v=20260730-44"></script>
+  <script src="js/forge-api-client.js?v=20260730-44"></script>
+  <script src="js/forge-order-store.js?v=20260730-44"></script>
+  <script src="js/forge-order-server-sync.js?v=20260730-44"></script>
+  <script src="js/forge-sync-status.js?v=20260730-44"></script>
+  <script src="js/forge-order-submission.js?v=20260730-44"></script>
+  <script src="js/forge-event-state.js?v=20260730-44"></script>
+  <script src="js/forge-staff-api-client.js?v=20260730-44"></script>
+  <script src="js/forge-staff-catalog-ordering.js?v=20260730-44"></script>
+  <script src="js/forge-catalog-image-viewer.js?v=20260730-44"></script>
+  <script src="js/forge-staff-design-catalog-api.js?v=20260730-44"></script>
+  <script src="js/forge-staff-design-catalog.js?v=20260730-44"></script>
+  <script src="js/forge-staff-hat-catalog-api.js?v=20260730-44"></script>
+  <script src="js/forge-staff-hat-catalog.js?v=20260730-44"></script>
+  <script src="js/forge-staff-material-catalog-api.js?v=20260730-44"></script>
+  <script src="js/forge-staff-material-catalog.js?v=20260730-44"></script>
+  <script src="js/forge-staff-finished-hat-catalog-api.js?v=20260730-44"></script>
+  <script src="js/forge-staff-finished-hat-catalog.js?v=20260730-44"></script>
+  <script src="js/forge-staff-orders-runtime.js?v=20260730-44"></script>
+  <script src="js/forge-local-orders-queue.js?v=20260730-44"></script>
+  <script src="js/app.js?v=20260730-44"></script>
 </body>
 </html>

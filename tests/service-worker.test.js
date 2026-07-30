@@ -4,8 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const BUILD_VERSION = '20260730-42';
-const CACHE_NAME = 'forge-starter-v42';
+const BUILD_VERSION = '20260730-44';
+const CACHE_NAME = 'forge-starter-v44';
 
 function normalizeRequestUrl(input) {
   if (typeof input === 'string') {
@@ -175,6 +175,9 @@ test('service worker install fetches current precache assets with cache reload a
     'forge-starter-v41': {
       '/js/app.js?v=20260729-41': 'stale prior staff orders build'
     },
+    'forge-starter-v42': {
+      '/js/app.js?v=20260730-42': 'stale prior completed order build'
+    },
     'unrelated-cache': {
       '/misc.txt': 'keep me'
     }
@@ -209,6 +212,7 @@ test('service worker install fetches current precache assets with cache reload a
   assert.ok(!cacheKeys.includes('forge-starter-v21'));
   assert.ok(!cacheKeys.includes('forge-starter-v22'));
   assert.ok(!cacheKeys.includes('forge-starter-v41'));
+  assert.ok(!cacheKeys.includes('forge-starter-v42'));
   assert.ok(cacheKeys.includes('unrelated-cache'));
   assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-design-catalog-api.js?v=${BUILD_VERSION}`)));
   assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/forge-staff-catalog-ordering.js?v=${BUILD_VERSION}`)));

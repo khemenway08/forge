@@ -5,7 +5,14 @@ const path = require('path');
 const vm = require('vm');
 
 const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'), 'utf8');
-const BUILD_VERSION = '20260730-42';
+const cssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
+const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
+const BUILD_VERSION = '20260730-44';
+
+function extractScreenMarkup(screenId) {
+  const match = indexSource.match(new RegExp(`<section class="screen[\\s\\S]*?data-screen="${screenId}"[\\s\\S]*?<\\/section>`));
+  return match ? match[0] : '';
+}
 
 function createClassList() {
   const classes = new Set();
@@ -2506,6 +2513,38 @@ test('staff source eyebrow uses Forge Staff for hosted mode and Development Only
   assert.equal(vm.runInContext('staffOrdersState.dataSource = "local"; getStaffEnvironmentEyebrow();', context), 'Development Only');
 });
 
+test('runtime staff source configuration applies the approved header descriptions in both hosted and local modes', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+
+  const hostedDescriptions = vm.runInContext(`
+    staffOrdersState.dataSource = 'server';
+    renderStaffSourceUi();
+    ({
+      orders: document.querySelector('[data-staff-orders-lead]').textContent,
+      ready: document.querySelector('[data-ready-to-pack-lead]').textContent,
+      admin: document.querySelector('[data-staff-admin-lead]').textContent
+    });
+  `, context);
+
+  assert.equal(hostedDescriptions.orders, 'Search, review, and manage all Forge orders.');
+  assert.equal(hostedDescriptions.ready, 'Orders with production complete and ready for packing.');
+  assert.equal(hostedDescriptions.admin, 'Manage staff-only events, exports, and maintenance tools.');
+
+  const localDescriptions = vm.runInContext(`
+    staffOrdersState.dataSource = 'local';
+    renderStaffSourceUi();
+    ({
+      orders: document.querySelector('[data-staff-orders-lead]').textContent,
+      ready: document.querySelector('[data-ready-to-pack-lead]').textContent,
+      admin: document.querySelector('[data-staff-admin-lead]').textContent
+    });
+  `, context);
+
+  assert.equal(localDescriptions.orders, hostedDescriptions.orders);
+  assert.equal(localDescriptions.ready, hostedDescriptions.ready);
+  assert.equal(localDescriptions.admin, hostedDescriptions.admin);
+});
+
 test('shared server order detail assign tray button opens the tray picker after re-rendering', async () => {
   const { context, detailDialog, trayDialog, getAssignTrayButton, getTrayLoadCount } = loadForgeHostedStaffAppForTrayDetail();
 
@@ -3442,7 +3481,89 @@ test('staff orders remains the default protected destination and the catalog she
   assert.match(indexSource, />Shortlist<\/button>/);
   assert.match(
     indexSource,
-    /<script src="js\/forge-staff-api-client\.js\?v=20260730-42"><\/script>\s*<script src="js\/forge-staff-catalog-ordering\.js\?v=20260730-42"><\/script>\s*<script src="js\/forge-catalog-image-viewer\.js\?v=20260730-42"><\/script>\s*<script src="js\/forge-staff-design-catalog-api\.js\?v=20260730-42"><\/script>\s*<script src="js\/forge-staff-design-catalog\.js\?v=20260730-42"><\/script>\s*<script src="js\/forge-staff-hat-catalog-api\.js\?v=20260730-42"><\/script>\s*<script src="js\/forge-staff-hat-catalog\.js\?v=20260730-42"><\/script>\s*<script src="js\/forge-staff-material-catalog-api\.js\?v=20260730-42"><\/script>\s*<script src="js\/forge-staff-material-catalog\.js\?v=20260730-42"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog-api\.js\?v=20260730-42"><\/script>\s*<script src="js\/forge-staff-finished-hat-catalog\.js\?v=20260730-42"><\/script>\s*<script src="js\/forge-staff-orders-runtime\.js\?v=20260730-42"><\/script>/
+    new RegExp(`<script src="js/forge-staff-api-client\\.js\\?v=${BUILD_VERSION}"></script>\\s*<script src="js/forge-staff-catalog-ordering\\.js\\?v=${BUILD_VERSION}"></script>\\s*<script src="js/forge-catalog-image-viewer\\.js\\?v=${BUILD_VERSION}"></script>\\s*<script src="js/forge-staff-design-catalog-api\\.js\\?v=${BUILD_VERSION}"></script>\\s*<script src="js/forge-staff-design-catalog\\.js\\?v=${BUILD_VERSION}"></script>\\s*<script src="js/forge-staff-hat-catalog-api\\.js\\?v=${BUILD_VERSION}"></script>\\s*<script src="js/forge-staff-hat-catalog\\.js\\?v=${BUILD_VERSION}"></script>\\s*<script src="js/forge-staff-material-catalog-api\\.js\\?v=${BUILD_VERSION}"></script>\\s*<script src="js/forge-staff-material-catalog\\.js\\?v=${BUILD_VERSION}"></script>\\s*<script src="js/forge-staff-finished-hat-catalog-api\\.js\\?v=${BUILD_VERSION}"></script>\\s*<script src="js/forge-staff-finished-hat-catalog\\.js\\?v=${BUILD_VERSION}"></script>\\s*<script src="js/forge-staff-orders-runtime\\.js\\?v=${BUILD_VERSION}"></script>`)
   );
   assert.doesNotMatch(indexSource, /data-category="staff-catalog"/);
+});
+
+test('staff screens share the approved header structure, order, descriptions, and active states', () => {
+  const scenarios = [
+    {
+      screenId: 'staff-orders',
+      description: 'Search, review, and manage all Forge orders.',
+      activeAction: 'staff-open-orders',
+      statusAttribute: 'data-staff-source-status'
+    },
+    {
+      screenId: 'ready-to-pack',
+      description: 'Orders with production complete and ready for packing.',
+      activeAction: 'staff-open-ready-to-pack',
+      statusAttribute: 'data-ready-source-status'
+    },
+    {
+      screenId: 'staff-admin',
+      description: 'Manage staff-only events, exports, and maintenance tools.',
+      activeAction: 'staff-open-admin',
+      statusAttribute: 'data-staff-source-status'
+    },
+    {
+      screenId: 'staff-catalog',
+      description: 'Browse designs, hats, materials, and finished hat combinations.',
+      activeAction: 'staff-open-catalog',
+      statusAttribute: 'data-staff-source-status'
+    }
+  ];
+
+  scenarios.forEach(({ screenId, description, activeAction, statusAttribute }) => {
+    const screenMarkup = extractScreenMarkup(screenId);
+    assert.match(screenMarkup, /<header class="staff-orders-header" data-staff-header>/);
+    assert.match(screenMarkup, /<div class="staff-orders-logo-plaque">[\s\S]*?<img class="staff-orders-logo" src="assets\/brand\/forge-logo\.png" alt="Forge">/);
+    assert.match(screenMarkup, /<div class="staff-orders-header-nav" aria-label="Staff workspace navigation">/);
+    assert.match(screenMarkup, /staff-orders-header-nav-row staff-orders-header-nav-row--primary/);
+    assert.match(screenMarkup, /staff-orders-header-nav-row staff-orders-header-nav-row--utility/);
+    assert.match(screenMarkup, /data-action="staff-return-welcome"[\s\S]*?Return to Welcome[\s\S]*?data-action="staff-open-orders"[\s\S]*?Staff Orders[\s\S]*?data-action="staff-open-ready-to-pack"[\s\S]*?Ready to Pack[\s\S]*?data-action="staff-open-catalog"[\s\S]*?Hilltop Design Catalog/);
+    assert.match(screenMarkup, new RegExp(`${statusAttribute} aria-live="polite"`));
+    assert.match(screenMarkup, /<span class="staff-source-pill"[^>]*><\/span>/);
+    assert.doesNotMatch(screenMarkup, /<button class="staff-source-pill"/);
+    assert.match(screenMarkup, /data-action="staff-open-admin">Admin Tools<\/button>/);
+    assert.match(screenMarkup, /data-action="staff-(refresh-orders|refresh-ready-to-pack|refresh-catalog|refresh-admin)">Refresh<\/button>/);
+    assert.match(screenMarkup, /data-staff-logout-button hidden>Logout<\/button>/);
+    assert.match(screenMarkup, new RegExp(`data-action="${activeAction}"[^>]*aria-current="page"`));
+    assert.match(screenMarkup, new RegExp(description.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  });
+
+  assert.match(indexSource, /staff-header-return-button/);
+  assert.match(indexSource, /staff-header-return-button__icon/);
+  assert.doesNotMatch(indexSource, /data-staff-header[\s\S]*?staff-orders-header-actions/);
+});
+
+test('admin tools shell containment and active navigation readability use the scoped header fixes', () => {
+  assert.match(
+    appSource,
+    /const isStaffScreen = \['staff-orders', 'ready-to-pack', 'staff-catalog', 'staff-admin'\]\.includes\(name\);/
+  );
+  assert.match(
+    cssSource,
+    /\[data-screen="staff-admin"\]\s+\.staff-orders-shell\s*\{[\s\S]*width:\s*100%;[\s\S]*max-width:\s*100%;[\s\S]*min-width:\s*0;[\s\S]*box-sizing:\s*border-box;/
+  );
+  assert.match(
+    cssSource,
+    /\.staff-admin-content\s*\{[\s\S]*width:\s*100%;[\s\S]*max-width:\s*100%;[\s\S]*min-width:\s*0;[\s\S]*box-sizing:\s*border-box;/
+  );
+  assert.match(
+    cssSource,
+    /\.staff-orders-header-nav\s+\.secondary-button\[aria-current="page"\]\s*\{[\s\S]*color:\s*var\(--staff-text\);[\s\S]*opacity:\s*1;/
+  );
+  assert.match(
+    cssSource,
+    /\.staff-orders-header-nav\s+\.secondary-button\[aria-current="page"\]:disabled\s*\{[\s\S]*color:\s*var\(--staff-text\);[\s\S]*opacity:\s*1;/
+  );
+  assert.match(
+    cssSource,
+    /\.staff-header-return-button\s*\{[\s\S]*padding-inline:\s*10px\s*!important;[\s\S]*font-size:\s*13px\s*!important;/
+  );
+  assert.match(
+    cssSource,
+    /\.staff-header-catalog-button\s*\{[\s\S]*line-height:\s*1\.15;[\s\S]*align-items:\s*center;[\s\S]*justify-content:\s*center;[\s\S]*text-align:\s*center;/
+  );
 });

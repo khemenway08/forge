@@ -2200,6 +2200,10 @@ h1 {
   min-height: auto;
   align-content: start;
   gap: 14px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .staff-auth-shell {
@@ -2222,30 +2226,46 @@ h1 {
   gap: 18px;
 }
 
-[data-screen="staff-admin"] .staff-orders-header {
-  padding: 14px 18px;
+[data-staff-header] {
+  padding: clamp(14px, 1.45vw, 18px) clamp(18px, 2vw, 24px);
+  display: grid;
+  grid-template-columns: 220px minmax(320px, 1fr) minmax(640px, 760px);
+  gap: 20px;
   align-items: center;
-  gap: 14px 18px;
+  max-width: 100%;
 }
 
 .staff-orders-brand {
   display: flex;
   align-items: flex-start;
   gap: 16px;
+  min-width: 0;
 }
 
-[data-screen="staff-admin"] .staff-orders-brand {
-  gap: 12px;
+.staff-orders-logo-plaque {
+  width: min(100%, 198px);
+  min-height: 90px;
+  padding: 12px 14px;
+  border-radius: 24px;
+  border: 1px solid rgba(255,255,255,.08);
+  background:
+    linear-gradient(180deg, rgba(255,253,248,.12), rgba(255,253,248,.04)),
+    rgba(10,12,15,.38);
+  display: grid;
+  place-items: center;
 }
 
 .staff-orders-logo {
-  width: clamp(72px, 6.8vw, 100px);
+  width: clamp(176px, 13vw, 198px);
   height: auto;
   object-fit: contain;
+  display: block;
 }
 
-[data-screen="staff-admin"] .staff-orders-logo {
-  width: clamp(56px, 5vw, 78px);
+[data-staff-header] .staff-orders-page-copy,
+.staff-orders-header-nav,
+.staff-orders-header-nav-row {
+  min-width: 0;
 }
 
 .staff-orders-header h1,
@@ -2255,35 +2275,53 @@ h1 {
 }
 
 .staff-orders-header h1 {
-  font-size: clamp(28px, 3.2vw, 40px);
-  line-height: 1.04;
+  font-size: clamp(30px, 3vw, 40px);
+  line-height: 1.05;
   letter-spacing: -.03em;
 }
 
-[data-screen="staff-admin"] .staff-orders-header h1 {
-  font-size: clamp(24px, 2.4vw, 32px);
-}
-
 .staff-orders-header .lead {
-  margin: 4px 0 0;
+  margin: 6px 0 0;
   color: var(--staff-muted);
-  font-size: clamp(15px, 1.5vw, 18px);
-  line-height: 1.4;
-  max-width: 42rem;
-}
-
-[data-screen="staff-admin"] .staff-orders-header .lead {
-  margin-top: 2px;
-  font-size: 15px;
-  line-height: 1.35;
-  max-width: 36rem;
+  font-size: clamp(15px, 1.25vw, 18px);
+  line-height: 1.42;
+  max-width: 40rem;
 }
 
 .staff-orders-eyebrow {
-  color: var(--orange);
+  margin: 0 0 8px;
+  color: #d6cbbb;
+  letter-spacing: .16em;
 }
 
 .staff-orders-header-actions,
+.staff-orders-header-nav {
+  display: grid;
+  gap: 8px;
+}
+
+.staff-orders-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.staff-orders-header-nav-row {
+  display: grid;
+  gap: 8px;
+  align-items: center;
+}
+
+.staff-orders-header-nav-row--primary {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.12fr);
+}
+
+.staff-orders-header-nav-row--utility {
+  grid-template-columns: auto repeat(3, minmax(0, 1fr));
+  justify-content: end;
+}
+
 .staff-orders-filter-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2291,15 +2329,64 @@ h1 {
   align-items: center;
 }
 
-[data-screen="staff-admin"] .staff-orders-header-actions {
-  justify-content: flex-end;
-  align-content: flex-start;
-  gap: 8px;
+.staff-orders-header-nav .secondary-button {
+  min-height: 44px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 14px;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.15;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  white-space: nowrap;
 }
 
-.staff-orders-header-actions .secondary-button[aria-current="page"] {
+.staff-orders-header-nav .secondary-button[aria-current="page"] {
   background: rgba(239,108,26,.16);
   border-color: rgba(239,108,26,.34);
+  color: var(--staff-text);
+  opacity: 1;
+}
+
+.staff-orders-header-nav .secondary-button[aria-current="page"]:disabled {
+  color: var(--staff-text);
+  opacity: 1;
+  cursor: default;
+}
+
+.staff-header-return-button {
+  background: linear-gradient(180deg, #fbf6ed, #f1e5d2) !important;
+  border-color: rgba(96,78,57,.26) !important;
+  color: #2d2a26 !important;
+  box-shadow: 0 10px 18px rgba(16,18,21,.16);
+  gap: 8px;
+  padding-inline: 10px !important;
+  font-size: 13px !important;
+}
+
+.staff-header-return-button:hover {
+  background: linear-gradient(180deg, #fff9f0, #f4e7d4) !important;
+}
+
+.staff-header-return-button[aria-current="page"] {
+  background: linear-gradient(180deg, #fbf6ed, #f1e5d2) !important;
+  border-color: rgba(96,78,57,.26) !important;
+}
+
+.staff-header-return-button__icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.staff-header-catalog-button {
+  font-size: 13.5px !important;
+  line-height: 1.15;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
 }
 
 .staff-orders-screen .primary-button {
@@ -2348,20 +2435,162 @@ h1 {
 }
 
 .staff-source-pill {
-  min-height: 40px;
-  padding: 10px 14px;
+  min-height: 32px;
+  width: auto;
+  padding: 7px 12px;
   border: 1px solid var(--staff-line);
   border-radius: 999px;
-  background: rgba(255,255,255,.04);
+  background: rgba(255,255,255,.035);
   color: var(--staff-muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: .08em;
   text-transform: uppercase;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  justify-self: start;
   white-space: nowrap;
+  cursor: default;
+  pointer-events: none;
+}
+
+@media (max-width: 1279px) {
+  [data-staff-header] {
+    grid-template-columns: clamp(210px, 22vw, 240px) minmax(0, 1fr);
+    gap: 14px 18px;
+    align-items: center;
+  }
+
+  [data-staff-header] .staff-orders-brand {
+    grid-column: 1;
+    grid-row: 1;
+    display: flex;
+    justify-content: flex-start;
+    align-self: center;
+  }
+
+  [data-staff-header] .staff-orders-page-copy {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: center;
+  }
+
+  [data-staff-header] .staff-orders-logo-plaque {
+    width: min(100%, 228px);
+    min-height: 84px;
+    padding: 10px 12px;
+  }
+
+  [data-staff-header] .staff-orders-logo {
+    width: clamp(184px, 18vw, 206px);
+  }
+
+  [data-staff-header] .lead {
+    max-width: 34rem;
+  }
+
+  [data-staff-header] .staff-orders-header-nav {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  [data-staff-header] .staff-orders-header-nav-row--primary,
+  [data-staff-header] .staff-orders-header-nav-row--utility {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  [data-staff-header] {
+    padding: 16px;
+    grid-template-columns: 148px minmax(0, 1fr);
+    gap: 14px 16px;
+  }
+
+  [data-staff-header] .staff-orders-logo-plaque {
+    width: min(100%, 148px);
+    min-height: 82px;
+    padding: 10px 12px;
+    border-radius: 20px;
+  }
+
+  [data-staff-header] .staff-orders-logo {
+    width: 160px;
+  }
+
+  [data-staff-header] h1 {
+    font-size: 28px;
+  }
+
+  [data-staff-header] .lead {
+    font-size: 15px;
+  }
+
+  [data-staff-header] .staff-orders-header-nav .secondary-button {
+    min-height: 46px;
+    font-size: 13.5px;
+  }
+}
+
+@media (max-width: 479px) {
+  [data-staff-header] {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    padding: 12px;
+  }
+
+  [data-staff-header] .staff-orders-brand,
+  [data-staff-header] .staff-orders-page-copy,
+  [data-staff-header] .staff-orders-header-nav {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  [data-staff-header] .staff-orders-brand {
+    justify-content: center;
+  }
+
+  [data-staff-header] .staff-orders-logo-plaque {
+    width: min(100%, 152px);
+    min-height: 150px;
+    padding: 10px;
+    border-radius: 18px;
+  }
+
+  [data-staff-header] .staff-orders-logo {
+    width: 144px;
+  }
+
+  [data-staff-header] h1 {
+    font-size: 26px;
+  }
+
+  [data-staff-header] .lead {
+    margin-top: 4px;
+    font-size: 14px;
+    line-height: 1.38;
+  }
+
+  [data-staff-header] .staff-orders-header-nav,
+  [data-staff-header] .staff-orders-header-nav-row {
+    gap: 6px;
+  }
+
+  [data-staff-header] .staff-orders-header-nav-row--primary,
+  [data-staff-header] .staff-orders-header-nav-row--utility {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  [data-staff-header] .staff-orders-header-nav .secondary-button {
+    white-space: normal;
+  }
+
+  [data-staff-header] .staff-source-pill {
+    width: fit-content;
+    max-width: 100%;
+  }
 }
 
 .staff-auth-card {
@@ -2467,15 +2696,14 @@ h1 {
   display: grid;
   gap: 14px;
   align-content: start;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .staff-panel-surface--status {
   padding: 14px 18px;
-}
-
-.staff-panel-surface--admin-primary,
-.staff-panel-surface--admin-tool {
-  align-content: start;
 }
 
 .staff-admin-status-strip {
@@ -5241,8 +5469,6 @@ body.forge-catalog-image-viewer-open {
   .toolbar,
   .payload-preview-header,
   .saved-orders-header,
-  .staff-orders-header,
-  .staff-orders-brand,
   .staff-order-card-header,
   .staff-ready-card-header,
   .staff-ready-card-meta,
