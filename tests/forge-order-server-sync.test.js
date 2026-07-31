@@ -333,7 +333,7 @@ test('uuid_conflict records conflict and returns a distinguishable safe failure'
   assert.equal(storedFailure.message, 'A different Forge order is already stored on the server for this UUID.');
 });
 
-test('network, timeout, and storage_unavailable failures record failed without retries', async () => {
+test('network, timeout, and storage_unavailable failures return safe retryable upload failures', async () => {
   for (const code of ['network_error', 'timeout', 'storage_unavailable', 'server_error']) {
     let requestCount = 0;
     let failureCount = 0;
@@ -371,6 +371,52 @@ test('network, timeout, and storage_unavailable failures record failed without r
     assert.equal(requestCount, 1);
     assert.equal(failureCount, 1);
   }
+});
+
+test('a timeout persists a retry schedule and an idempotent retry stores the original local record', async () => {
+  const store = orderStoreModule.createInMemoryOrderStore();
+  await store.saveNewOrder(createRecord());
+  const submittedPayloads = [];
+  const nowValues = [
+    '2026-07-17T10:00:00.000Z',
+    '2026-07-17T10:00:03.000Z',
+    '2026-07-17T10:00:18.000Z',
+    '2026-07-17T10:00:19.000Z'
+  ];
+  const service = syncModule.createOrderServerSyncService({
+    orderStore: store,
+    apiClient: {
+      submitOrder: async (payload) => {
+        submittedPayloads.push(payload);
+        if (submittedPayloads.length === 1) {
+          const error = new Error('timeout');
+          error.code = 'timeout';
+          throw error;
+        }
+        return createSuccessResult({ created: false });
+      }
+    },
+    now: () => new Date(nowValues.length > 1 ? nowValues.shift() : nowValues[0])
+  });
+
+  const firstResult = await service.syncOrderByUuid('sync-order-1');
+  const waitingRecord = await store.getOrder('sync-order-1');
+  const secondResult = await service.syncOrderByUuid('sync-order-1');
+  const storedRecord = await store.getOrder('sync-order-1');
+
+  assert.equal(firstResult.ok, false);
+  assert.equal(firstResult.code, 'timeout');
+  assert.equal(waitingRecord.server_upload_status, orderStoreModule.SERVER_UPLOAD_STATUSES.failed);
+  assert.equal(waitingRecord.server_upload_next_retry_at, '2026-07-17T10:00:18.000Z');
+  assert.equal(waitingRecord.server_upload_needs_staff_attention, false);
+  assert.equal(secondResult.ok, true);
+  assert.equal(secondResult.created, false);
+  assert.equal(storedRecord.server_upload_status, orderStoreModule.SERVER_UPLOAD_STATUSES.stored);
+  assert.equal((await store.listOrders()).length, 1);
+  assert.equal(submittedPayloads.length, 2);
+  assert.equal(submittedPayloads[0].forge_order_uuid, 'sync-order-1');
+  assert.equal(submittedPayloads[1].forge_order_uuid, 'sync-order-1');
+  assert.deepEqual(submittedPayloads[1], submittedPayloads[0]);
 });
 
 test('invalid_order becomes a non-retryable failed upload', async () => {
@@ -563,6 +609,16 @@ test('automatic sync eligibility skips stored, conflict, and non-retryable faile
   })), true);
   assert.equal(syncModule.isOrderEligibleForAutomaticSync(createRecord({
     server_upload_status: orderStoreModule.SERVER_UPLOAD_STATUSES.failed,
+    last_server_upload_error: { code: 'network_error' },
+    server_upload_next_retry_at: '2026-07-17T10:10:00.000Z'
+  }), { now: new Date('2026-07-17T10:05:00.000Z') }), false);
+  assert.equal(syncModule.isOrderEligibleForAutomaticSync(createRecord({
+    server_upload_status: orderStoreModule.SERVER_UPLOAD_STATUSES.failed,
+    last_server_upload_error: { code: 'network_error' },
+    server_upload_next_retry_at: '2026-07-17T10:04:00.000Z'
+  }), { now: new Date('2026-07-17T10:05:00.000Z') }), true);
+  assert.equal(syncModule.isOrderEligibleForAutomaticSync(createRecord({
+    server_upload_status: orderStoreModule.SERVER_UPLOAD_STATUSES.failed,
     last_server_upload_error: { code: 'invalid_order' }
   })), false);
   assert.equal(syncModule.isOrderEligibleForAutomaticSync(createRecord({
@@ -575,6 +631,52 @@ test('automatic sync eligibility skips stored, conflict, and non-retryable faile
     server_payload_sha256: 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
     server_created: true
   })), false);
+});
+
+test('automatic retry schedules a due retry without looping and staff retry can force the original UUID once', async () => {
+  const retryRecord = createRecord({
+    server_upload_status: orderStoreModule.SERVER_UPLOAD_STATUSES.failed,
+    last_server_upload_error: { code: 'timeout' },
+    server_upload_next_retry_at: '2026-07-17T10:00:15.000Z'
+  });
+  const timers = [];
+  const syncedUuids = [];
+  let currentTime = '2026-07-17T10:00:00.000Z';
+  const coordinator = syncModule.createAutomaticOrderSyncCoordinator({
+    enabled: true,
+    location: { protocol: 'https:', hostname: 'forge.example.com' },
+    orderStore: {
+      listOrders: async () => [retryRecord]
+    },
+    syncService: {
+      syncOrderByUuid: async (uuid) => {
+        syncedUuids.push(uuid);
+        return { ok: true, forgeOrderUuid: uuid };
+      }
+    },
+    now: () => new Date(currentTime),
+    setTimeoutFn(callback, delay) {
+      timers.push({ callback, delay });
+      return timers.length;
+    },
+    clearTimeoutFn() {},
+    eventTarget: createEventTarget()
+  });
+
+  await coordinator.start();
+  assert.deepEqual(syncedUuids, []);
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].delay, 15000);
+
+  currentTime = '2026-07-17T10:00:15.000Z';
+  timers[0].callback();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(syncedUuids, ['sync-order-1']);
+
+  currentTime = '2026-07-17T10:00:00.000Z';
+  await coordinator.requestPendingSync({ force: true });
+  assert.deepEqual(syncedUuids, ['sync-order-1', 'sync-order-1']);
 });
 
 test('startup requests synchronization for eligible unsynced orders only', async () => {
@@ -622,16 +724,15 @@ test('startup requests synchronization for eligible unsynced orders only', async
 test('online event requests another synchronization pass', async () => {
   const syncedUuids = [];
   const eventTarget = createEventTarget();
-  let listOrdersCallCount = 0;
+  let pendingUuid = 'pending-1';
   const coordinator = syncModule.createAutomaticOrderSyncCoordinator({
     enabled: true,
     location: { protocol: 'https:', hostname: 'forge.example.com' },
     orderStore: {
       listOrders: async () => {
-        listOrdersCallCount += 1;
         return [createRecord({
-          forge_order_uuid: `pending-${listOrdersCallCount}`,
-          payload: createPayload({ forge_order_uuid: `pending-${listOrdersCallCount}` })
+          forge_order_uuid: pendingUuid,
+          payload: createPayload({ forge_order_uuid: pendingUuid })
         })];
       }
     },
@@ -645,6 +746,7 @@ test('online event requests another synchronization pass', async () => {
   });
 
   await coordinator.start();
+  pendingUuid = 'pending-2';
   eventTarget.dispatch('online');
   await Promise.resolve();
   await Promise.resolve();

@@ -111,7 +111,8 @@ function createService(options = {}) {
     contextManager,
     buildForgeOrderPayload,
     now: () => new Date(nowValues.length > 1 ? nowValues.shift() : nowValues[0]),
-    onRecordSaved: options.onRecordSaved
+    onRecordSaved: options.onRecordSaved,
+    attemptInitialUpload: options.attemptInitialUpload
   });
 
   return {
@@ -191,34 +192,113 @@ test('successful local save triggers a background sync request with the saved re
   assert.equal(syncedUuid, 'submission-uuid-1');
 });
 
-test('submission success is not blocked by a pending background sync request and upload failures do not affect the local save result', async () => {
-  let releaseSync;
-  let syncCallCount = 0;
-  const syncStarted = new Promise((resolve) => {
-    releaseSync = resolve;
+test('submission waits for the first upload result and records a server-confirmed order with its original UUID', async () => {
+  let resolveUpload;
+  let settled = false;
+  let store;
+  const uploadGate = new Promise((resolve) => {
+    resolveUpload = resolve;
   });
   const { service, orderStore } = createService({
-    onRecordSaved() {
-      syncCallCount += 1;
-      return syncStarted.then(() => {
-        throw new Error('network failure');
-      });
+    attemptInitialUpload: async (record) => {
+      await store.markOrderServerUploadAttempt(record.forge_order_uuid, '2026-07-15T12:00:02.000Z');
+      await uploadGate;
+      const storedRecord = await store.markOrderServerUploadSuccess(record.forge_order_uuid, {
+        forgeOrderUuid: record.forge_order_uuid,
+        receivedAt: '2026-07-15T12:00:03.000Z',
+        payloadSha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        created: true,
+        forgeOrderNumber: 1001
+      }, '2026-07-15T12:00:03.000Z');
+      return { ok: true, forgeOrderUuid: record.forge_order_uuid, record: storedRecord };
     }
   });
+  store = orderStore;
+
+  const submission = service.submitOrder({
+    activeOrderSessionId: 'order-session-123',
+    orderState: createOrderState([createItem()])
+  }).then((result) => {
+    settled = true;
+    return result;
+  });
+
+  await Promise.resolve();
+  assert.equal(settled, false);
+  assert.equal((await store.getOrder('submission-uuid-1')).forge_order_uuid, 'submission-uuid-1');
+
+  resolveUpload();
+  const result = await submission;
+  const storedRecord = await store.getOrder('submission-uuid-1');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.submissionOutcome.state, 'stored_successfully');
+  assert.equal(storedRecord.server_upload_status, orderStoreModule.SERVER_UPLOAD_STATUSES.stored);
+  assert.equal(storedRecord.payload.forge_order_uuid, 'submission-uuid-1');
+});
+
+test('a retryable first-upload timeout keeps the saved order recoverable with a persisted retry schedule', async () => {
+  let store;
+  const { service, orderStore } = createService({
+    attemptInitialUpload: async (record) => {
+      await store.markOrderServerUploadAttempt(record.forge_order_uuid, '2026-07-15T12:00:02.000Z');
+      const failedRecord = await store.markOrderServerUploadFailure(record.forge_order_uuid, {
+        code: 'timeout',
+        message: 'ignored unsafe details'
+      }, '2026-07-15T12:00:03.000Z');
+      return { ok: false, code: 'timeout', forgeOrderUuid: record.forge_order_uuid, record: failedRecord };
+    }
+  });
+  store = orderStore;
+
+  const firstResult = await service.submitOrder({
+    activeOrderSessionId: 'order-session-123',
+    orderState: createOrderState([createItem()])
+  });
+  const duplicateResult = await service.submitOrder({
+    activeOrderSessionId: 'order-session-123',
+    orderState: createOrderState([createItem()])
+  });
+  const savedRecord = await store.getOrder('submission-uuid-1');
+
+  assert.equal(firstResult.ok, true);
+  assert.equal(firstResult.submissionOutcome.state, 'saved_on_this_ipad_waiting_to_upload');
+  assert.equal(savedRecord.server_upload_status, orderStoreModule.SERVER_UPLOAD_STATUSES.failed);
+  assert.equal(savedRecord.server_upload_attempt_count, 1);
+  assert.equal(savedRecord.server_upload_next_retry_at, '2026-07-15T12:00:18.000Z');
+  assert.equal(savedRecord.server_upload_needs_staff_attention, false);
+  assert.equal(duplicateResult.duplicatePrevented, true);
+  assert.equal(duplicateResult.record.forge_order_uuid, 'submission-uuid-1');
+  assert.equal(duplicateResult.submissionOutcome.state, 'saved_on_this_ipad_waiting_to_upload');
+  assert.equal((await store.listOrders()).length, 1);
+});
+
+test('a non-retryable UUID conflict keeps the local record and reports staff attention without another UUID', async () => {
+  let store;
+  const { service, orderStore } = createService({
+    attemptInitialUpload: async (record) => {
+      await store.markOrderServerUploadAttempt(record.forge_order_uuid, '2026-07-15T12:00:02.000Z');
+      const failedRecord = await store.markOrderServerUploadFailure(record.forge_order_uuid, {
+        code: 'uuid_conflict',
+        message: 'ignored unsafe details'
+      }, '2026-07-15T12:00:03.000Z');
+      return { ok: false, code: 'uuid_conflict', forgeOrderUuid: record.forge_order_uuid, record: failedRecord };
+    }
+  });
+  store = orderStore;
 
   const result = await service.submitOrder({
     activeOrderSessionId: 'order-session-123',
     orderState: createOrderState([createItem()])
   });
-  const savedRecord = await orderStore.getOrder('submission-uuid-1');
+  const savedRecord = await store.getOrder('submission-uuid-1');
 
   assert.equal(result.ok, true);
-  assert.equal(syncCallCount, 1);
-  assert.equal(savedRecord.forge_order_uuid, 'submission-uuid-1');
-
-  releaseSync();
-  await Promise.resolve();
-  await Promise.resolve();
+  assert.equal(result.submissionOutcome.state, 'needs_staff_attention');
+  assert.equal(savedRecord.server_upload_status, orderStoreModule.SERVER_UPLOAD_STATUSES.conflict);
+  assert.equal(savedRecord.server_upload_needs_staff_attention, true);
+  assert.equal(savedRecord.server_upload_next_retry_at, null);
+  assert.equal((await store.listOrders()).length, 1);
 });
 
 test('repeated sequential and concurrent submissions reuse the same uuid and do not overwrite the original record', async () => {

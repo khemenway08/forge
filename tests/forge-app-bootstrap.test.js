@@ -269,6 +269,8 @@ function loadForgeAppWithoutStaffModules({
   const finalReviewSummary = createElement('div');
   const finalReviewCustomer = createElement('div');
   const finalReviewDelivery = createElement('div');
+  const thankYouEyebrow = createElement('p');
+  const thankYouTitle = createElement('h1');
   const thankYouCopy = createElement('p');
   const thankYouReference = createElement('div');
   const thankYouDebugTools = createElement('div');
@@ -336,6 +338,8 @@ function loadForgeAppWithoutStaffModules({
   env.registerSelector('[data-payment-handoff-summary]', paymentHandoffSummary);
   env.registerSelector('[data-payment-handoff-total]', paymentHandoffTotal);
   env.registerSelector('[data-payment-handoff-cancel-panel]', paymentHandoffCancelPanel);
+  env.registerSelector('[data-screen="thank-you"] .eyebrow', thankYouEyebrow);
+  env.registerSelector('[data-screen="thank-you"] h1', thankYouTitle);
   env.registerSelector('[data-thank-you-copy]', thankYouCopy);
   env.registerSelector('[data-thank-you-reference]', thankYouReference);
   env.registerSelector('[data-screen="ornaments"]', ornamentsScreen);
@@ -699,6 +703,8 @@ function loadForgeAppWithoutStaffModules({
     finalReviewSummary,
     finalReviewCustomer,
     finalReviewDelivery,
+    thankYouEyebrow,
+    thankYouTitle,
     thankYouCopy,
     thankYouReference,
     entryList,
@@ -3657,7 +3663,33 @@ test('thank-you screen explains offline local save without claiming a server upl
 
   await context.renderThankYouScreen();
 
-  assert.equal(thankYouCopy.textContent, 'Meagan was safely saved on this iPad and will upload when Forge reconnects.');
+  assert.equal(thankYouCopy.textContent, 'Meagan was safely saved on this iPad. Forge has not confirmed the upload yet, so keep this iPad available while it retries automatically.');
+});
+
+test('a restored pending order never shows the completed thank-you heading while its local record is loading', async () => {
+  const { context, thankYouEyebrow, thankYouTitle } = loadForgeAppWithoutStaffModules();
+  let releaseRecord;
+  context.pendingRecordPromise = new Promise((resolve) => {
+    releaseRecord = resolve;
+  });
+
+  vm.runInContext(`
+    appState.lastSubmittedOrderUuid = 'pending-order-1';
+    orderStore.getOrder = async () => pendingRecordPromise;
+  `, context);
+
+  const rendering = context.renderThankYouScreen();
+
+  assert.equal(thankYouEyebrow.textContent, 'Order Saved on This iPad');
+  assert.equal(thankYouTitle.textContent, 'Forge is confirming your order.');
+
+  releaseRecord({
+    forge_order_uuid: 'pending-order-1',
+    server_upload_status: 'failed',
+    last_server_upload_error: { code: 'timeout' },
+    payload: { customer: { full_name: 'Meagan' } }
+  });
+  await rendering;
 });
 
 test('thank-you screen explains upload problems without exposing technical details', async () => {

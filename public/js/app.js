@@ -50,6 +50,8 @@ const finalReviewActionsCard = document.querySelector('[data-final-review-action
 const finalReviewStatus = document.querySelector('[data-final-review-status]');
 const finalReviewCancelPanel = document.querySelector('[data-final-review-cancel-panel]');
 const paymentMethodChoiceButtons = [...document.querySelectorAll('[data-payment-method]')];
+const thankYouEyebrow = document.querySelector('[data-screen="thank-you"] .eyebrow');
+const thankYouTitle = document.querySelector('[data-screen="thank-you"] h1');
 const thankYouCopy = document.querySelector('[data-thank-you-copy]');
 const thankYouReference = document.querySelector('[data-thank-you-reference]');
 const customerSyncIndicator = document.querySelector('[data-customer-sync-indicator]');
@@ -787,8 +789,14 @@ const completionReceiptManager = forgeOrderSubmission.createCompletionReceiptMan
 const orderSubmissionService = forgeOrderSubmission.createOrderSubmissionService({
   orderStore,
   contextManager: submissionContextManager,
+  async attemptInitialUpload(record) {
+    if (!forgeOrderServerSync.isAutomaticOrderSyncAllowed(window.location)) {
+      return null;
+    }
+    return orderSyncService.syncOrderByUuid(record?.forge_order_uuid || '');
+  },
   onRecordSaved(record) {
-    automaticOrderSync.requestSyncForOrder(record?.forge_order_uuid || '');
+    automaticOrderSync.requestPendingSync();
   }
 });
 syncStatusState.snapshot = syncStatusController.getSnapshot();
@@ -9115,10 +9123,32 @@ function buildThankYouMessageForRecord(record, snapshot) {
   if (derivedState.key === 'problem') {
     return `${displayName} was saved, but it needs staff attention before Forge can finish the upload.`;
   }
-  if (snapshot.serverState === forgeSyncStatus.SERVER_STATES.connected) {
-    return `${displayName} was saved on this iPad and is still syncing with Forge.`;
+  if (derivedState.key === 'syncing') {
+    return `${displayName} was saved on this iPad and is uploading to Forge now.`;
   }
-  return `${displayName} was safely saved on this iPad and will upload when Forge reconnects.`;
+  return `${displayName} was safely saved on this iPad. Forge has not confirmed the upload yet, so keep this iPad available while it retries automatically.`;
+}
+
+function renderThankYouPresentation(record) {
+  const derivedState = forgeSyncStatus.deriveRecordSyncState(record);
+  if (!thankYouEyebrow || !thankYouTitle) {
+    return;
+  }
+
+  if (derivedState.key === 'problem') {
+    thankYouEyebrow.textContent = 'Needs Staff Attention';
+    thankYouTitle.textContent = 'Your order is saved on this iPad.';
+    return;
+  }
+
+  if (derivedState.key === 'syncing' || derivedState.key === 'waiting') {
+    thankYouEyebrow.textContent = 'Order Saved on This iPad';
+    thankYouTitle.textContent = 'Forge is confirming your order.';
+    return;
+  }
+
+  thankYouEyebrow.textContent = 'Order Saved';
+  thankYouTitle.textContent = 'Your order has been saved.';
 }
 
 async function renderThankYouScreen() {
@@ -9127,12 +9157,15 @@ async function renderThankYouScreen() {
   }
 
   const snapshot = getCurrentSyncSnapshot();
+  // Never expose the static completed heading while the saved record is still loading.
+  renderThankYouPresentation({ server_upload_status: 'pending' });
   const completionReceipt = completionReceiptManager.getReceipt();
   if (completionReceipt && completionReceipt.forgeOrderUuid) {
     appState.lastSubmittedOrderUuid = completionReceipt.forgeOrderUuid;
   }
 
   if (!appState.lastSubmittedOrderUuid) {
+    renderThankYouPresentation(null);
     thankYouCopy.textContent = snapshot.serverState === forgeSyncStatus.SERVER_STATES.connected
       ? 'Your order was saved and synced with Forge.'
       : 'Your order was safely saved on this iPad and will upload when Forge reconnects.';
@@ -9149,6 +9182,7 @@ async function renderThankYouScreen() {
       : null;
     const record = settledRecord || await orderStore.getOrder(appState.lastSubmittedOrderUuid);
     if (!record) {
+      renderThankYouPresentation(null);
       thankYouCopy.textContent = 'Your order was saved earlier on this iPad.';
       thankYouReference.hidden = true;
       renderDebugOrderTools();
@@ -9156,6 +9190,7 @@ async function renderThankYouScreen() {
     }
 
     const shortOrderReference = completionReceipt?.shortOrderReference || getOrderShortReference(record);
+    renderThankYouPresentation(record);
     thankYouCopy.textContent = buildThankYouMessageForRecord(record, getCurrentSyncSnapshot());
     thankYouReference.hidden = false;
     thankYouReference.innerHTML = `
@@ -9164,6 +9199,7 @@ async function renderThankYouScreen() {
     `;
   } catch (error) {
     console.error('Forge thank-you screen failed to load the saved order', error);
+    renderThankYouPresentation(null);
     thankYouCopy.textContent = 'Your order was saved on this iPad.';
     thankYouReference.hidden = true;
   }

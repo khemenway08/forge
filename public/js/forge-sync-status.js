@@ -14,7 +14,7 @@
     checking: 'checking',
     synced: 'synced',
     syncing: 'syncing',
-    savedOffline: 'saved_offline',
+    waitingToRetry: 'waiting_to_retry',
     needsAttention: 'needs_attention',
     serverUnavailable: 'server_unavailable'
   };
@@ -23,7 +23,6 @@
     connected: 'connected',
     unavailable: 'unavailable'
   };
-  const RETRY_ATTENTION_THRESHOLD = 3;
   const VISIBLE_HEALTH_INTERVAL_MS = 60000;
   const HIDDEN_HEALTH_INTERVAL_MS = 300000;
   const MIN_HEALTH_CHECK_GAP_MS = 5000;
@@ -32,10 +31,6 @@
 
   function summarizeOrderSyncRecords(records, options = {}) {
     const normalizedRecords = Array.isArray(records) ? records : [];
-    const attentionRetryThreshold = normalizePositiveInteger(
-      options.attentionRetryThreshold,
-      RETRY_ATTENTION_THRESHOLD
-    );
     let pendingUploadCount = 0;
     let activeUploadCount = 0;
     let uploadProblemCount = 0;
@@ -44,7 +39,7 @@
     const problemRecords = [];
 
     normalizedRecords.forEach((record) => {
-      const recordState = deriveRecordSyncState(record, { attentionRetryThreshold });
+      const recordState = deriveRecordSyncState(record);
       if (recordState.key === 'synced') {
         syncedOrderCount += 1;
         lastSuccessfulSyncAt = pickLatestIsoTimestamp(lastSuccessfulSyncAt, asTrimmedString(record?.server_received_at));
@@ -79,16 +74,10 @@
   }
 
   function deriveRecordSyncState(record, options = {}) {
-    const attentionRetryThreshold = normalizePositiveInteger(
-      options.attentionRetryThreshold,
-      RETRY_ATTENTION_THRESHOLD
-    );
     const serverUploadStatus = asTrimmedString(record?.server_upload_status).toLowerCase();
     const errorCode = asTrimmedString(record?.last_server_upload_error?.code).toLowerCase();
-    const attemptCount = Number.isInteger(record?.server_upload_attempt_count)
-      ? Math.max(record.server_upload_attempt_count, 0)
-      : 0;
     const legacySyncStatus = asTrimmedString(record?.sync_status).toLowerCase();
+    const needsStaffAttention = record?.server_upload_needs_staff_attention === true;
 
     if (serverUploadStatus === 'stored') {
       return { key: 'synced', retryable: false };
@@ -101,10 +90,10 @@
     }
     if (serverUploadStatus === 'failed') {
       const retryable = isRetryableSyncFailureCode(errorCode);
-      if (!retryable || attemptCount >= attentionRetryThreshold) {
+      if (!retryable || needsStaffAttention) {
         return { key: 'problem', retryable };
       }
-      return { key: 'pending', retryable: true };
+      return { key: 'waiting', retryable: true };
     }
     if (legacySyncStatus === 'synced') {
       return { key: 'synced', retryable: false };
@@ -112,7 +101,7 @@
     if (legacySyncStatus === 'error') {
       return { key: 'problem', retryable: false };
     }
-    return { key: 'pending', retryable: true };
+    return { key: 'waiting', retryable: true };
   }
 
   function deriveSyncStatusSnapshot(facts = {}) {
@@ -140,18 +129,12 @@
       statusKey = STATUS_KEYS.syncing;
       label = 'Syncing';
       supportingText = `Uploading ${activeUploadCount} saved order${activeUploadCount === 1 ? '' : 's'}.`;
-    } else if (pendingUploadCount > 0 && (!browserOnline || serverState === SERVER_STATES.unavailable)) {
-      statusKey = STATUS_KEYS.savedOffline;
-      label = 'Saved Offline';
-      supportingText = `${pendingUploadCount} order${pendingUploadCount === 1 ? '' : 's'} safely saved on this device.`;
-    } else if (pendingUploadCount > 0 && serverState === SERVER_STATES.connected) {
-      statusKey = STATUS_KEYS.syncing;
-      label = 'Syncing';
-      supportingText = `Uploading ${pendingUploadCount} saved order${pendingUploadCount === 1 ? '' : 's'}.`;
     } else if (pendingUploadCount > 0) {
-      statusKey = STATUS_KEYS.checking;
-      label = 'Checking';
-      supportingText = `Checking ${pendingUploadCount} saved order${pendingUploadCount === 1 ? '' : 's'}.`;
+      statusKey = STATUS_KEYS.waitingToRetry;
+      label = 'Waiting to Retry';
+      supportingText = pendingUploadCount === 1
+        ? '1 order is saved on this iPad and waiting for the next Forge upload attempt.'
+        : `${pendingUploadCount} orders are saved on this iPad and waiting for the next Forge upload attempt.`;
     } else if (serverState === SERVER_STATES.unavailable) {
       statusKey = STATUS_KEYS.serverUnavailable;
       label = 'Server Unavailable';
@@ -198,7 +181,6 @@
     const visibleIntervalMs = normalizePositiveInteger(options.visibleIntervalMs, VISIBLE_HEALTH_INTERVAL_MS);
     const hiddenIntervalMs = normalizePositiveInteger(options.hiddenIntervalMs, HIDDEN_HEALTH_INTERVAL_MS);
     const minHealthCheckGapMs = normalizePositiveInteger(options.minHealthCheckGapMs, MIN_HEALTH_CHECK_GAP_MS);
-    const attentionRetryThreshold = normalizePositiveInteger(options.attentionRetryThreshold, RETRY_ATTENTION_THRESHOLD);
     const subscribers = new Set();
     let started = false;
     let pollingTimerId = null;
@@ -220,7 +202,7 @@
       uploadProblemCount: 0,
       lastSuccessfulSyncAt: null
     });
-    let recordsSummary = summarizeOrderSyncRecords([], { attentionRetryThreshold });
+    let recordsSummary = summarizeOrderSyncRecords([], {});
     let isRefreshing = false;
     let isRetryingUploads = false;
     let isRecheckingConnection = false;
@@ -284,7 +266,7 @@
             await checkHealth({ force: Boolean(options.forceHealthCheck) });
           }
           const records = await loadRecords();
-          recordsSummary = summarizeOrderSyncRecords(records, { attentionRetryThreshold });
+          recordsSummary = summarizeOrderSyncRecords(records, {});
           updateSnapshot();
           return getSnapshot();
         } finally {
@@ -307,7 +289,7 @@
       notify();
       try {
         await refresh({ checkHealth: true, forceHealthCheck: true });
-        await syncCoordinator.requestPendingSync();
+        await syncCoordinator.requestPendingSync({ force: true });
         await refresh({ checkHealth: true, forceHealthCheck: true });
         return getSnapshot();
       } finally {
@@ -353,7 +335,7 @@
         if (!record) {
           return null;
         }
-        const recordState = deriveRecordSyncState(record, { attentionRetryThreshold });
+        const recordState = deriveRecordSyncState(record);
         if (recordState.key === 'synced' || recordState.key === 'problem') {
           return record;
         }
@@ -434,6 +416,9 @@
       scheduleNextPollingPass();
       if (getVisibilityState(documentTarget) === 'visible') {
         refresh({ checkHealth: true }).catch(() => {});
+        if (syncCoordinator && typeof syncCoordinator.requestPendingSync === 'function') {
+          syncCoordinator.requestPendingSync().catch(() => {});
+        }
       }
     }
 
@@ -597,7 +582,6 @@
   }
 
   return {
-    RETRY_ATTENTION_THRESHOLD,
     SERVER_STATES,
     STATUS_KEYS,
     createSyncStatusController,

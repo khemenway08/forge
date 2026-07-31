@@ -96,6 +96,7 @@
     server_error: 'The Forge server reported an internal error.',
     server_upload_failed: 'Unable to store this order on the Forge server.'
   };
+  const SERVER_UPLOAD_RETRY_DELAYS_MS = [15000, 60000, 300000];
   const DEFAULT_TRAY_INVENTORY = createDefaultTrayInventoryConfig();
   function createOrderStore(options = {}) {
     const indexedDb = options.indexedDB || (typeof globalThis !== 'undefined' ? globalThis.indexedDB : null);
@@ -293,7 +294,9 @@
             server_upload_status: SERVER_UPLOAD_STATUSES.uploading,
             server_upload_attempt_count: getServerUploadAttemptCount(storedOrder) + 1,
             last_server_upload_attempt_at: timestamp,
-            last_server_upload_error: null
+            last_server_upload_error: null,
+            server_upload_next_retry_at: null,
+            server_upload_needs_staff_attention: false
           });
 
           const putRequest = ordersStore.put(deepCloneValue(updatedRecord));
@@ -337,7 +340,9 @@
             server_payload_sha256: result.payloadSha256,
             server_created: result.created,
             forge_order_number: result.forgeOrderNumber,
-            last_server_upload_error: null
+            last_server_upload_error: null,
+            server_upload_next_retry_at: null,
+            server_upload_needs_staff_attention: false
           });
 
           const putRequest = ordersStore.put(deepCloneValue(updatedRecord));
@@ -373,13 +378,18 @@
           }
 
           const safeError = sanitizeServerUploadError(error);
+          const retryable = isRetryableServerUploadErrorCode(safeError.code);
           updatedRecord = normalizeLocalOrderRecord({
             ...deepCloneValue(storedOrder),
             updated_at: timestamp,
             server_upload_status: safeError.code === 'uuid_conflict'
               ? SERVER_UPLOAD_STATUSES.conflict
               : SERVER_UPLOAD_STATUSES.failed,
-            last_server_upload_error: safeError
+            last_server_upload_error: safeError,
+            server_upload_next_retry_at: retryable
+              ? calculateNextServerUploadRetryAt(getServerUploadAttemptCount(storedOrder), timestamp)
+              : null,
+            server_upload_needs_staff_attention: !retryable
           });
 
           const putRequest = ordersStore.put(deepCloneValue(updatedRecord));
@@ -1357,7 +1367,9 @@
           server_upload_status: SERVER_UPLOAD_STATUSES.uploading,
           server_upload_attempt_count: getServerUploadAttemptCount(storedOrder) + 1,
           last_server_upload_attempt_at: timestamp,
-          last_server_upload_error: null
+          last_server_upload_error: null,
+          server_upload_next_retry_at: null,
+          server_upload_needs_staff_attention: false
         });
 
         records.set(orderUuid, deepCloneValue(updatedRecord));
@@ -1380,7 +1392,9 @@
           server_payload_sha256: result.payloadSha256,
           server_created: result.created,
           forge_order_number: result.forgeOrderNumber,
-          last_server_upload_error: null
+          last_server_upload_error: null,
+          server_upload_next_retry_at: null,
+          server_upload_needs_staff_attention: false
         });
 
         records.set(orderUuid, deepCloneValue(updatedRecord));
@@ -1395,13 +1409,18 @@
 
         const timestamp = normalizeDateValue(updatedAt).toISOString();
         const safeError = sanitizeServerUploadError(error);
+        const retryable = isRetryableServerUploadErrorCode(safeError.code);
         const updatedRecord = normalizeLocalOrderRecord({
           ...deepCloneValue(storedOrder),
           updated_at: timestamp,
           server_upload_status: safeError.code === 'uuid_conflict'
             ? SERVER_UPLOAD_STATUSES.conflict
             : SERVER_UPLOAD_STATUSES.failed,
-          last_server_upload_error: safeError
+          last_server_upload_error: safeError,
+          server_upload_next_retry_at: retryable
+            ? calculateNextServerUploadRetryAt(getServerUploadAttemptCount(storedOrder), timestamp)
+            : null,
+          server_upload_needs_staff_attention: !retryable
         });
 
         records.set(orderUuid, deepCloneValue(updatedRecord));
@@ -2172,6 +2191,8 @@
       server_upload_attempt_count: getServerUploadAttemptCount(record),
       last_server_upload_attempt_at: asNullableIsoString(record.last_server_upload_attempt_at),
       last_server_upload_error: sanitizeServerUploadError(record.last_server_upload_error),
+      server_upload_next_retry_at: asNullableIsoString(record.server_upload_next_retry_at),
+      server_upload_needs_staff_attention: record.server_upload_needs_staff_attention === true,
       server_received_at: asNullableIsoString(record.server_received_at),
       server_payload_sha256: normalizeServerPayloadSha(record.server_payload_sha256),
       server_created: record.server_created === true ? true : (record.server_created === false ? false : null),
@@ -2509,6 +2530,31 @@
       code,
       message: message.slice(0, SERVER_UPLOAD_ERROR_MESSAGE_MAX_LENGTH)
     };
+  }
+
+  function isRetryableServerUploadErrorCode(code) {
+    const normalizedCode = asTrimmedString(code).toLowerCase();
+    if (!normalizedCode) {
+      return true;
+    }
+    return ![
+      'uuid_conflict',
+      'invalid_order',
+      'invalid_json',
+      'request_too_large',
+      'unsupported_media_type',
+      'method_not_allowed',
+      'invalid_request',
+      'invalid_record'
+    ].includes(normalizedCode);
+  }
+
+  function calculateNextServerUploadRetryAt(attemptCount, attemptedAt) {
+    const normalizedAttemptCount = Number.isInteger(attemptCount) && attemptCount > 0 ? attemptCount : 1;
+    const retryDelayMs = SERVER_UPLOAD_RETRY_DELAYS_MS[Math.min(normalizedAttemptCount - 1, SERVER_UPLOAD_RETRY_DELAYS_MS.length - 1)];
+    const nextAttemptAt = normalizeDateValue(attemptedAt);
+    nextAttemptAt.setTime(nextAttemptAt.getTime() + retryDelayMs);
+    return nextAttemptAt.toISOString();
   }
 
   function asNullableIsoString(value) {

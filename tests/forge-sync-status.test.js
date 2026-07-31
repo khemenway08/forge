@@ -50,7 +50,7 @@ test('browser offline with zero pending orders reports server unavailable', () =
   assert.equal(snapshot.label, 'Server Unavailable');
 });
 
-test('browser offline with pending orders reports saved offline', () => {
+test('browser offline with pending orders reports that the saved orders are waiting to retry', () => {
   const snapshot = syncStatusModule.deriveSyncStatusSnapshot({
     browserOnline: false,
     serverState: syncStatusModule.SERVER_STATES.unavailable,
@@ -61,9 +61,9 @@ test('browser offline with pending orders reports saved offline', () => {
     lastSuccessfulSyncAt: null
   });
 
-  assert.equal(snapshot.statusKey, syncStatusModule.STATUS_KEYS.savedOffline);
-  assert.equal(snapshot.label, 'Saved Offline');
-  assert.match(snapshot.supportingText, /2 orders safely saved on this device/i);
+  assert.equal(snapshot.statusKey, syncStatusModule.STATUS_KEYS.waitingToRetry);
+  assert.equal(snapshot.label, 'Waiting to Retry');
+  assert.match(snapshot.supportingText, /2 orders are saved on this iPad and waiting/i);
 });
 
 test('online with unreachable Forge server and no pending orders reports server unavailable', () => {

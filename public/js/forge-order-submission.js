@@ -114,6 +114,7 @@
       storage: typeof localStorage !== 'undefined' ? localStorage : null
     });
     const onRecordSaved = typeof options.onRecordSaved === 'function' ? options.onRecordSaved : null;
+    const attemptInitialUpload = typeof options.attemptInitialUpload === 'function' ? options.attemptInitialUpload : null;
     const getNow = typeof options.now === 'function' ? options.now : () => new Date();
     const inFlightSubmissions = new Map();
 
@@ -165,7 +166,8 @@
             context: {
               ...context,
               submittedAt: existingRecord.submitted_at
-            }
+            },
+            submissionOutcome: classifySubmissionOutcome(null, existingRecord)
           };
         }
 
@@ -202,15 +204,39 @@
         };
 
         const saveResult = await orderStore.saveNewOrder(record);
-        if (saveResult && saveResult.wasInserted && onRecordSaved) {
-          queueBackgroundRecordSaved(onRecordSaved, saveResult.record);
+        let finalRecord = deepCloneValue(saveResult.record);
+        let submissionOutcome = {
+          state: 'saved_on_this_ipad_waiting_to_upload',
+          retryable: true
+        };
+
+        if (attemptInitialUpload) {
+          const firstUploadResult = await attemptInitialUpload(deepCloneValue(saveResult.record));
+          if (firstUploadResult && firstUploadResult.record && typeof firstUploadResult.record === 'object') {
+            finalRecord = deepCloneValue(firstUploadResult.record);
+          } else {
+            try {
+              const refreshedRecord = await orderStore.getOrder(saveResult.record.forge_order_uuid);
+              if (refreshedRecord) {
+                finalRecord = deepCloneValue(refreshedRecord);
+              }
+            } catch {
+              finalRecord = deepCloneValue(saveResult.record);
+            }
+          }
+          submissionOutcome = classifySubmissionOutcome(firstUploadResult, finalRecord);
+        }
+
+        if (onRecordSaved) {
+          queueBackgroundRecordSaved(onRecordSaved, finalRecord);
         }
         return {
           ok: true,
           duplicatePrevented: Boolean(saveResult.duplicatePrevented),
-          record: deepCloneValue(saveResult.record),
-          payload: deepCloneValue(saveResult.record.payload),
-          context: deepCloneValue(submittedContext)
+          record: deepCloneValue(finalRecord),
+          payload: deepCloneValue(finalRecord.payload),
+          context: deepCloneValue(submittedContext),
+          submissionOutcome
         };
       } catch (error) {
         return {
@@ -336,6 +362,35 @@
     return currentScreen;
   }
 
+  function classifySubmissionOutcome(firstUploadResult, record) {
+    if (firstUploadResult && firstUploadResult.ok) {
+      return {
+        state: 'stored_successfully',
+        retryable: false
+      };
+    }
+
+    const normalizedRecord = record && typeof record === 'object' ? record : null;
+    if (normalizedRecord && normalizedRecord.server_upload_needs_staff_attention === true) {
+      return {
+        state: 'needs_staff_attention',
+        retryable: false
+      };
+    }
+
+    if (normalizedRecord && normalizedRecord.server_upload_status === 'failed') {
+      return {
+        state: 'saved_on_this_ipad_waiting_to_upload',
+        retryable: true
+      };
+    }
+
+    return {
+      state: 'needs_staff_attention',
+      retryable: false
+    };
+  }
+
   function buildShortOrderReference(forgeOrderUuid) {
     const value = asTrimmedString(forgeOrderUuid).replace(/[^a-z0-9]/gi, '');
     return value ? value.slice(0, 8).toUpperCase() : '';
@@ -414,6 +469,7 @@
     COMPLETION_RECEIPT_STORAGE_KEY,
     SUBMISSION_CONTEXT_STORAGE_KEY,
     buildCompletionReceipt,
+    classifySubmissionOutcome,
     createOrderSubmissionService,
     createCompletionReceiptManager,
     createSubmissionContextManager,

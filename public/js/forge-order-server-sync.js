@@ -117,7 +117,12 @@
       } catch (error) {
         const safeFailure = sanitizeError(error, orderUuid);
         try {
-          await orderStore.markOrderServerUploadFailure(orderUuid, safeFailure, normalizeDateValue(getNow()).toISOString());
+          const updatedRecord = await orderStore.markOrderServerUploadFailure(
+            orderUuid,
+            safeFailure,
+            normalizeDateValue(getNow()).toISOString()
+          );
+          safeFailure.record = updatedRecord;
         } catch {
           return safeFailure;
         }
@@ -165,6 +170,9 @@
     const syncService = options.syncService;
     const eventTarget = options.eventTarget || null;
     const location = options.location || (typeof globalThis !== 'undefined' ? globalThis.location : null);
+    const getNow = typeof options.now === 'function' ? options.now : () => new Date();
+    const setTimeoutFn = typeof options.setTimeoutFn === 'function' ? options.setTimeoutFn : setTimeout;
+    const clearTimeoutFn = typeof options.clearTimeoutFn === 'function' ? options.clearTimeoutFn : clearTimeout;
     const enabled = options.enabled === undefined
       ? isAutomaticOrderSyncAllowed(location)
       : Boolean(options.enabled);
@@ -172,9 +180,11 @@
     let activeRun = null;
     let rerunRequested = false;
     let fullScanRequested = false;
+    let forceFullScanRequested = false;
     const pendingOrderUuids = new Set();
     const activeOrderUuids = new Set();
     const subscribers = new Set();
+    let retryTimerId = null;
     let lastRunCompletedAt = null;
     let lastRunResults = [];
     let lastProcessedCount = 0;
@@ -216,11 +226,12 @@
       return scheduleRun();
     }
 
-    function requestPendingSync() {
+    function requestPendingSync(options = {}) {
       if (!enabled) {
         return Promise.resolve(createSkippedResult('disabled'));
       }
       fullScanRequested = true;
+      forceFullScanRequested = forceFullScanRequested || options.force === true;
       return scheduleRun();
     }
 
@@ -233,6 +244,7 @@
       notify();
       activeRun = runSyncLoop().finally(() => {
         activeRun = null;
+        scheduleNextRetryScan().catch(() => {});
         notify();
       });
       return activeRun;
@@ -262,7 +274,7 @@
         }
         lastRunResults = results.slice();
         lastProcessedCount = results.length;
-        lastRunCompletedAt = new Date().toISOString();
+        lastRunCompletedAt = normalizeDateValue(getNow()).toISOString();
         lastResult = {
           ok: results.every((result) => result && result.ok !== false),
           processedCount: results.length,
@@ -280,7 +292,9 @@
 
       const orderUuids = new Set(explicitOrderUuids);
       if (fullScanRequested) {
+        const forceRetry = forceFullScanRequested;
         fullScanRequested = false;
+        forceFullScanRequested = false;
         let records = [];
         try {
           records = await orderStore.listOrders();
@@ -288,7 +302,7 @@
           records = [];
         }
         records
-          .filter((record) => isOrderEligibleForAutomaticSync(record))
+          .filter((record) => isOrderEligibleForAutomaticSync(record, { now: getNow(), forceRetry }))
           .forEach((record) => {
             const orderUuid = asTrimmedString(record?.forge_order_uuid);
             if (orderUuid) {
@@ -329,6 +343,34 @@
       subscribers.forEach((listener) => {
         listener(state);
       });
+    }
+
+    async function scheduleNextRetryScan() {
+      if (retryTimerId !== null) {
+        clearTimeoutFn(retryTimerId);
+        retryTimerId = null;
+      }
+      if (!enabled) {
+        return;
+      }
+      let records = [];
+      try {
+        records = await orderStore.listOrders();
+      } catch {
+        records = [];
+      }
+      const nextRetryAt = findNextEligibleRetryAt(records);
+      if (!nextRetryAt) {
+        return;
+      }
+      const delayMs = Math.max(nextRetryAt.getTime() - normalizeDateValue(getNow()).getTime(), 0);
+      retryTimerId = setTimeoutFn(() => {
+        retryTimerId = null;
+        requestPendingSync().catch(() => {});
+      }, delayMs);
+      if (retryTimerId && typeof retryTimerId.unref === 'function') {
+        retryTimerId.unref();
+      }
     }
 
     return {
@@ -403,17 +445,68 @@
     return !isLocalDevelopmentHostname(hostname);
   }
 
-  function isOrderEligibleForAutomaticSync(record) {
+  function isOrderEligibleForAutomaticSync(record, options = {}) {
+    const now = normalizeDateOption(options.now);
     const serverUploadStatus = asTrimmedString(record?.server_upload_status).toLowerCase() || 'pending';
     if (serverUploadStatus === 'stored' || serverUploadStatus === 'conflict') {
       return false;
     }
 
     if (serverUploadStatus === 'failed') {
-      return isRetryableServerUploadErrorCode(asTrimmedString(record?.last_server_upload_error?.code).toLowerCase());
+      if (!isRetryableServerUploadErrorCode(asTrimmedString(record?.last_server_upload_error?.code).toLowerCase())) {
+        return false;
+      }
+      return options.forceRetry === true || isRetryDue(record, now);
     }
 
     return serverUploadStatus === 'pending' || serverUploadStatus === 'uploading';
+  }
+
+  function isRetryDue(record, now = new Date()) {
+    const nextRetryAt = asTrimmedString(record?.server_upload_next_retry_at);
+    if (!nextRetryAt) {
+      return true;
+    }
+    const parsedNextRetryAt = Date.parse(nextRetryAt);
+    if (Number.isNaN(parsedNextRetryAt)) {
+      return true;
+    }
+    return parsedNextRetryAt <= now.getTime();
+  }
+
+  function findNextEligibleRetryAt(records) {
+    let earliest = null;
+    const normalizedRecords = Array.isArray(records) ? records : [];
+    normalizedRecords.forEach((record) => {
+      const serverUploadStatus = asTrimmedString(record?.server_upload_status).toLowerCase();
+      if (serverUploadStatus !== 'failed') {
+        return;
+      }
+      if (!isRetryableServerUploadErrorCode(asTrimmedString(record?.last_server_upload_error?.code).toLowerCase())) {
+        return;
+      }
+      const nextRetryAt = asTrimmedString(record?.server_upload_next_retry_at);
+      if (!nextRetryAt) {
+        earliest = earliest || new Date(0);
+        return;
+      }
+      const parsedNextRetryAt = Date.parse(nextRetryAt);
+      if (Number.isNaN(parsedNextRetryAt)) {
+        earliest = earliest || new Date(0);
+        return;
+      }
+      if (!earliest || parsedNextRetryAt < earliest.getTime()) {
+        earliest = new Date(parsedNextRetryAt);
+      }
+    });
+    return earliest;
+  }
+
+  function normalizeDateOption(value) {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+      return new Date(value.getTime());
+    }
+    return new Date();
   }
 
   function isRetryableServerUploadErrorCode(code) {
@@ -447,6 +540,7 @@
     createAutomaticOrderSyncCoordinator,
     createOrderServerSyncService,
     isAutomaticOrderSyncAllowed,
-    isOrderEligibleForAutomaticSync
+    isOrderEligibleForAutomaticSync,
+    isRetryableServerUploadErrorCode
   };
 }));
