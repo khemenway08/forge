@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260730-48';
+const FORGE_BUILD_VERSION = '20260731-49';
 const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
