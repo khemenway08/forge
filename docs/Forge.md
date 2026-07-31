@@ -1,8 +1,8 @@
 # Forge
 
-**Version:** 2.1
+**Version:** 2.2
 **Status:** Approved
-**Last Updated:** 2026-07-16
+**Last Updated:** 2026-07-31
 
 ## Purpose
 Defines the official Forge product vision, architecture, customer experience, production workflow, and operating principles.
@@ -32,10 +32,13 @@ Forge should always improve speed, accuracy, order location, and customer confid
 - Simplicity Wins
 - One Decision Per Step
 - Product Driven
+- Durability Before Velocity
 - Offline Tolerant
 - Tablet First
 - Production Aware
 - Physical and Digital Workflows Must Match
+
+Forge must never trade order durability or recoverability for speed or feature growth. A customer must not be shown a successful submission unless the approved durable-save condition has been met. Failures must remain visible and recoverable rather than silently disappearing.
 
 # 4. The Forge Test
 Every proposed feature should satisfy at least one of the following:
@@ -51,10 +54,20 @@ If a feature does not satisfy at least one of these tests, it should normally wa
 
 # 5. Version 1 Scope
 
+## Current Implementation Checkpoint — 2026-07-31
+
+Current confirmed repository checkpoint:
+
+```text
+Branch: develop
+Commit: ac3a02f66a7768236d93617a8b4223a477d2b37d
+Message: Enable keyboard capitalization for entry names
+Current live public build: 20260730-48
+Current live service-worker cache: forge-starter-v48
+```
+
 ## Included
 - Custom Ornaments
-- Custom Signs
-- General Custom Request
 - Customer Information
 - Shipping and Pickup
 - Order Review
@@ -67,10 +80,14 @@ If a feature does not satisfy at least one of these tests, it should normally wa
 - Ready-to-Pack Queue
 - Packing Verification
 - Tray Release and Reuse
+- Hilltop Design Catalog
 - WooCommerce Integration
-- Shipment and Pickup Status
 
 ## Not Included
+- Customer-facing Signs flow
+- Customer-facing Kitchen flow
+- General Custom Request flow
+- Separate shipped and picked-up fulfillment actions in the active production workflow
 - Retail Inventory
 - Point of Sale
 - Payment Processing
@@ -102,6 +119,7 @@ Modules:
 - Orders
 - Production
 - Ready to Pack
+- Hilltop Design Catalog
 - Customers
 - Settings
 
@@ -128,6 +146,15 @@ Important lifecycle rules:
 - Forge remains the production workflow system.
 - Production completion does not automatically mean an order has been packed or fulfilled.
 - Packing verification must occur before shipment or pickup completion.
+
+Current implemented core workflow:
+
+- Tray assignment
+- Item completion
+- Ready to Pack
+- Packing verification
+- Tray release
+- Production batching and filtering
 
 # 10. Production Tray System
 Production Trays are a locked Version 1 workflow decision.
@@ -232,6 +259,12 @@ When staff selects **Pack Order**:
 
 Packed does not necessarily mean shipped or picked up. Fulfillment is tracked separately.
 
+Practical current rule:
+
+- **Pack Order** is the final required production action for the current two-person workflow.
+- Separate shipped and picked-up actions are deferred until they provide a real operational benefit or are required by WooCommerce synchronization.
+- The conceptual distinction between packed and fulfilled remains part of the long-term architecture.
+
 # 14. Physical Shop Alignment
 Forge should mirror the real production path:
 
@@ -286,6 +319,8 @@ Customer screens should remain warm, calm, visual, and product-focused.
 
 Staff production screens should remain industrial, fast, readable, and focused on the next physical action.
 
+The Hilltop Design Catalog is an existing staff-only isolated workspace for designs, hats, materials, shortlist curation, and finished-hat combinations. It must remain separate from customer ordering, payments, active order production workflow, and inventory assumptions.
+
 # 18. Personalization Rules
 1. Product
 2. Size
@@ -334,7 +369,19 @@ Potential future features include:
 
 Future features must not complicate the Version 1 workflow unless they pass the Forge Test.
 
-# 22. Success Criteria
+# 22. Near-Term Priorities
+
+1. Order lifecycle and data-loss audit
+2. Backup and restore verification
+3. Submission and duplicate-prevention hardening
+4. Multi-iPad and interruption testing
+5. Focused deployment tooling
+6. Monitoring and show recovery procedures
+7. Review and payment simplification
+8. PWA and offline hardening
+9. WooCommerce synchronization after stability is proven
+
+# 23. Success Criteria
 - Faster than paper
 - Fewer ordering and production errors
 - Every active order is easy to locate
@@ -346,7 +393,10 @@ Future features must not complicate the Version 1 workflow unless they pass the 
 - Multiple iPads are supported
 - Kyle or Meagan can operate the core workflow without special training
 
-# 23. Version History
+# 24. Version History
+
+## Version 2.2
+Added the current implementation checkpoint, recorded the implemented tray workflow and Hilltop Design Catalog module, clarified that Pack Order is the current final practical production action, and aligned the near-term priorities with the live roadmap.
 
 ## Version 2.1
 Expanded Forge Version 1 from order capture into a complete small-shop workflow covering production trays, item completion, packing verification, tray reuse, and fulfillment. Added the Forge Test and explicitly excluded enterprise workforce-management features.
