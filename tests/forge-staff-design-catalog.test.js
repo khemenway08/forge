@@ -10,7 +10,7 @@ const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'
 const catalogApiSource = fs.readFileSync(path.join(process.cwd(), 'public/js/forge-staff-design-catalog-api.js'), 'utf8');
 const catalogModuleSource = fs.readFileSync(path.join(process.cwd(), 'public/js/forge-staff-design-catalog.js'), 'utf8');
 const catalogCssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
-const BUILD_VERSION = '20260730-47';
+const BUILD_VERSION = '20260730-48';
 
 test('catalog scripts load before app.js and only in the protected staff shell', () => {
   assert.match(

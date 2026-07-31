@@ -7,7 +7,7 @@ const vm = require('vm');
 const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'), 'utf8');
 const cssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
-const BUILD_VERSION = '20260730-47';
+const BUILD_VERSION = '20260730-48';
 
 function extractScreenMarkup(screenId) {
   const match = indexSource.match(new RegExp(`<section class="screen[\\s\\S]*?data-screen="${screenId}"[\\s\\S]*?<\\/section>`));
@@ -1722,6 +1722,10 @@ test('tree customization shows a shared name field with adjacent Add and Add Pet
 
   assert.match(treeMarkup, /data-add-person-input/);
   assert.match(treeMarkup, /<label for="entry-person-name">Name<\/label>/);
+  assert.match(treeMarkup, /id="entry-person-name"[^>]*autocapitalize="words"/);
+  assert.match(treeMarkup, /id="entry-person-name"[^>]*spellcheck="false"/);
+  assert.match(treeMarkup, /id="entry-person-name"[^>]*autocorrect="off"/);
+  assert.match(treeMarkup, /id="entry-person-name"[^>]*autocomplete="off"/);
   assert.match(treeMarkup, /data-action="add-person">Add<\/button>/);
   assert.match(treeMarkup, /data-action="add-pet">Add Pet<\/button>/);
   assert.match(treeMarkup, /data-pending-pet-icon/);
@@ -1731,6 +1735,12 @@ test('tree customization shows a shared name field with adjacent Add and Add Pet
   assert.doesNotMatch(treeMarkup, /Enter pet name/);
   assert.doesNotMatch(treeMarkup, /Done Adding Names/);
   assert.doesNotMatch(treeMarkup, />Save<\/button>/);
+});
+
+test('persistent shared name entry does not introduce JavaScript capitalization rewriting', () => {
+  assert.match(appSource, /const normalizedName = trimText\(addPersonInput\?\.value \|\| ''\);/);
+  assert.doesNotMatch(appSource, /capitalizeWords\(addPersonInput\?\.value/);
+  assert.doesNotMatch(appSource, /capitalizeWords\(normalizedName\)/);
 });
 
 test('persistent name add appends ordered person entries, clears the field, and restores focus without reopening another control', () => {
