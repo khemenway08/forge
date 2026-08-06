@@ -1,558 +1,489 @@
 # Database Schema
 
-**Version:** 1.2
+**Version:** 1.3
 **Status:** Approved
-**Last Updated:** 2026-07-16
+**Last Updated:** 2026-08-06
 
 ## Purpose
 
-Defines the Forge Version 1 data model for customer orders, structured production attributes, production trays, item completion, packing, and fulfillment.
+Defines the current Forge data model and clearly separates:
+
+- Tablet-local durability
+- Shared Forge server storage
+- Production workflow data
+- Catalog data
+- Future WooCommerce synchronization
 
 ## Authority
 
-This document is the authoritative source for Forge data-storage behavior.
+This document is the authoritative source for current Forge data-storage behavior. SQL migrations remain the executable source for exact production schema changes.
 
 ## Dependencies
 
 - `Forge.md`
 - `Product_Definitions.yaml`
+- `UI_Guidelines.md`
 - `WooCommerce_Integration.md`
 
 ---
 
-# 1. Data Principles
+# 1. Current Data Architecture
 
-Forge data must support the complete Version 1 workflow:
+Forge currently uses two active storage layers.
 
-```text
-Customer Submission
-→ Production Tray
-→ Batch Production
-→ Ready to Pack
-→ Packed
-→ Shipped or Picked Up
-```
+## Tablet-local storage
 
-The schema must:
+IndexedDB stores a complete local order record before shared-server confirmation.
 
-- Preserve every submitted order even when synchronization is unavailable.
-- Preserve the original product configuration as a historical snapshot.
-- Store structured attributes for searching, filtering, and batching.
-- Track the physical tray currently holding an order.
-- Track completion at the individual order-item level.
-- Preserve tray-assignment history after a tray is released and reused.
-- Avoid employee-management, time-tracking, productivity, and workforce-scheduling data.
+Purpose:
 
-WooCommerce remains the primary customer and order record after server synchronization is implemented. Forge remains authoritative for production workflow, tray assignment, item completion, packing verification, and production notes.
+- Survive refresh
+- Survive temporary closure
+- Survive temporary network loss
+- Preserve one immutable order UUID
+- Support automatic retry
+- Provide a recovery path when the shared server cannot be reached
 
----
+## Shared Forge server database
 
-# 2. Identifier Rules
+The Forge server database is the current shared operational source of truth after upload succeeds.
+
+Purpose:
+
+- Make orders visible across staff devices
+- Assign sequential Forge order numbers
+- Prevent duplicate storage for the same UUID
+- Support tray assignment
+- Support item completion
+- Support Ready-to-Pack and completion
+- Preserve notes, events, cancellations, tray history, and catalog data
+
+## WooCommerce
+
+WooCommerce is not currently synchronized and is not part of the current active data path.
+
+Future synchronization must begin from a durable Forge server record. A WooCommerce failure must never erase or invalidate the Forge order.
+
+# 2. Data Principles
+
+- Every submitted order has one immutable `forge_order_uuid`.
+- The complete submitted order is preserved as a historical payload snapshot.
+- The payload hash supports conflict and duplicate detection.
+- Production data is stored separately from the immutable submitted payload where operational updates are required.
+- One active order may have at most one tray.
+- One tray may serve at most one active order.
+- Tray history remains after release.
+- Item completed quantity cannot exceed required quantity.
+- A normal completed customer confirmation requires shared-server acknowledgement.
+- A local-only order must remain visibly pending or in need of staff attention.
+- No feature may require clearing customer orders from IndexedDB.
+- Employee, timekeeping, productivity, and shift data are excluded.
+
+# 3. Identifier Rules
 
 ## Forge Order UUID
 
-Every submitted order receives an immutable `forge_order_uuid`.
+`forge_order_uuid` is the permanent technical identifier.
 
 Rules:
 
-- Generated once at submission.
-- Never reused.
-- Used for local storage, server synchronization, WooCommerce duplicate prevention, and production records.
-- Must remain stable throughout the order lifecycle.
+- Generated once for a submitted order session.
+- Preserved through local save, upload, retry, refresh, and production.
+- Primary key for the shared order record.
+- Never reused for a different order.
+- Same UUID with the same payload is idempotent.
+- Same UUID with a different payload is a conflict requiring staff attention.
 
 ## Forge Order Number
 
-Every submitted order also receives a human-readable `forge_order_number`.
-
-Example:
-
-```text
-1042
-```
-
-The human-readable number is for staff and customer reference. The UUID remains the permanent technical identifier.
-
-## Order Item ID
-
-Every order item receives an immutable `order_item_id` unique within Forge.
-
-The item ID must remain stable when:
-
-- The order is filtered.
-- The item is marked complete.
-- The order is synchronized.
-- The order is packed.
-
-## Tray Number
-
-Each physical production tray has one permanent positive integer `tray_number`.
-
-Examples:
-
-```text
-1
-12
-23
-```
-
-Tray numbers are reusable only after the prior order has been packed and the assignment has been released.
-
----
-
-# 3. Order Record
-
-Each submitted order stores the customer, fulfillment, pricing, synchronization, and production information required to complete the order.
-
-## Required Order Fields
-
-| Field | Type | Purpose |
-|---|---|---|
-| `forge_order_uuid` | UUID/string | Permanent Forge identifier |
-| `forge_order_number` | string/integer | Human-readable order number |
-| `submitted_at` | timestamp | Original customer submission time |
-| `external_payment_method` | nullable enum/string | Staff-confirmed external payment source: `card_square`, `cash`, or `venmo`, recorded after stateless PIN verification |
-| `payment_confirmed_at` | nullable timestamp | UTC time when staff completed online stateless payment confirmation before submission |
-| `updated_at` | timestamp | Most recent record update |
-| `customer_json` | object | Complete customer-information snapshot |
-| `fulfillment_method` | enum | `shipping` or `pickup` |
-| `fulfillment_json` | object | Shipping or pickup details |
-| `pricing_json` | object | Submitted pricing snapshot |
-| `order_items` | array/relation | Complete submitted items |
-| `sync_status` | enum | WooCommerce synchronization state |
-| `woocommerce_order_id` | nullable string/integer | Linked WooCommerce order after sync |
-| `production_status` | enum | Current Forge production lifecycle state |
-| `current_tray_number` | nullable integer | Active physical tray assignment |
-| `total_item_count` | integer | Number of production items in the order |
-| `completed_item_count` | integer | Number of completed production items |
-| `ready_to_pack_at` | nullable timestamp | When all required items became complete |
-| `packed_at` | nullable timestamp | When packing verification was completed |
-| `fulfilled_at` | nullable timestamp | When shipped or picked up |
-| `open_flags` | array | Active order-level exceptions requiring attention |
-
-## Derived Count Rules
-
-`total_item_count` and `completed_item_count` are derived from the active order items.
-
-They must not be maintained as independent, manually editable values.
+`forge_order_number` is the sequential human-readable reference used by staff and customers.
 
 Rules:
 
-- `total_item_count` equals the number of production items in the order.
-- `completed_item_count` equals the number of items with `production_status: complete`.
-- Progress is displayed as `completed_item_count of total_item_count Complete`.
-- Quantity greater than one must be represented consistently according to the existing order-item model. If one line item represents multiple physical pieces, completion tracking must still account for each required physical piece or explicitly track completed quantity.
+- Assigned by the shared Forge server.
+- Unique when present.
+- Not used as the permanent technical identity.
+- Concurrent submission behavior must remain covered by testing.
 
-Example:
+## Line ID
 
-```text
-2 of 3 Complete
-```
+Each submitted payload item includes a stable line identifier used to connect the immutable order payload to mutable item-production data.
 
----
+## Tray Number
 
-# 4. Production Status
+Each physical tray has one permanent positive integer `tray_number`.
 
-Order production status is separate from payment confirmation metadata, WooCommerce synchronization status, and customer-visible WooCommerce order status.
+Tray numbers may be reused only after the active assignment is released.
 
-## Approved Order Production Statuses
+# 4. Local Order Record
+
+The local IndexedDB record stores the complete submitted order plus upload state.
+
+Important fields include:
+
+| Field | Purpose |
+|---|---|
+| `forge_order_uuid` | Permanent order identity |
+| `payload` or normalized submitted record | Complete submitted order snapshot |
+| `forge_order_number` | Server-assigned reference after upload |
+| `server_upload_status` | `pending`, `uploading`, `stored`, `failed`, or `conflict` |
+| `server_upload_attempt_count` | Number of attempted uploads |
+| `last_server_upload_attempt_at` | Most recent attempt time |
+| `last_server_upload_error` | Sanitized recoverable or nonrecoverable error |
+| `server_upload_next_retry_at` | Persisted retry schedule |
+| `server_upload_needs_staff_attention` | Indicates a nonretryable condition |
+| `server_received_at` | Server acknowledgement time when available |
+| `server_payload_sha256` | Server-confirmed payload hash |
+
+Retry delays currently use approximately:
+
+- 15 seconds
+- 60 seconds
+- 5 minutes for later retries
+
+The local record remains on the originating tablet after server storage and may continue to support local recovery and diagnostics.
+
+# 5. Shared Order Record
+
+The current `forge_orders` table is the shared order header and immutable payload container.
+
+Current implemented fields include:
+
+| Field | Purpose |
+|---|---|
+| `forge_order_uuid` | Primary key and permanent identifier |
+| `forge_order_number` | Sequential human-readable order number |
+| `record_version` | Submitted record schema version |
+| `source` | Submission source, normally customer kiosk |
+| `submitted_at` | Original customer submission time |
+| `received_at` | Shared server receipt time |
+| `updated_at` | Most recent shared record update |
+| `device_id` | Originating device identifier; currently nullable and not populated by active submission |
+| `event_id` | Associated Forge event when applicable |
+| `internal_note` | Staff internal order note |
+| `payload_json` | Complete submitted order snapshot |
+| `payload_sha256` | Hash of the complete payload |
+| `production_status` | Current operational production state |
+| `current_tray_number` | Active tray, or null |
+| `ready_to_pack_at` | Time the order became ready |
+| `cancelled_at` | Cancellation time |
+| `completed_at` | Final internal production-completion time |
+
+## Payload snapshot
+
+`payload_json` preserves:
+
+- Customer information
+- Fulfillment choice and address
+- Products and quantities
+- Submitted pricing snapshot
+- Personalization
+- Payment-method metadata
+- Event context
+- Product-definition identifiers and versions
+- Item line identifiers
+
+The payload is historical. Later production updates must not rewrite the original customer selections.
+
+# 6. Current Order Production Status
+
+Approved current server statuses:
 
 | Status | Meaning |
 |---|---|
-| `submitted` | Order safely saved but no tray assigned |
-| `tray_assigned` | A production tray is assigned; work has not yet been marked in progress |
-| `in_production` | At least one item is being produced or completed |
-| `ready_to_pack` | All required items are complete and the order is eligible for packing |
-| `packed` | Packing verification completed and the tray released |
-| `shipped` | Packed shipping order has been handed off for shipment |
-| `picked_up` | Packed pickup order has been collected |
-| `cancelled` | Order cancelled and no longer active |
+| `submitted` | Shared order saved; no active tray |
+| `tray_assigned` | Active tray assigned; no completed quantity yet |
+| `in_production` | At least one item has production progress |
+| `ready_to_pack` | Every required quantity is complete |
+| `completed` | Staff completed the final confirmation and released the tray |
+| `cancelled` | Order removed from active production |
 
-## Status Transition Rules
-
-Approved normal transitions:
+Normal transition:
 
 ```text
 submitted
 → tray_assigned
 → in_production
 → ready_to_pack
-→ packed
-→ shipped or picked_up
+→ completed
 ```
 
-Rules:
+Cancellation may occur from an allowed active state and must release the tray in the same transaction.
 
-- Assigning a tray changes `submitted` to `tray_assigned`.
-- Completing or starting an item may change `tray_assigned` to `in_production`.
-- When every required item is complete, Forge changes the order to `ready_to_pack`.
-- Only `ready_to_pack` orders appear in the packing queue.
-- Packing verification changes the order to `packed` and releases the tray.
-- `packed` does not automatically mean `shipped` or `picked_up`.
-- Cancelling an order releases any active tray assignment.
-- Reopening or reversing a completed production step must be an intentional staff action and must preserve history.
+## Current meaning of Completed
 
----
+`completed` is the final internal production state in the current implementation.
 
-# 5. Order Item Record
+It means:
 
-Every submitted item stores both its full historical configuration and normalized production information.
+- The physical order was confirmed as complete or packed.
+- `completed_at` was recorded.
+- The active tray was released.
 
-## Required Order Item Fields
+It does not separately record shipment handoff or customer pickup. Those future fulfillment states are deferred.
 
-| Field | Type | Purpose |
-|---|---|---|
-| `order_item_id` | UUID/string | Stable item identifier |
-| `forge_order_uuid` | UUID/string | Parent order |
-| `product_definition_id` | string | Product definition used at submission |
-| `product_definition_version` | string | Product-definition snapshot version |
-| `product_display_name` | string | Submitted display-name snapshot |
-| `quantity` | integer | Number ordered |
-| `unit_price` | decimal | Submitted unit-price snapshot |
-| `line_total` | decimal | Submitted calculated line total |
-| `configuration_json` | object | Complete historical personalization snapshot |
-| `production_attributes` | object | Structured searchable production values |
-| `production_status` | enum | Current item production state |
-| `completed_quantity` | integer | Number of physical pieces completed |
-| `completed_at` | nullable timestamp | When the item became fully complete |
-| `production_note` | nullable string | Internal production-specific note |
-| `open_flags` | array | Item-level exceptions requiring attention |
+# 7. Order Item Production Record
 
-## Approved Item Production Statuses
+The `forge_order_item_production` table stores mutable production progress for each order line.
 
-| Status | Meaning |
+Current fields:
+
+| Field | Purpose |
 |---|---|
-| `pending` | Not yet started |
-| `in_production` | Work has begun |
-| `complete` | All required quantity is finished and placed in the assigned tray |
-| `blocked` | Cannot be completed until an exception is resolved |
-| `cancelled` | Item removed from active production through an intentional order change |
+| `forge_order_uuid` | Parent order |
+| `line_id` | Stable payload line identifier |
+| `required_quantity` | Total physical pieces required |
+| `completed_quantity` | Physical pieces completed |
+| `production_status` | Current line-production state |
+| `completed_at` | Time the full quantity became complete |
+| `updated_at` | Most recent production update |
 
-## Item Completion Rules
+Current item statuses:
 
-- A newly submitted item begins as `pending`.
-- Marking an item complete means the finished physical item has been placed into the order's assigned production tray.
-- `completed_quantity` cannot exceed `quantity`.
-- An item becomes `complete` only when `completed_quantity` equals `quantity`.
-- If a completed item is reopened, `completed_at` is cleared or superseded by an audit event.
-- Item completion must update the parent order's derived counts immediately.
-- When all non-cancelled items are complete, the parent order becomes `ready_to_pack`.
-- A blocked item prevents the order from becoming `ready_to_pack`.
-
----
-
-# 6. Structured Production Attributes
-
-Every order item stores searchable attributes in addition to `configuration_json`.
-
-`configuration_json` remains the complete historical record. Structured attributes exist to support fast searching, filtering, production counts, and batch grouping.
-
-## Common Attributes
-
-Store these fields when applicable:
-
-- `product_definition_id`
-- `category`
-- `ornament_type`
-- `size`
-- `tree_color`
-- `bow_color`
-- `family_name`
-- `year`
-- `icon`
-- `letter`
-- `people_count`
-- `pet_count`
-- `fulfillment_method`
-- `production_status`
-- `open_flags`
-
-Rules:
-
-- Use stable product-definition and option keys rather than display-text parsing whenever available.
-- Non-applicable values must be omitted or stored as `null` consistently.
-- Structured values must not replace or reduce `configuration_json`.
-- Customer-selected people and pet ordering remains preserved in the full configuration snapshot.
-- Custom icon and custom artwork requests must create discoverable open flags.
-- Historical items must retain submitted display names, prices, and configuration even after product definitions change.
-
-## Backward Compatibility
-
-Previously stored orders may not contain `production_attributes`.
-
-Forge must:
-
-- Continue loading those orders without requiring IndexedDB deletion.
-- Derive normalized attributes at read time using a pure normalization function.
-- Avoid rewriting an old record merely because staff viewed or filtered it.
-- Store normalized attributes directly on new submissions when practical.
-- Reuse the same normalization rules for future server and WooCommerce synchronization.
-
----
-
-# 7. Production Tray Record
-
-A production tray represents one numbered physical optical-laboratory-style job tray in the shop.
-
-## Required Tray Fields
-
-| Field | Type | Purpose |
-|---|---|---|
-| `tray_number` | positive integer | Permanent physical tray number |
-| `tray_status` | enum | Current availability |
-| `current_order_uuid` | nullable UUID/string | Order currently assigned to the tray |
-| `assigned_at` | nullable timestamp | Start of current assignment |
-| `updated_at` | timestamp | Most recent tray update |
-
-## Approved Tray Statuses
-
-| Status | Meaning |
-|---|---|
-| `available` | Ready to receive an order |
-| `assigned` | Currently holding an active order |
-| `out_of_service` | Temporarily unavailable because of loss, damage, cleaning, or another physical issue |
-
-## Tray Rules
-
-- `tray_number` is unique and permanent.
-- One tray may have no more than one active order.
-- One order may have no more than one active tray.
-- An available tray has no `current_order_uuid`.
-- Assigning a tray sets `tray_status` to `assigned`.
-- Packing or cancelling the assigned order releases the tray.
-- Releasing a tray sets `tray_status` to `available` and clears `current_order_uuid`.
-- Releasing a tray must not erase the assignment history.
-- Tray numbers may be reused for later orders only after release.
-- Forge must prevent simultaneous assignment of the same tray to two orders.
-- Forge must prevent simultaneous assignment of two trays to one order.
-
-The dry-erase customer surname written on the physical tray is an operational label. Forge stores the customer name in the order record and does not need a separate permanent tray-label field.
-
----
-
-# 8. Tray Assignment History
-
-Every tray assignment creates a permanent history record.
-
-## Required Assignment Fields
-
-| Field | Type | Purpose |
-|---|---|---|
-| `tray_assignment_id` | UUID/string | Permanent assignment-event identifier |
-| `tray_number` | integer | Physical tray used |
-| `forge_order_uuid` | UUID/string | Assigned order |
-| `assigned_at` | timestamp | Assignment time |
-| `released_at` | nullable timestamp | Release time |
-| `release_reason` | nullable enum/string | Why the tray became available |
-
-## Approved Release Reasons
-
-- `packed`
+- `pending`
+- `in_production`
+- `complete`
+- `blocked`
 - `cancelled`
-- `reassigned`
-- `administrative_correction`
 
 Rules:
 
-- An active assignment has no `released_at`.
-- A tray assignment becomes historical when `released_at` is populated.
-- Historical assignments are immutable except for documented administrative correction.
-- Order history must continue to show which tray was used after the tray is released.
-- The active tray reference and the historical assignment record must be updated together.
+- `completed_quantity` is never below zero.
+- `completed_quantity` never exceeds `required_quantity`.
+- A line is complete only when completed quantity equals required quantity.
+- A blocked active line prevents Ready-to-Pack.
+- Order progress derives from required and completed quantities.
+- Item updates use expected and target quantities to prevent conflicting edits.
 
----
+# 8. Production Tray Record
 
-# 9. Packing Verification
+The `forge_production_trays` table represents the physical tray pool.
 
-Packing verifies that every completed item belonging to one order is physically present before the tray is released.
+Fields:
 
-## Required Packing Record Fields
-
-| Field | Type | Purpose |
-|---|---|---|
-| `packing_verification_id` | UUID/string | Permanent verification identifier |
-| `forge_order_uuid` | UUID/string | Packed order |
-| `tray_number` | integer | Tray used immediately before packing |
-| `verified_item_ids` | array | Items confirmed during packing |
-| `verified_at` | timestamp | Verification completion time |
-| `packing_note` | nullable string | Internal exception or packing note |
+| Field | Purpose |
+|---|---|
+| `tray_number` | Permanent physical number |
+| `tray_status` | `available`, `assigned`, or `out_of_service` |
+| `current_order_uuid` | Active order, or null |
+| `assigned_at` | Current assignment start |
+| `updated_at` | Most recent tray update |
 
 Rules:
 
-- Only an order with `production_status: ready_to_pack` may be packed.
-- Every non-cancelled item must be complete and verified.
-- The verification record preserves the tray number even after release.
-- Completing packing sets the order status to `packed`.
-- Completing packing releases the active tray in the same logical operation.
-- Forge must never release the tray first and leave the order unpacked because of a partial failure.
-- Packing does not automatically mark a shipping order as shipped or a pickup order as picked up.
+- An available tray has no current order.
+- An assigned tray has one current order.
+- An out-of-service tray is not selectable.
+- Tray assignment and order assignment update together.
+- Completion and cancellation release the tray atomically with the order update.
 
----
+# 9. Tray Assignment History
 
-# 10. Production Filtering Requirements
+The `forge_tray_assignment_history` table preserves every tray assignment.
 
-Forge Version 1 must allow staff to filter production data by:
+Fields:
 
-- Product
-- Ornament type
-- Size
-- Tree color
-- Bow color
-- Year
-- Production status
-- Shipping or pickup
-- Event, when event data exists
-- Open production flags
-- Tray number
-- Ready-to-pack state
+| Field | Purpose |
+|---|---|
+| `tray_assignment_id` | Permanent assignment event identifier |
+| `tray_number` | Physical tray used |
+| `forge_order_uuid` | Assigned order |
+| `assigned_at` | Assignment time |
+| `released_at` | Release time, or null while active |
+| `release_reason` | Why the tray became available |
 
-Production filters operate at the order-item level when matching item attributes.
+Implemented release reasons include operational values for completion, cancellation, test-order deletion, cleanup, and administrative cases.
 
-One item must satisfy the complete active item-filter combination. Separate items in the same order must not be combined to create a false match.
+Historical tray assignment remains available after the tray is reused.
 
----
+# 10. Event Data
 
-# 11. Production Counts and Batch Grouping
+Forge stores server-backed event records used to control public ordering and associate orders with a show or Test Session.
 
-Forge should support grouped production counts such as:
+Event data includes the operational fields required to:
 
-- `14 × Tree Ornament / Large / Green / Red Bow`
-- `8 × Present Stack / White Bow`
-- `3 × Veteran Flag`
-- `2 × Custom Icon Requests`
+- Name an event
+- Identify event type
+- Store date range and location
+- Open or close ordering
+- Resolve an active event or public-order token
+- Associate submitted orders with an event
 
-Batch grouping supports manufacturing efficiency. It does not change tray ownership.
+Exact event columns are controlled by the applicable migration and server repository.
 
-Rules:
+# 11. Internal Notes
 
-- Items may be produced in batches across many orders.
-- Each completed physical item must return to the tray assigned to its parent order.
-- Batch completion updates the corresponding individual order items.
-- The dashboard must retain the connection between each batch item, order, customer, and tray.
-
----
-
-# 12. Open Flags
-
-Open flags identify exceptions that could prevent correct production or fulfillment.
-
-Examples:
-
-- `custom_icon`
-- `custom_artwork`
-- `missing_information`
-- `production_blocked`
-- `sync_failed`
-- `total_changed_after_tax`
+The shared order record includes an internal staff note.
 
 Rules:
 
-- Flags may exist at order or item level.
-- Resolving a flag must not erase its historical existence when audit history is implemented.
-- A blocking production flag prevents the affected item from being treated as complete.
-- Internal flags must not appear in customer-visible WooCommerce content.
+- Staff notes are not customer-visible.
+- Customer spelling and submitted personalization remain unchanged.
+- Staff notes do not replace structured production status.
+- Notes must be length-limited and safely rendered.
 
----
+# 12. Outbound Messages
 
-# 13. Local Storage and Synchronization
+Forge stores outbound-message records for order-confirmation email delivery and retry control.
 
-Until server synchronization is complete, IndexedDB stores the durable local order record.
+Purpose:
+
+- Prevent duplicate confirmation messages
+- Track pending, sent, or failed delivery
+- Preserve sanitized error state
+- Separate order durability from email success
+
+An email failure must not make the order disappear or reverse production progress.
+
+# 13. Hilltop Design Catalog Data
+
+Catalog data is stored in dedicated Forge tables separate from customer orders.
+
+Current catalog areas include:
+
+- Designs
+- Hats
+- Materials
+- Finished Hats
+- Linking relationships
+- Sort order and display status
 
 Rules:
 
-- Submitted orders must survive refresh, temporary application closure, and temporary internet loss.
-- Production updates must use safe, atomic local writes where supported.
-- Tray assignment must not create duplicate active assignments after a retry or refresh.
-- Packing and tray release must be performed as one logical transaction.
-- Future server synchronization must use immutable UUIDs and idempotent operations.
-- A failed synchronization must never erase local production data.
+- Catalog records do not change order totals.
+- Catalog records do not assign trays.
+- Catalog records do not create production work.
+- Catalog costs are internal.
+- Deleting or changing a catalog record must not rewrite historical submitted order payloads.
 
-When the Forge server becomes available:
+# 14. Completion Verification
 
-- Server data becomes the shared source for multiple staff devices.
-- WooCommerce remains the primary customer and commercial order record.
-- Forge server data remains authoritative for tray assignment and item-level production workflow.
+Current durable records preserve:
 
----
+- Item completed quantities
+- Item completion timestamps
+- Order Ready-to-Pack time
+- Order `completed_at`
+- Tray release history
 
-# 14. Data Integrity Constraints
+The current schema does **not** define a separate durable packing-verification table containing every checked item.
 
-Forge must enforce the following:
+That remains a future decision. Do not describe a dedicated packing-verification record as implemented unless a migration and server workflow are added.
 
-1. `forge_order_uuid` is unique and immutable.
-2. `order_item_id` is unique and immutable.
-3. `tray_number` is unique and permanent.
-4. One tray has at most one active assignment.
-5. One order has at most one active tray.
-6. A released assignment remains in history.
-7. `completed_quantity` is between zero and `quantity`.
-8. `completed_item_count` never exceeds `total_item_count`.
-9. `ready_to_pack` requires every active item to be complete.
-10. Packing requires `ready_to_pack` status.
-11. Packing records tray release atomically.
-12. `shipped` applies only to shipping orders.
-13. `picked_up` applies only to pickup orders.
-14. Customer, pricing, and configuration snapshots remain historically intact.
-15. Production fields never overwrite WooCommerce payment or synchronization fields.
+# 15. Payment Metadata
 
----
+The submitted payload currently records:
 
-# 15. Explicit Version 1 Exclusions
+- Selected external payment method
+- Payment confirmation timestamp generated when the final submit action is pressed
 
-Do not add schema entities or fields for:
+Current accepted methods include:
 
-- Employee assignments
-- Staff productivity metrics
-- Time clocks or time tracking
+- `card_square`
+- `cash`
+- `venmo`
+
+This metadata records the selected workflow state. The current application does not independently verify Square, cash, or Venmo payment receipt.
+
+There is no backend payment-approval record in the current schema.
+
+# 16. Device Identification
+
+The shared schema supports nullable `device_id`, but active customer submission currently sends a null device identifier.
+
+Consequences:
+
+- Staff cannot reliably identify which tablet originated a shared order.
+- A local-only pending order can be recovered only from the tablet storing it.
+- Cross-device diagnostics are limited.
+
+Stable business-safe device identification remains planned.
+
+# 17. Data Integrity Constraints
+
+Forge must enforce:
+
+1. Unique immutable `forge_order_uuid`.
+2. Unique human-readable order number when assigned.
+3. Same UUID and same payload is idempotent.
+4. Same UUID and different payload is a conflict.
+5. Unique permanent tray number.
+6. One active tray per order.
+7. One active order per tray.
+8. Active assignment and tray state remain consistent.
+9. Released assignment remains in history.
+10. Completed quantity remains within valid range.
+11. Ready to Pack requires all active required quantities complete.
+12. Completion requires Ready-to-Pack state and releases the tray atomically.
+13. Cancellation releases an active tray atomically.
+14. Original `payload_json` remains historically intact.
+15. Failed upload never erases the tablet-local record.
+16. Email failure never erases the order.
+17. Catalog data remains isolated from order production.
+
+# 18. Migration and Compatibility
+
+Current migration sequence includes:
+
+```text
+001  Create Forge orders
+002  Add production trays and assignment history
+003  Add item production completion and ready-to-pack time
+004  Create catalog designs
+005  Create catalog hats
+006  Create catalog materials
+007  Create catalog finished hats
+008  Add catalog sort order
+009  Add sequential order numbers
+010  Create Forge events
+011  Add internal order notes
+012  Add legacy cleanup tombstones
+013  Add cancelled_at
+014  Create outbound messages
+015  Add completed_at
+```
+
+Compatibility rules:
+
+- Never clear production or customer records merely to deploy a feature.
+- Older local records must normalize safely at read time.
+- Viewing an old record must not silently rewrite it.
+- Migrations must be versioned, restart-safe, and reviewed before production use.
+- Migration `009` has a production bookkeeping discrepancy under investigation. Do not run it blindly merely because a check reports it missing.
+
+# 19. Future WooCommerce Fields
+
+WooCommerce-specific fields such as linked WooCommerce order ID, Woo status, sync attempts, and commercial fulfillment state are not part of the current active schema unless explicitly added later.
+
+Future integration must:
+
+- Preserve Forge UUID
+- Preserve the complete Forge order
+- Remain idempotent
+- Never expose credentials to the browser
+- Never treat WooCommerce as the only copy of an order
+
+# 20. Explicit Exclusions
+
+Do not add schema entities for:
+
+- Employee assignment
+- Employee performance
+- Time clocks
+- Productivity tracking
 - Shift scheduling
 - Workload balancing
-- Department routing
-- Enterprise role hierarchies
-- Employee permissions beyond the separate Staff PIN access model
+- Enterprise departments
+- Broad role hierarchies
+- Marketing automation
+- Promotional SMS
 
-Forge Version 1 assumes production is operated by Kyle and Meagan.
+# 21. Version History
 
----
+## Version 1.3 — 2026-08-06
 
-# 16. Migration and Compatibility
-
-Production workflow features will be introduced after orders already exist in IndexedDB.
-
-Migration rules:
-
-- Existing submitted orders default to `production_status: submitted` when no production status exists.
-- Existing orders default to `current_tray_number: null`.
-- Existing items default to `production_status: pending` and `completed_quantity: 0`.
-- Existing order counts are derived from saved item data.
-- Missing structured attributes are normalized at read time.
-- No feature may require clearing production or customer orders from IndexedDB.
-- Viewing an older order must not silently rewrite it.
-- Explicit migrations must be versioned, restart-safe, and idempotent.
-
----
-
-# 17. Version History
+Replaced the future-state schema description with the current local-plus-server architecture. Documented the implemented order, item, tray, history, event, message, and catalog storage; changed the terminal production state from packed to completed; documented the absence of a durable packing-verification table, device identification, backend payment approval, and active WooCommerce fields.
 
 ## Version 1.2 — 2026-07-16
 
-Added:
-
-- Production tray records
-- Tray assignment history
-- Order and item production statuses
-- Item-level completion
-- Ready-to-pack rules
-- Packing verification
-- Tray release and reuse
-- Production workflow integrity constraints
-- Version 1 workforce-feature exclusions
-- Backward-compatibility rules for existing local orders
-
-Retained and expanded:
-
-- Structured production attributes
-- Production filtering
-- Production counts and batch grouping
-
-## Version 1.1
-
-Added structured item attributes for production filtering and batching.
+Defined the original target production-tray, item-completion, packing, and fulfillment model.

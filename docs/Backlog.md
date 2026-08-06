@@ -1,16 +1,16 @@
 # Backlog
 
-**Version:** 1.3
+**Version:** 1.4
 **Status:** Approved
-**Last Updated:** 2026-07-31
+**Last Updated:** 2026-08-06
 
 ## Purpose
 
-Defines the current Forge roadmap, records what is already implemented and working, and keeps the remaining priorities aligned with The Hilltop Shop's real two-person workflow.
+Defines the current Forge roadmap, records what is implemented, and orders the remaining work according to the actual needs of The Hilltop Shop's two-person workflow.
 
 ## Authority
 
-This document is the authoritative source for Forge milestone priority and feature status.
+This document is the authoritative source for Forge priority and feature status.
 
 ## Dependencies
 
@@ -24,7 +24,7 @@ This document is the authoritative source for Forge milestone priority and featu
 
 # 1. Prioritization Rule
 
-Every proposed Forge feature must satisfy at least one part of the Forge Test:
+A feature should move forward only when it clearly:
 
 - Makes ordering faster
 - Makes production faster
@@ -32,26 +32,34 @@ Every proposed Forge feature must satisfy at least one part of the Forge Test:
 - Makes orders easier to locate
 - Eliminates paper
 - Prevents relying on memory
+- Improves data safety or recovery
 
-Features that do not satisfy at least one of these should normally wait for Version 2.
-
-Forge Version 1 is designed for The Hilltop Shop's two-person workflow. It must not become enterprise manufacturing software.
-
----
+Forge Version 1 is for Kyle and Meagan. Do not add enterprise workforce features or broad speculative modules.
 
 # 2. Current Confirmed Checkpoint
 
 ## Repository and Live Checkpoint
 
 ```text
+Repository: khemenway08/forge
 Branch: develop
-Commit: ac3a02f66a7768236d93617a8b4223a477d2b37d
-Message: Enable keyboard capitalization for entry names
-Working tree: clean
-origin/develop: matches local develop
-Current live public build: 20260730-48
-Current live service-worker cache: forge-starter-v48
+Commit: 48b48e84bece23bf6378d78ab9001f27b382b9fc
+Message: Prepare build 20260731-49
+origin/develop: matched confirmed local checkpoint
+Live public build: 20260731-49
+Live service-worker cache: forge-starter-v49
+Automated Node tests: 390 passed
 ```
+
+## Confirmed Manual Reliability Result
+
+One real iPad test passed:
+
+- Submit while offline
+- Local saved state displayed
+- Refresh preserved the same pending order
+- Reconnect uploaded automatically
+- Order appeared once in Staff Orders
 
 ## Completed and Working
 
@@ -61,36 +69,41 @@ Current live service-worker cache: forge-starter-v48
 - Ornament ordering flows
 - Multi-item orders
 - Customer information
-- Order review
-- External payment handoff
-- Stateless Staff PIN payment confirmation
+- Final review
+- Card/Square, Cash, and Venmo method selection
+- **Payment Received — Submit Order** action
+- Durable local IndexedDB save
+- Initial server upload attempt before normal success
+- Local saved recovery state
+- Automatic retry scheduling
+- Refresh and restart recovery
 - Order submission and thank-you flow
 - Event-gated public ordering
 - Test Sessions
-- Persistent Person/Pet Name entry
+- Persistent Person/Pet name entry
 - Person and Pet reordering, editing, and removal
 - Pet icon and Custom Icon handling
-- Mobile keyboard word capitalization
+- Mobile word capitalization
 - Spellcheck, autocorrect, and autocomplete disabled for engraving names
 
 ### Staff and Production
 
-- Staff PIN authentication
+- Staff PIN authentication for staff tools
 - Staff dashboard
-- Staff Orders queue and order detail
-- Server-backed order storage
-- Sequential Forge order numbers currently used by the application
+- Shared server-backed Staff Orders queue
+- Order detail
+- Sequential Forge order numbers
 - Production tray assignment
 - Tray conflict prevention
-- Item-level production completion
+- Item-level completed quantities
 - Production progress counts
 - Ready-to-Pack queue
-- Packing verification
-- Packed timestamps
+- Completion confirmation
+- `completed_at` timestamps
 - Tray release and reuse
-- Order cancellation with safe tray release
+- Order cancellation with tray release
 - Production filtering and batch summaries
-- Staff notes and production notes
+- Staff internal notes
 - Event management
 - Completed-order history and filters
 
@@ -102,399 +115,367 @@ Current live service-worker cache: forge-starter-v48
 - Materials
 - Shortlist
 - Finished Hats
-- Visual catalog cards
+- Visual cards
 - Search and filtering
-- Catalog ordering and sorting
+- Sorting and ordering
 - Design, hat, and material linking
 - Finished-hat linking workspace
-- Cost-related catalog data where currently implemented
-- Isolation from customer ordering, orders, payments, production, and inventory
+- Isolation from customer orders and production
 
 ### Deployment and Reliability
 
-- Hostinger protected deployment workflow
-- Timestamped rollback backups
-- Health and live-version verification
-- Production read-only baseline checks
+- Protected Hostinger deployment workflow
+- Deployment package verification
+- Timestamped rollback backup
+- Health and live-version checks
+- Public/private file separation
 - Service-worker build/cache versioning
-- Focused three-file deployment successfully used for build `20260730-48`
+- Build `20260731-49` deployed and manually verified
 
----
+# 3. Current Decisions That Must Not Be Rebuilt Accidentally
 
-# 3. Current Priority Order
+## Payment Handoff
 
-The obsolete milestone sequence has been replaced by the actual remaining work. Documentation and roadmap alignment are completed for this checkpoint and must be maintained whenever a major milestone changes.
+Current live behavior:
 
-## Priority 1 — Order Lifecycle and Data-Loss Audit
+- Customer or staff selects a payment method.
+- The final button becomes available.
+- Pressing it immediately submits the order.
+- There is no customer-flow payment PIN.
+- There is no backend Awaiting Payment Approval queue.
+- The Staff PIN protects staff tools only.
+
+Decision:
+
+- Leave this flow unchanged for one or two real shows.
+- Review actual unpaid, accidental, abandoned, or mismatched orders afterward.
+- Do not add a PIN or approval queue without evidence.
+
+## Completion
+
+Current live behavior:
+
+- Ready-to-Pack orders use **Complete & Release Tray**.
+- Completion changes the order to `completed`.
+- `completed_at` is recorded.
+- The tray is released.
+
+Decision:
+
+- Keep this as the current Version 1 terminal production action.
+- Separate shipped and picked-up actions remain deferred.
+- Durable item-by-item packing-verification history remains an open decision, not a completed feature.
+
+## Current Data Authority
+
+- Forge server database is the current shared operational source of truth.
+- IndexedDB is the local durability and recovery layer.
+- WooCommerce is not currently synchronized.
+
+# 4. Priority Order
+
+## Priority 1 — Approve and Save the Reconciled Documents
 
 **Priority:** Critical
-**Status:** Next
+**Status:** Completed — 2026-08-06
 
-Purpose:
+Completed work:
 
-- Prove exactly how a customer order moves from draft to durable server record and identify every point where it could be lost, duplicated, falsely confirmed, or left invisible to staff.
+- Reviewed the five rewritten source documents.
+- Resolved the documented workflow and architecture conflicts.
+- Approved the reconciled Forge source documents.
+- Changed all document statuses from draft to approved.
+- Saved the replacement files locally.
+- Replaced the ChatGPT Project source copies.
 
-Required investigation:
+Repository housekeeping:
 
-- Trace customer entry through payment confirmation, UUID assignment, order number assignment, local save, server save, confirmation, Staff Orders, production updates, and packing.
-- Identify the authoritative record at each stage.
-- Confirm whether customer success can appear before durable server storage.
-- Determine behavior when Wi-Fi drops before, during, or immediately after submission.
-- Determine behavior when Submit is tapped repeatedly.
-- Determine behavior when Safari refreshes or closes.
-- Determine whether a local order can fail to reach the server without a clear staff warning.
-- Confirm production, tray, note, completion, and packing changes survive refresh and reopening.
-- Document every recovery path.
-- Do not make source changes during the audit unless separately approved.
+- Commit the approved documentation update separately from runtime changes when repository work resumes.
 
-## Priority 2 — Database Backup and Restore Verification
+No application behavior changed during this documentation task.
+
+## Priority 2 — Show Tablet and Physical Security Plan
+
+**Priority:** Critical Operational
+**Status:** Not Started
+
+Decisions needed:
+
+- Use personal iPads temporarily or buy dedicated show tablets.
+- Select tablet model and quantity.
+- Choose rugged cases.
+- Choose inexpensive stable stands.
+- Add a cable-lock or tether method.
+- Configure Guided Access or equivalent kiosk restriction.
+- Disable personal notifications, saved passwords, and purchasing.
+- Plan charging, extension power, and backup battery.
+- Decide hotspot or venue-network approach.
+
+Avoid expensive full kiosk enclosures unless real show use proves they are necessary.
+
+## Priority 3 — Physical Production Tray Setup
+
+**Priority:** Critical Operational
+**Status:** Not Started
+
+Required work:
+
+- Select shallow durable optical/eyeglass-style trays.
+- Confirm outside dimensions.
+- Buy an initial practical quantity.
+- Add permanent tray numbers.
+- Add reusable dry-erase customer labels.
+- Select or build tray storage.
+- Match physical tray numbers to Forge configuration.
+
+Do not add more tray software before the physical system is proven.
+
+## Priority 4 — Database Backup and Restore Verification
 
 **Priority:** Critical
 **Status:** Planned
 
 Required work:
 
-- Confirm current automatic database backup behavior.
-- Record backup frequency, retention, and storage location.
-- Confirm backups are stored separately from the live database.
-- Include order, item, event, tray, note, completion, cancellation, outbound message, and catalog data where applicable.
+- Confirm current automatic backup behavior.
+- Record frequency, retention, and storage location.
+- Confirm backups are separate from the live database.
+- Include order, tray, item completion, event, notes, outbound message, and catalog tables.
 - Document the exact restore procedure.
-- Perform a controlled restore test into a nonproduction database.
-- Verify restored record counts and relationships.
-- Never test restoration over the live database.
-- Never claim backups are proven until a restore drill passes.
+- Restore into a nonproduction database.
+- Verify record counts and relationships.
+- Never test restoration over production.
 
-## Priority 3 — Submission and Duplicate-Prevention Hardening
+A backup is not proven until a restore drill succeeds.
 
-**Priority:** Critical
-**Status:** Planned
-
-Required outcomes:
-
-- One immutable Forge order UUID per submitted order.
-- Idempotent server submission behavior.
-- Repeated taps cannot create duplicate orders.
-- Submit remains disabled while saving.
-- Clear saving, success, and failure states.
-- No success message before the approved durable-save condition is met.
-- Failed or interrupted submissions remain recoverable.
-- Staff can clearly identify pending, failed, or incomplete submissions.
-- Two simultaneous iPad submissions cannot receive conflicting order numbers.
-
-## Priority 4 — Multi-iPad and Failure Test Matrix
+## Priority 5 — Full Two-Tablet and Failure Test Matrix
 
 **Priority:** Critical
-**Status:** Planned
+**Status:** Partially Started
 
-Required scenarios:
+Already passed:
 
-- Two iPads submit simultaneously.
-- One customer taps Submit repeatedly.
-- Wi-Fi disconnects before payment confirmation.
-- Wi-Fi disconnects during submission.
-- Wi-Fi disconnects immediately after submission.
-- Page refresh during submission.
-- Safari closes and reopens.
-- Event ends while a draft is open.
-- One device runs an older cached build.
-- Two staff devices edit the same order.
-- Production completion changes followed by immediate refresh.
-- Packing action followed by immediate refresh.
+- One offline submission
+- Refresh recovery
+- Reconnect upload
+- No duplicate in Staff Orders
 
-For every scenario record:
+Still required:
 
-- Expected behavior.
-- Actual behavior.
-- Whether any data can be lost.
-- Whether a duplicate can occur.
-- What the customer sees.
-- What staff sees.
-- Exact recovery procedure.
+- Two tablets submit simultaneously.
+- Repeated final-button taps.
+- Wi-Fi loss before final submission.
+- Wi-Fi loss during upload.
+- Wi-Fi loss immediately after upload begins.
+- Refresh during submission.
+- Browser closes and reopens.
+- Event closes while a draft is open.
+- One device uses an older cached build.
+- Two staff devices update the same order.
+- Item completion followed by immediate refresh.
+- Completion and tray release followed by immediate refresh.
 
-## Priority 5 — Focused Deployment Tooling
+Record expected result, actual result, customer view, staff view, and recovery procedure for each case.
 
-**Priority:** High
-**Status:** Planned
-
-Keep the previously documented requirements:
-
-- Explicit file allowlist.
-- Exact dry-run manifest.
-- Refuse unexpected files.
-- Back up only files being replaced.
-- Public-only deployment cannot include private/vendor files.
-- Preserve the full deployment workflow for larger releases.
-- Automated safety tests.
-- Never use `rsync --delete`.
-
-Deployment hardening supports stability but comes after proving the order save and recovery lifecycle.
-
-## Priority 6 — Monitoring, Recovery, and Show Checklist
+## Priority 6 — Show Operations and Recovery Checklist
 
 **Priority:** High
 **Status:** Planned
 
-Required work:
+Create three short checklists:
 
-- Health status.
-- Database connectivity.
-- Current live build and service-worker cache.
-- Recent successful order write.
-- Failed order submissions.
-- Duplicate UUID attempts.
-- Pending or stuck records.
-- Outbound email failures.
-- Clear logs without exposing customer data or credentials.
-- Morning-of-show checklist.
-- During-show recovery instructions.
-- End-of-show order-count and backup verification.
+### Morning of show
 
-## Priority 7 — Customer Review and Payment Flow Audit
+- Build and health check
+- Active event check
+- Tablet charge and network check
+- Test order
+- Staff PIN check
+- Square, cash, and Venmo readiness
+- Starting order count
+
+### During show
+
+- What to do when a tablet says Order Saved on This iPad
+- What to do when an order needs staff attention
+- How to verify the order reached Staff Orders
+- When not to clear browser data or close the tablet
+- How to switch to the backup tablet
+
+### End of show
+
+- Count Forge orders
+- Count Square orders
+- Count cash orders
+- Count Venmo orders
+- Compare totals and payment methods
+- Confirm no pending local orders
+- Close the event
+- Verify database backup
+
+## Priority 7 — Payment Handoff Pilot Review
+
+**Priority:** High
+**Status:** Waiting for One or Two Shows
+
+Collect evidence on:
+
+- Unpaid submitted orders
+- Accidental submissions
+- Abandoned orders
+- Payment method mistakes
+- Forge/payment count mismatches
+- Whether customers press the final button without staff involvement
+
+Possible later responses, only if needed:
+
+- Staff-only final action
+- Small handoff screen change
+- Temporary staff confirmation control
+- Backend payment-review state
+
+Do not choose a solution before observing the actual problem.
+
+## Priority 8 — Device Identification and Local-Pending Visibility
 
 **Priority:** High
 **Status:** Planned
 
-Keep the previously documented flow audit, but place it after stability and recovery work.
+Current gap:
 
-Target flow:
+- The submission code sends `device_id: null`.
+- A server Staff Orders screen on another device cannot display an order that exists only in one tablet's IndexedDB.
 
-Customize → Customer Information → One Final Review → Payment Handoff → Staff Confirmation → Submit
+Potential work:
 
-Required investigation:
+- Assign a stable business-safe device ID to each show tablet.
+- Display the originating device in staff diagnostics.
+- Show local pending and failed counts clearly on each tablet.
+- Provide a simple staff recovery screen for that tablet.
 
-- Identify every current review screen or modal.
-- Determine whether any information is repeated.
-- Verify payment-method selection.
-- Verify submit-button enablement.
-- Preserve payment security and Staff PIN confirmation.
-- Do not simplify by removing the final accuracy check.
-- Do not redesign completed customization screens.
+Do not expose technical identifiers to customers unless needed for recovery instructions.
 
-## Priority 8 — PWA and Offline Hardening
+## Priority 9 — Durable Completion Verification Decision
 
-**Priority:** High
-**Status:** Planned / Incremental
+**Priority:** Medium
+**Status:** Decision After Real Use
 
-Keep:
+Current behavior:
 
-- Reliable update activation.
-- Clear online and offline state.
-- Reliable reopen and refresh.
-- Defined offline-capable actions.
-- Safe retry and recovery states.
-- Hostinger and CDN cache behavior.
-- No false sync or email success claims.
+- Completion records the final order status and timestamp.
+- Tray release history is preserved.
+- A separate durable item-by-item packing-verification record is not stored.
 
-Offline behavior must be based on the findings from the order lifecycle audit.
+Decide after real production use whether Forge needs:
 
-## Priority 9 — Migration and Schema Bookkeeping Audit
+- Per-item verification acknowledgments
+- A permanent packing verification record
+- Packing notes
+- Reopen or correction history
 
-**Priority:** High
-**Status:** Planned / Diagnostic
+Do not build an audit-heavy system unless it prevents a real mistake.
 
-Observed deployment-check result:
+## Priority 10 — Remaining Reliability Hardening
 
-```text
-009_sequential_order_numbers: missing
-010_forge_events: present
-014_outbound_messages: present
-015_completed_at: present
-```
+**Priority:** Medium
+**Status:** Planned
 
-Required investigation:
+- Stronger server payload validation
+- Old cached-build compatibility gate
+- Cancellation invariant review
+- Completion-receipt edge cases
+- New-session duplicate-risk review
+- Ready-to-Pack pagination beyond current result limits
+- Migration `009` bookkeeping investigation without blindly running it
 
-- Confirm sequential order-number uniqueness under concurrent submissions.
-- Do not run migration `009` merely because it is reported missing.
-- Determine whether its schema effect exists, was superseded, or lacks only its migration record.
-- Make no production schema change until proven necessary.
+## Priority 11 — WooCommerce Synchronization
 
-## Priority 10 — WooCommerce Synchronization
-
-**Priority:** High
+**Priority:** Later
 **Status:** Deferred Until Stability Passes
 
-Clarify:
+Do not begin until:
 
-- WooCommerce adds another persistence system and network dependency.
-- Do not begin the integration until Forge's own order save, duplicate prevention, backup, restore, and recovery behavior have been proven.
-- All existing WooCommerce requirements remain approved.
-- This is still a Version 1 goal, but not the next active development task.
+- Backup restore is proven.
+- Two-tablet submission testing passes.
+- Duplicate prevention is accepted.
+- Local pending recovery is documented.
+- Current payment pilot is reviewed.
+- Current Forge order lifecycle is stable.
 
-## Priority 11 — Hilltop Design Catalog Refinement
+WooCommerce must be an additional synchronized record, not a new place where an order can disappear.
 
-**Priority:** High
-**Status:** Later / Incremental
+## Priority 12 — Hilltop Design Catalog Refinement
 
-## Priority 12 — Physical Production Tray Setup
+**Priority:** Later / Incremental
+**Status:** Parked
 
-**Priority:** Operational
-**Status:** Operational
+Continue only after the operational priorities above.
 
-Remaining physical work:
+Potential later work:
 
-- Select shallow durable trays.
-- Confirm dimensions.
-- Purchase initial quantity.
-- Add permanent tray numbers.
-- Add reusable customer labels.
-- Purchase or build tray storage.
-- Match the configurable Forge tray inventory to the physical trays.
+- Better asset ingestion
+- More catalog fields
+- Bulk edits
+- Export and print tools
+- Inventory connections only if separately approved
 
 ## Priority 13 — Additional Customer Product Categories
 
 **Priority:** Later
-**Status:** Later
+**Status:** Parked
 
-Potential sequence:
+Potential order:
 
-- Signs
-- Kitchen
-- General Custom Request
+1. Signs
+2. Kitchen
+3. General Custom Request
 
-Rules:
+Add one customer product flow at a time. Do not redesign the completed ornament system.
 
-- Add one product flow at a time.
-- Do not redesign the completed ornament system.
-- Validate each flow before starting another.
+# 5. Parked and Explicitly Excluded
 
----
+Do not build now:
 
-# 4. Parked / Deferred
-
-- Separate Mark Shipped action
-- Separate Mark Picked Up action
-- Carrier tracking
-- Shipping-label purchasing
-- Retail inventory
 - Employee assignments
 - Employee activity tracking
 - Time tracking
 - Productivity metrics
 - Shift scheduling
-- Advanced analytics
-- Customer accounts
-- AI assistant
-- Marketing automation
-- Promotional SMS
-- Broad multi-role permissions
-
-Packing should remain a single practical staff action for the current two-person shop.
-
-Do not add another required tap after packing unless a later operational need, WooCommerce synchronization rule, pickup-management problem, or carrier integration justifies it.
-
-Final shipment and pickup concepts should remain documented as future lifecycle possibilities, but they are not the next immediate feature.
-
----
-
-# 5. Supporting Ongoing Work
-
-## Progressive Web App Hardening
-
-**Priority:** High
-**Status:** Planned / Incremental
-
-- Installable tablet experience
-- Offline-tolerant static application shell
-- Reliable refresh and reopening behavior
-- Clear connection and synchronization states
-
-## Production Data Migration and Normalization
-
-**Priority:** High
-**Status:** Planned / Incremental
-
-- Preserve existing IndexedDB orders.
-- Derive missing production fields without forcing database deletion.
-- Avoid rewriting historical records merely by viewing them.
-- Keep normalization reusable for local, server, and WooCommerce records.
-
-## Error and Recovery States
-
-**Priority:** High
-**Status:** Planned / Incremental
-
-Forge must provide plain, actionable recovery messages without exposing technical details.
-
----
-
-# 6. Known Documentation Follow-Up
-
-These source documents still contain older assumptions and need a later focused review:
-
-- `docs/UI_Guidelines.md`
-- `docs/Database_Schema.md`
-- `docs/WooCommerce_Integration.md`
-
-They remain important reference documents, but when they conflict with this Backlog they are not the authoritative source for the current priority order.
-
----
-
-# 7. Explicitly Excluded From Version 1
-
-Do not build:
-
-- Employee assignments
-- Time tracking
-- Productivity metrics
-- Shift scheduling
 - Workload balancing
-- Employee-specific permissions beyond a Staff PIN
-- Retail inventory
-- Point-of-sale processing
+- Advanced analytics
+- Broad role permissions
+- Customer accounts
+- AI assistant
 - Marketing automation
 - Promotional SMS
-- AI assistant
-- Advanced analytics
-- Shipping-label purchasing
-- Employee performance reporting
-
-These exclusions should not be added indirectly through production screens or database fields.
-
----
-
-# 8. Version 2 Candidates
-
-Potential later work includes:
-
 - Retail inventory
-- Barcode or QR tray scanning
-- Shipping-label integration
-- Customer accounts
-- Optional AI assistance
-- Advanced production analytics
-- Broader multi-user permissions if the shop genuinely grows beyond the Version 1 operating model
+- Carrier tracking
+- Shipping-label purchasing
+- Separate shipped and picked-up actions
 
-Version 2 candidates are not approved for current implementation merely because they appear in this section.
+# 6. Development Workflow
 
----
+For each software task:
 
-# 9. Physical Production Research
+1. Confirm the repository is on `develop`.
+2. Confirm local and `origin/develop` status.
+3. Read the approved source documents.
+4. Implement only the selected task.
+5. Preserve completed screens and interactions.
+6. Run focused tests.
+7. Run the full suite when appropriate.
+8. Run `git diff --check`.
+9. Provide manual testing steps.
+10. Do not commit, push, migrate, deploy, or send email unless explicitly instructed.
 
-Physical purchasing decisions are operational research rather than application features.
+Documentation-only changes should be committed separately from runtime changes.
 
-Continue evaluating:
+# 7. Version History
 
-- Industrial optical-laboratory or eyeglass job trays
-- Best tray pricing
-- Case quantities
-- Exact tray dimensions
-- Durable permanent number labels
-- Reusable dry-erase customer labels
-- A 24-tray rack expandable to approximately 36 trays
+## Version 1.4 — 2026-08-06
 
-Software implementation must not hardcode physical dimensions or a maximum of 24 trays. The tray inventory must remain configurable.
+Updated the live checkpoint to build `20260731-49`, recorded the completed submission-recovery hardening, removed the outdated claim that customer submission uses a payment PIN, replaced the packed workflow with the current completed workflow, made physical show readiness and backup verification the leading priorities, and deferred WooCommerce until reliability is proven.
 
----
+## Version 1.3 — 2026-07-31
 
-# 10. Development Workflow
-
-For every feature:
-
-1. Confirm the repository is on `develop` and synchronized.
-2. Read the approved source documents.
-3. Implement only the active milestone.
-4. Preserve completed screens and interaction patterns.
-5. Perform manual QA.
-6. Report exact files changed.
-7. Provide Git verification commands.
-8. Do not commit or push unless Kyle explicitly instructs it.
+Replaced the original milestone list with a stability-first roadmap.

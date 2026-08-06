@@ -1,51 +1,46 @@
 # UI Guidelines
 
-**Version:** 2.1
+**Version:** 2.2
 **Status:** Approved
-**Last Updated:** 2026-07-16
+**Last Updated:** 2026-08-06
 
 ## Purpose
 
-Defines the official Forge user interface standards for the customer ordering experience and the staff production workflow.
+Defines the official Forge interface standards for the customer ordering experience, staff production workflow, reliability states, and Hilltop Design Catalog.
 
 ## Authority
 
-This document is the authoritative source for all Forge user interface decisions.
+This document is the authoritative source for Forge interface decisions.
 
 ## Dependencies
 
 - `Forge.md`
 - `Database_Schema.md`
+- `Product_Definitions.yaml`
 
 ---
 
 # 1. Brand Identity
 
-Forge contains two distinct user experiences.
+Forge contains two distinct experiences.
 
 ## Customer Experience
 
 **Brand:** The Hilltop Shop
 **Purpose:** Warm, welcoming, handcrafted, boutique.
 
-The customer should feel like they are ordering a handcrafted product from a local Texas business.
+Use only approved The Hilltop Shop branding and real product photography.
 
 ## Staff Experience
 
 **Brand:** Forge
 **Purpose:** Industrial, efficient, focused.
 
-The staff should feel like they are operating practical production software rather than shopping on a website.
-
-The staff interface is designed for The Hilltop Shop's one- or two-person workflow. It should prioritize speed, visibility, and mistake prevention rather than enterprise manufacturing controls.
-
----
+The staff interface is for Kyle and Meagan. It should prioritize speed, visibility, touch use, and mistake prevention rather than enterprise controls.
 
 # 2. Brand Personality
 
 ## Customer
-
-Characteristics:
 
 - Warm
 - Friendly
@@ -54,15 +49,7 @@ Characteristics:
 - Calm
 - Product-focused
 
-Inspiration:
-
-- Modern boutique
-- Apple Store simplicity
-- Farmhouse warmth
-
 ## Staff
-
-Characteristics:
 
 - Industrial
 - Rugged
@@ -71,35 +58,25 @@ Characteristics:
 - Professional
 - Production-focused
 
-Inspiration:
-
-- Milwaukee Packout
-- Industrial equipment interfaces
-- Practical manufacturing dashboards
-
-The staff experience must remain approachable enough that Kyle or Meagan can understand the current state of an order without training or interpretation.
-
----
+Kyle or Meagan should understand an order's current state without training or interpretation.
 
 # 3. Official Logos
 
 ## Customer Interface
 
-Use only official The Hilltop Shop logos.
+Use only approved The Hilltop Shop logos.
 
 ## Staff Interface
 
-Use only official Forge logos.
+Use only approved Forge logos.
 
-## Rules
+Rules:
 
-- Never recreate logos with AI.
+- Never recreate official logos with AI.
 - Never substitute fonts inside official logo artwork.
-- Always use official vector or approved exported brand assets.
-- Do not place Forge branding on customer-facing ordering screens.
-- Do not place The Hilltop Shop branding on staff production screens except where customer-facing order content is intentionally previewed.
-
----
+- Use approved vector or exported assets.
+- Do not place Forge branding on customer ordering screens.
+- Do not place Hilltop branding on staff screens except intentional customer-order previews.
 
 # 4. Color System
 
@@ -125,98 +102,72 @@ Use only official Forge logos.
 - Warning: Amber
 - Error: Red
 
-## Status Color Rules
+## Status Rules
 
-- Color must support a text label, never replace it.
-- Production status must remain readable in grayscale or under poor shop lighting.
-- Forge Orange identifies primary staff actions and active navigation, not every clickable element.
-- Green is reserved for confirmed completion, readiness, or successful actions.
-- Amber is reserved for waiting, incomplete, or attention-needed states.
-- Red is reserved for errors, blocked work, cancellation, or destructive actions.
-
----
+- Color supports a text label; it never replaces one.
+- Green is reserved for confirmed success or completion.
+- Amber is for waiting, local-only, incomplete, or attention-needed states.
+- Red is for errors, blocked work, cancellation, or destructive actions.
+- Forge Orange identifies primary staff actions and active navigation.
 
 # 5. Typography
 
 Use one interface font family throughout Forge.
 
-Hierarchy:
+Operational information such as order number, tray number, progress, and status must be quickly scannable.
 
-- Page Title
-- Section Title
-- Card Title
-- Body
-- Caption
-- Button Text
-- Production Metadata
+Do not use decorative fonts for operational data.
 
-Brand logos retain their official typography.
+# 6. Layout Targets
 
-Production metadata such as order number, tray number, item count, and status should be visually distinct and quickly scannable. Do not use decorative fonts for operational information.
-
----
-
-# 6. Layout System
-
-## Primary Target
-
-- iPad Landscape
-
-## Secondary Target
-
-- Desktop
-
-## Responsive Target
-
-- Mobile
+- Primary: iPad landscape
+- Secondary: Desktop
+- Responsive: Phone
 
 Customer screens prioritize clarity over density.
 
-Staff screens may use moderately denser layouts, but touch targets and order readability must not be sacrificed. The interface must remain usable while standing at a workbench or moving between the laser, tray rack, and packing table.
-
----
+Staff screens may be denser, but touch targets and order readability must remain comfortable while standing at a workbench.
 
 # 7. Navigation
 
 ## Customer
 
 - Linear workflow
-- One primary action per screen
-- No unnecessary menus
+- One obvious primary action per screen
+- No unnecessary menu
 - No staff controls
 
 ## Staff
 
-Approved modules:
+Current approved areas:
 
 - Dashboard
 - Orders
-- Production
 - Ready to Pack
-- Customers
-- Settings
+- Events and administrative tools
+- Hilltop Design Catalog
 
 Rules:
 
-- Use consistent staff navigation across all staff screens.
-- Make the active module obvious.
-- Preserve quick movement between the orders queue, production work, and packing.
-- Do not add employee, scheduling, time-tracking, or productivity navigation in Version 1.
-
----
+- Use consistent staff navigation.
+- Make the active area obvious.
+- Preserve quick movement between Orders and Ready to Pack.
+- Do not add employee, scheduling, time, or productivity navigation.
 
 # 8. Component Library
 
 ## Customer Components
 
 - Product Card
+- Option Card
 - Color Card
 - Size Card
-- Icon Card
-- Person Card
-- Pet Card
+- Person/Pet Entry Composer
+- Ordered Entry Row
 - Order Summary Card
-- Customer Card
+- Customer Information Card
+- Payment Method Choice
+- Submission Status Panel
 
 ## Shared Components
 
@@ -226,151 +177,198 @@ Rules:
 - Confirmation Dialog
 - Empty State
 - Error Message
+- Waiting/Recovery Message
 
-## Staff Production Components
+## Staff Components
 
 - Staff Order Card
 - Tray Badge
 - Tray Selection Control
 - Production Progress Indicator
 - Production Item Row
-- Item Completion Control
+- Completed-Quantity Control
 - Open Flag Badge
 - Ready-to-Pack Card
-- Packing Checklist
-- Fulfillment Badge
+- Completion Confirmation
+- Staff Note Field
 
-All screens should be assembled from approved components and existing interaction patterns.
-
-New production components must extend the existing staff design system. Do not redesign completed staff screens solely to introduce a new component.
-
----
+New components extend the existing design system. Do not redesign completed screens solely to introduce a component.
 
 # 9. Product Cards
 
 Customer product cards display:
 
-- Product Photo
-- Product Name
-- Short Description
-- Optional Price
-- `Tap to Customize`
+- Real product photo
+- Product name
+- Short description
+- Optional price
+- Clear customization action
 
-Selecting a product automatically advances to the next step.
+Selecting a product may automatically advance when the next step is unambiguous.
 
-Always use real product photography. Do not replace approved product photos with illustration, clip art, or generated product representations.
-
----
+Never replace the actual product with clip art or a generated redesign.
 
 # 10. Forms
 
 ## Customer Form Rules
 
-- Auto-advance after selections when appropriate.
-- Auto-focus newly created fields.
-- Use a single-column customer-information layout.
 - Use large touch targets.
+- Use a single-column customer-information layout.
+- Auto-advance after simple selections when appropriate.
+- Preserve explicit Add actions for repeated name entry.
+- Auto-focus the persistent name field after adding a name.
 
-Disable for personalization-name fields:
+Disable for engraving-name fields:
 
-- Spell Check
-- Auto Correct
-- Auto Fill
-- Auto Complete when it may alter customer-entered names
+- Spellcheck
+- Autocorrect
+- Autocomplete
+- Automatic text rewriting
+
+Use `autocapitalize="words"` only to assist keyboard capitalization. Do not alter the stored text with JavaScript capitalization logic.
 
 ## Staff Form Rules
 
-- Keep staff actions brief and task-specific.
-- Prefer selection controls over typing when assigning trays or changing approved statuses.
-- Do not require staff to enter information Forge already knows.
-- Preserve customer-entered spelling exactly.
-- Use confirmation only when an action changes production state, releases a tray, cancels an order, or may be difficult to reverse.
+- Keep actions brief and task-specific.
+- Prefer selection controls over typing.
+- Do not ask for information Forge already knows.
+- Preserve customer spelling exactly.
+- Confirm destructive or tray-releasing actions.
+- Do not add employee-identification fields.
 
----
+# 11. Person and Pet Entry
 
-# 11. Personalization
+Approved interaction:
 
-Customer personalization order:
+1. Type a name.
+2. Tap **Add**.
+3. The name appears in the ordered list.
+4. The field clears and remains ready for the next name.
+5. Repeat.
 
-1. Product
-2. Size
-3. Colors
-4. Family Name
-5. People
-6. Pets
+Rules:
 
-People and pets share one ordered list.
-
-Customers may reorder names.
-
-Forge preserves that order through production, packing, and WooCommerce synchronization.
-
-Staff production screens must display the complete personalization needed to make the item without requiring staff to reconstruct it from abbreviated labels.
-
----
+- Keep one persistent name field.
+- Keep the Add button beside the field.
+- Do not require Save.
+- Do not require Done Adding Names.
+- Do not force the customer to reopen Add Person between entries.
+- Add Pet remains available without disturbing the persistent name flow.
+- Preserve the displayed order through production.
 
 # 12. Product Preview
 
-Whenever space allows, display the product image while customization is taking place.
+Whenever space allows, display the product image during customization.
 
-Customers should always understand what they are ordering.
+Staff item details may display the approved product photo, but production data and personalization remain primary.
 
-Staff item-detail screens may also display the approved product photo as a reference, but production data and personalization remain the primary content.
-
----
-
-# 13. Customer Review Screen
+# 13. Customer Final Review
 
 Use a receipt-style layout.
 
 Display:
 
-- Product
+- Products
+- Quantities
 - Options
-- Family
-- People
-- Pets
+- Personalization
 - Customer
-- Shipping or Pickup
+- Fulfillment
+- Price summary
+- Selected external payment method
 
-Staff-only information must not appear on customer review screens.
+Do not expose:
 
-Never expose:
-
-- Production notes
+- Tray number
+- Production note
 - Internal flags
-- Tray numbers
-- Database information
-- Sync errors
-- Implementation details
+- Database values
+- Raw sync errors
+- Technical identifiers
 
----
+# 14. Payment Method and Final Submit
 
-# 14. Staff Information Hierarchy
+Current live pattern:
 
-Staff order and production screens should prioritize information in this order:
+- Card/Square
+- Cash
+- Venmo
 
-1. Tray Number
-2. Order Number
-3. Customer Name
-4. Production Status
-5. Completion Progress
-6. Required Items
-7. Fulfillment Method
-8. Open Flags or Blocking Issues
-9. Contact and address details when needed
+Selecting an approved method enables:
 
-Tray number is the primary physical-location reference after assignment. It must be prominent wherever an active order is shown.
+**Payment Received — Submit Order**
 
-Before tray assignment, the interface must clearly display `No Tray Assigned` rather than leaving the tray field blank.
+Rules:
 
----
+- Do not display a customer-flow Staff PIN.
+- Do not display a backend approval state that does not exist.
+- Do not claim Forge verified the Square, cash, or Venmo transaction.
+- Disable the final button while submission is in progress.
+- Prevent repeated taps from starting additional submissions.
+- Preserve the final review when a recoverable error occurs.
 
-# 15. Staff Order Card
+This pattern remains a show pilot. Changes require actual operational evidence.
 
-The existing staff order-card design should remain intact unless a small extension is required for production information.
+# 15. Submission and Recovery States
 
-An active production order card should display, when available:
+The customer submission screen must distinguish these states.
+
+## Submitting
+
+Preferred language:
+
+- Submitting Order...
+- Forge is saving your order.
+
+The button remains disabled.
+
+## Server confirmed
+
+Preferred presentation:
+
+- Order Saved
+- Your order has been saved.
+- Display the Forge order number or short reference.
+
+## Saved only on this tablet
+
+Preferred presentation:
+
+- Order Saved on This iPad
+- Forge is confirming your order.
+- Keep this iPad available while Forge retries.
+
+Do not show the normal completed heading while the saved record is still loading.
+
+## Needs staff attention
+
+Preferred presentation:
+
+- Needs Staff Attention
+- Your order is saved on this iPad.
+- A staff member needs to finish the upload.
+
+Do not expose technical error codes or stack traces to the customer.
+
+# 16. Staff Information Hierarchy
+
+Prioritize:
+
+1. Tray number
+2. Order number
+3. Customer name
+4. Production status
+5. Completion progress
+6. Required items
+7. Fulfillment method
+8. Open flags or recovery issues
+9. Contact and address when needed
+
+Before assignment, show **No Tray Assigned** rather than leaving the field blank.
+
+# 17. Staff Order Card
+
+Display when available:
 
 - Order number
 - Customer name
@@ -378,79 +376,54 @@ An active production order card should display, when available:
 - Production status
 - Progress such as `2 of 3 Complete`
 - Fulfillment method
-- Open-flag indicator
+- Open-flag or attention indicator
 
 Rules:
 
-- Do not overload the card with full customer details.
-- Use the order detail viewer for complete information.
-- Entire-card navigation may be used when it does not conflict with embedded controls.
-- Embedded actions must have clear labels and independent keyboard focus.
-- Customer-provided text must be safely escaped before rendering.
+- Do not overload the card with full details.
+- Use the detail viewer for complete personalization.
+- Escape customer-provided text before rendering.
+- Embedded actions require clear labels and independent focus.
 
----
+# 18. Tray Badge
 
-# 16. Tray Badge
-
-The tray badge links the digital order to the physical production tray.
-
-## Assigned State
-
-Preferred format:
+Assigned format:
 
 ```text
 TRAY 12
 ```
 
-Rules:
-
-- Use a high-contrast, bold treatment.
-- Display the tray number as a whole number without leading zeros.
-- Keep the same visual treatment across Orders, Production, Ready to Pack, and Packing.
-- Do not abbreviate the label to an unexplained number.
-
-## Unassigned State
-
-Preferred label:
+Unassigned format:
 
 ```text
 NO TRAY ASSIGNED
 ```
 
-Use a neutral or warning treatment, not an error treatment, unless assignment is required before the current action can continue.
+Rules:
 
-## Available Tray State
+- High contrast
+- Bold whole number
+- Same terminology everywhere
+- Assigned and out-of-service trays never appear available
 
-In tray-selection interfaces, available trays should be clearly selectable and assigned trays should not be selectable.
-
-Do not display an assigned tray as available, even temporarily.
-
----
-
-# 17. Tray Selection Control
-
-Tray assignment should be simple enough to complete while standing at the tray rack.
+# 19. Tray Selection Control
 
 Requirements:
 
-- Display only valid tray records.
-- Clearly distinguish available, assigned, and out-of-service trays.
-- Use large numbered controls with at least 44px touch targets.
-- Sort tray numbers numerically.
-- Prevent selection of assigned or out-of-service trays.
-- Show the selected customer and order before final assignment.
-- Use one obvious primary action such as `Assign Tray`.
-- Confirm successful assignment with the resulting tray number.
+- Display only configured trays.
+- Distinguish available, assigned, and out-of-service.
+- Sort numerically.
+- Use at least 44px touch targets.
+- Prevent invalid selection.
+- Show the selected order and customer before assignment.
+- Use one primary action: **Assign Tray**.
+- Confirm the resulting tray number after success.
 
-Do not require typing a tray number when a selectable list or grid can prevent mistakes.
+Do not require typing a tray number.
 
----
+# 20. Production Progress Indicator
 
-# 18. Production Progress Indicator
-
-Production progress must communicate actual physical completion.
-
-Preferred text formats:
+Preferred formats:
 
 ```text
 0 of 3 Complete
@@ -460,95 +433,71 @@ Preferred text formats:
 
 Rules:
 
-- Always include readable text.
-- A simple progress bar may support the text but must not replace it.
-- Do not use percentage alone.
-- Progress is calculated from required item quantities, not from screens visited or time elapsed.
-- Open blocking flags must remain visible even when the numerical progress is complete.
-- Completed styling must not imply packed or shipped.
+- Always show readable text.
+- A bar may support the text but not replace it.
+- Progress is based on physical required quantities.
+- Open blocking conditions remain visible.
+- Complete progress does not automatically mean the order's final completion action occurred.
 
----
-
-# 19. Production Item Row
-
-Each production item row should display enough information to make and route the item correctly.
+# 21. Production Item Row
 
 Display as applicable:
 
 - Product name
-- Quantity
+- Required quantity
+- Completed quantity
 - Size
 - Colors
 - Year
-- Family name or personalization
+- Family or primary personalization
 - Ordered people and pets
-- Custom icon or artwork request
+- Custom request
 - Item status
 - Completion control
-- Assigned tray context
+- Tray context
 
-Rules:
+Use plain labels rather than raw keys.
 
-- Preserve exact customer spelling and personalization order.
-- Keep product-specific details grouped with that item.
-- Use plain labels rather than raw database keys.
-- Do not hide unresolved custom requests inside expandable technical data.
-- Multiple quantities must show how many physical pieces are complete.
+# 22. Item Completion Control
 
----
-
-# 20. Item Completion Control
-
-An item is marked complete only after the finished physical piece has been placed into the assigned tray.
+An item is recorded complete only after the physical piece is produced and placed into the assigned tray.
 
 Requirements:
 
-- The control must clearly distinguish pending and complete states.
-- For quantity greater than one, support accurate completed quantity rather than a misleading single checkbox.
-- Completion changes must be easy to verify and difficult to trigger accidentally.
-- The resulting order-level progress must update immediately.
-- The control must remain usable with touch and keyboard input.
-- Do not ask which employee completed the item.
-- Do not display productivity timers or completion-speed metrics.
+- Distinguish pending and complete.
+- Support quantity greater than one accurately.
+- Update order progress immediately after server confirmation.
+- Prevent accidental duplicate increments.
+- Use expected current quantity when saving to detect conflicts.
+- Remain touch and keyboard accessible.
+- Do not ask who completed the item.
 
 Preferred labels:
 
-- `Mark Complete`
-- `Completed`
-- `1 of 2 Complete`
+- Mark Complete
+- Completed
+- 1 of 2 Complete
 
-Avoid vague labels such as `Done` when the physical meaning is not obvious.
+# 23. Production Status
 
----
-
-# 21. Production Status
-
-Use a small, approved set of plain-language statuses.
-
-Approved customer-order production labels:
+Current approved labels:
 
 - Submitted
 - Tray Assigned
 - In Production
 - Ready to Pack
-- Packed
-- Shipped
-- Picked Up
+- Complete
 - Cancelled
 
 Rules:
 
-- Status labels must match the actual lifecycle.
-- Production completion, packing, and fulfillment are separate states.
-- Do not show `Ready to Pack` until every required item is complete and no blocking flag remains.
-- Do not show `Shipped` or `Picked Up` before packing verification.
-- Do not expose internal enum values to users.
+- Labels match the actual lifecycle.
+- Ready to Pack requires every active required quantity complete.
+- Complete means the final internal production action succeeded and the tray was released.
+- Complete does not independently mean shipped or picked up.
+- Do not expose internal enum values such as `tray_assigned`.
 
----
-
-# 22. Open Flags and Waiting States
-
-Forge must make unresolved work visible without turning every exception into a complex workflow.
+# 24. Open Flags and Waiting States
 
 Examples:
 
@@ -556,22 +505,22 @@ Examples:
 - Custom Artwork Required
 - Missing Information
 - Waiting on Material
-- Sync Failed
+- Waiting to Retry
+- Saved on This iPad
+- Needs Staff Attention
 
 Rules:
 
-- Display a readable flag label and short explanation.
-- Distinguish blocking flags from informational notes.
-- Blocking flags must prevent automatic Ready-to-Pack status.
+- Show plain explanation.
+- Distinguish blocking from informational.
+- Blocking production issues prevent Ready to Pack.
+- Waiting to Retry is not labeled Syncing when no request is active.
 - Do not rely on color alone.
-- Do not show technical errors or stack traces.
-- Staff should be able to understand why an order is waiting without relying on memory.
+- Do not show raw technical details.
 
----
+# 25. Ready-to-Pack Queue
 
-# 23. Ready-to-Pack Queue
-
-The Ready-to-Pack screen shows only orders that are eligible for packing.
+Show only orders eligible for final completion.
 
 Each card should display:
 
@@ -584,16 +533,14 @@ Each card should display:
 
 Rules:
 
-- Do not mix incomplete orders into the Ready-to-Pack queue.
-- Keep packed orders out of the active Ready-to-Pack queue.
-- Open blocking flags must prevent an order from appearing as ready.
-- Selecting an order opens the packing-verification screen.
+- Do not mix incomplete orders into the queue.
+- Keep completed and cancelled orders out.
+- Blocking conditions prevent readiness.
+- Selecting an order opens the completion confirmation.
 
----
+# 26. Completion Confirmation
 
-# 24. Packing Checklist
-
-Packing verification confirms that the physical contents of the tray match the submitted order.
+The current completion view confirms that the physical order is complete or packed and that the tray can be released.
 
 Display:
 
@@ -601,287 +548,239 @@ Display:
 - Order number
 - Customer name
 - Every expected item
-- Required quantity
-- Key personalization details
+- Required and completed quantities
+- Key personalization
 - Fulfillment method
-- Shipping or pickup information as needed
+- Shipping or pickup details when useful
+
+Primary action:
+
+**Complete & Release Tray**
 
 Requirements:
 
-- Every expected item must be verified before `Pack Order` becomes available.
-- Use a clear checklist or quantity-verification control.
-- Keep one primary action: `Pack Order`.
-- Clearly explain that packing releases the tray for reuse.
-- Show a confirmation before finalizing packing if the release cannot be easily undone.
-- After success, display that the order is packed and the tray is available.
-- Preserve the historical tray number in the completed order detail.
+- Action is unavailable until the order is Ready to Pack.
+- Explain that the tray will become available.
+- Require confirmation because tray release changes physical state.
+- After success, show the order as Complete and the tray as available.
+- Preserve historical tray number in order detail.
+- Do not claim the order shipped or was picked up.
 
-Do not present packing as shipment completion. Shipping and pickup are later fulfillment actions.
+The current interface does not require a separate checkbox for every item during completion because item quantities were already completed during production. A future durable packing checklist requires separate approval.
 
----
+# 27. Production Batch View
 
-# 25. Production Batch View
+Display:
 
-The production batch view groups similar items for efficient manufacturing while preserving each customer's tray destination.
-
-A batch group should display:
-
-- Grouped product description
+- Grouped production description
 - Total required quantity
 - Remaining quantity
-- Relevant production attributes
+- Relevant attributes
 - Individual order references
 - Customer names
 - Tray numbers
 - Item completion state
 
-Example:
-
-```text
-14 × Large Family Tree / Green / Red Bow
-```
-
 Rules:
 
-- Tray destination must remain visible for every individual item.
-- Staff must not need paper to remember where a completed item belongs.
-- Grouping must not merge or obscure different personalization.
-- Batch completion updates the corresponding order items, not a separate disconnected count.
+- Tray destination remains visible.
+- Grouping does not merge different personalization.
+- Batch actions update the actual order-item records.
+- Staff must not need paper to route completed items.
 
----
+# 28. Search and Filters
 
-# 26. Search and Filters
-
-Production filters should be compact, predictable, and based on structured attributes.
-
-Supported Version 1 filters include:
+Supported fields include:
 
 - Product
-- Ornament Type
+- Ornament type
 - Size
-- Tree Color
-- Bow Color
+- Tree color
+- Bow color
 - Year
-- Production Status
-- Shipping or Pickup
+- Production status
+- Shipping or pickup
 - Event
-- Open Flags
+- Open flags
+- Tray number
 
 Requirements:
 
-- Use readable labels rather than internal keys.
-- Show only meaningful available options.
-- Provide a clear-filters action.
-- Preserve filter controls when no results match.
-- Show a concise results summary.
-- One individual item must satisfy the complete active item-filter combination.
-- Text search may search broader order information.
+- Readable labels
+- Meaningful available options
+- Clear filters action
+- Results summary
+- One individual item must satisfy the complete item-filter combination
+- Text search may search broader order information
 
----
+# 29. Hilltop Design Catalog
 
-# 27. Motion
+The catalog is a protected staff-only workspace.
+
+Current sections:
+
+- Designs
+- Hats
+- Materials
+- Shortlist
+- Finished Hats
+
+Rules:
+
+- Reuse Forge staff layout and navigation.
+- Use large visual cards.
+- Keep search and filters compact.
+- Keep customer orders, trays, production, payment, and inventory isolated.
+- Do not surface internal costs to customers.
+- Catalog refinements must not redesign the customer order flow.
+
+# 30. Loading, Empty, and Error States
+
+## Loading
+
+- Use brief loading text or restrained progress.
+- Disable duplicate actions while saving.
+
+## Empty
+
+Examples:
+
+- No orders yet
+- No trays available
+- No orders ready to pack
+- No catalog items match these filters
+
+## Error
+
+- Use plain actionable language.
+- Preserve current data.
+- Do not claim success after a failed save.
+- Never show credentials, server paths, raw responses, or stack traces.
+
+# 31. Confirmation and Reversal
+
+Require explicit confirmation for:
+
+- Tray release
+- Complete Order
+- Cancellation
+- Reopening completed production
+- Permanent local-data deletion
+
+Preferred practical language:
+
+```text
+Complete this order and release Tray 12?
+```
+
+Routine reversible actions should not be slowed by unnecessary dialogs.
+
+# 32. Motion
 
 Allowed:
 
 - Fade
 - Slide
 - Auto-scroll
-- Small state transitions that confirm completion or assignment
+- Small state transitions
 
 Not allowed:
 
 - Flashing
-- Decorative transitions
-- Large animations
-- Celebration effects that delay production work
+- Decorative delays
+- Large celebration effects
+- Motion that hides operational state
 
-Motion should support usability and state recognition, never distract.
+# 33. Accessibility
 
----
+- Minimum touch target: 44px
+- Keyboard navigation
+- Visible focus
+- Accessible contrast
+- Text label for every status and icon
+- No drag-only required interaction
+- No color-only meaning
+- Proper form labels and announcements where practical
 
-# 28. Accessibility
-
-- Every icon includes a text label or accessible name.
-- Minimum touch target: 44px.
-- Support keyboard navigation.
-- Maintain accessible color contrast.
-- Use visible keyboard focus.
-- Do not rely on drag-only controls.
-- Do not rely on color alone for tray, status, completion, or error states.
-- Associate labels and instructions with their controls.
-- Announce important status changes when practical.
-
----
-
-# 29. Responsive Behavior
+# 34. Responsive Behavior
 
 ## Desktop
 
-- Multi-column layouts may be used.
-- Keep order details and production actions visible without excessive line length.
+Use multi-column layouts when they improve scanning.
 
 ## iPad Landscape
 
-- This is the primary staff and customer target.
-- Important production controls should fit without tiny text or dense desktop-only tables.
-- Tray assignment and item completion must remain comfortable for touch.
+Primary target for customer and staff use.
+
+Tray assignment, item completion, and final completion must remain comfortable for touch.
 
 ## Phone
 
-- Use a single-column layout.
-- Stack filters and metadata logically.
-- Keep tray number, customer, status, and primary action visible.
-- Do not remove required production information merely to make the screen smaller.
+Use one column. Keep tray, customer, status, and primary action visible without removing required production information.
 
----
+# 35. Physical and Digital Alignment
 
-# 30. Loading, Empty, and Error States
-
-## Loading
-
-- Use clear, brief loading text or a restrained progress indicator.
-- Do not allow duplicate actions while an assignment or status update is saving.
-
-## Empty States
-
-Examples:
-
-- No local orders yet
-- No trays available
-- No orders ready to pack
-- No production items match these filters
-
-Empty states should explain the condition and offer one relevant next action when available.
-
-## Errors
-
-- Use plain, actionable language.
-- Preserve the current order data when an action fails.
-- Never show API responses, database paths, credentials, or stack traces.
-- A failed save must not visually claim that the action succeeded.
-
----
-
-# 31. Confirmation and Reversal
-
-Require explicit confirmation for actions that:
-
-- Release a tray
-- Pack an order
-- Cancel an order
-- Remove completion from an already packed workflow
-- Permanently delete local data
-
-Routine reversible actions should not be slowed by unnecessary confirmation dialogs.
-
-Confirmation text should state the practical result, such as:
-
-```text
-Pack this order and release Tray 12?
-```
-
----
-
-# 32. Physical and Digital Workflow Alignment
-
-Forge must mirror the physical shop.
-
-Digital example:
+Digital:
 
 ```text
 Tray 12 — Hemenway — 2 of 3 Complete
 ```
 
-Physical example:
+Physical:
 
 ```text
-Permanent tray number: 12
-Dry-erase customer label: HEMENWAY
+Permanent number: 12
+Dry-erase label: HEMENWAY
 ```
 
-Rules:
+Use the word **tray** consistently. Do not switch between bin, tote, slot, or job box in the interface.
 
-- Use the same tray number terminology everywhere.
-- Do not introduce alternate names such as bin, tote, slot, job box, or container in the interface.
-- Staff should be able to move from Forge to the physical tray rack without translating labels.
-- Completed items must always retain a visible tray destination until packing.
-
----
-
-# 33. Two-Person Shop Scope
-
-Version 1 assumes Kyle and Meagan operate the production workflow.
+# 36. Two-Person Shop Scope
 
 Do not add:
 
-- Employee assignment controls
+- Employee assignment
 - Employee avatars
 - Time clocks
-- Productivity rankings
+- Productivity ranking
 - Completion-by-person fields
 - Shift controls
 - Workload balancing
 - Role-specific production dashboards
 
-A Staff PIN may protect staff screens, but the interface should not behave like an enterprise workforce platform. Customer-facing payment handoff must keep the Staff PIN contained to a simple online stateless verification step, must not open the full staff workspace during checkout, and must never leave Staff Tools unlocked as a side effect of payment confirmation.
+The Staff PIN protects staff tools but does not turn Forge into an enterprise workforce platform.
 
----
+# 37. Change Discipline
 
-# 34. UI Rules
+When changing Forge:
 
-## Always Use
-
-- Real product photos
-- Official logos
-- Image-based customer selection
-- Large touch targets
-- One obvious primary action per task
-- Plain production language
-- Visible tray destination
-- Explicit completion state
-- Existing components before inventing new patterns
-
-## Never Use
-
-- Long customer-facing radio-button lists
-- Hidden required fields
-- Multiple competing primary buttons
-- Decorative effects
-- Raw database values
-- Color-only statuses
-- Employee-management features in Version 1
-- A full-screen redesign when a small component extension will solve the need
-
----
-
-# 35. Change Discipline
-
-Completed screens must not be redesigned as part of unrelated feature work.
-
-When adding a production feature:
-
-1. Reuse the existing layout and components.
-2. Add only the information and controls required for the active milestone.
-3. Preserve customer ordering behavior.
+1. Reuse existing layout and components.
+2. Implement only the active milestone.
+3. Preserve completed customer behavior.
 4. Verify iPad landscape first.
-5. Confirm desktop and phone remain usable.
-6. Test existing orders and backward compatibility.
+5. Verify desktop and phone.
+6. Test old stored orders.
+7. Add recovery states before claiming reliability.
+8. Do not redesign unrelated screens.
 
-New components should extend the design system without invalidating previously approved screens.
+# 38. UX Philosophy
 
----
+- The customer should know what to do next.
+- Staff should know where every active order is.
+- Every screen should have one obvious primary action.
+- Product images should answer questions before long text.
+- Reduce typing.
+- Preserve customer spelling.
+- Production status must match physical reality.
+- Waiting and failure states must be honest.
+- Forge should eliminate paper and memory-based tracking rather than recreate them digitally.
 
-# 36. UX Philosophy
+# 39. Version History
 
-Forge should feel effortless and practical.
+## Version 2.2 — 2026-08-06
 
-Rules:
+Aligned the UI rules with build `20260731-49`: removed the customer payment-PIN pattern, documented the payment pilot and server-confirmed/local-saved states, replaced Pack Order with Complete & Release Tray, changed the active terminal status from Packed to Complete, and documented the current persistent name-entry pattern.
 
-- The customer should never wonder what to do next.
-- Staff should never wonder where an active order is located.
-- Every step should feel direct and intentional.
-- Product images should answer questions before text.
-- Reduce typing whenever possible.
-- Every screen should present one obvious primary action.
-- Production status must reflect physical reality.
-- Forge should eliminate paper and memory-based tracking rather than recreating them digitally.
+## Version 2.1 — 2026-07-16
+
+Defined the original customer and production UI system.

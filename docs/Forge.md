@@ -1,34 +1,58 @@
 # Forge
 
-**Version:** 2.2
+**Version:** 2.3
 **Status:** Approved
-**Last Updated:** 2026-07-31
+**Last Updated:** 2026-08-06
 
 ## Purpose
-Defines the official Forge product vision, architecture, customer experience, production workflow, and operating principles.
+
+Defines the current Forge product vision, operating model, customer experience, production workflow, architecture, and locked Version 1 decisions.
 
 ## Authority
-This document is the authoritative source for Forge functionality.
 
-## Dependencies
-None.
+This document is the authoritative source for Forge functionality. Implementation details are further defined by:
+
+- `UI_Guidelines.md`
+- `Database_Schema.md`
+- `Product_Definitions.yaml`
+- `Backlog.md`
+- `WooCommerce_Integration.md`
+
+When documents conflict, the most recently approved document controls. `Backlog.md` controls development priority and feature status.
 
 ---
 
 # 1. Vision
-Forge exists to replace paper order forms and paper production tracking with a fast, visual, and professional workflow built specifically for The Hilltop Shop.
 
-Forge Version 1 guides a custom order from customer submission through production, packing, and fulfillment.
+Forge replaces paper order forms and paper production tracking with a fast, visual workflow built specifically for The Hilltop Shop.
 
-Forge should always improve speed, accuracy, order location, and customer confidence while reducing staff workload and reliance on memory.
+Forge guides a custom order from customer entry through durable storage, production tray assignment, item completion, packing confirmation, and operational completion.
+
+Forge should improve:
+
+- Ordering speed
+- Order accuracy
+- Production visibility
+- Physical order location
+- Recovery from connectivity problems
+- Customer confidence
+
+Forge should reduce:
+
+- Paper
+- Duplicate entry
+- Reliance on memory
+- Lost or invisible orders
+- Production mistakes
 
 # 2. Mission
+
 **Capture custom orders better than paper and guide them safely through production.**
 
 # 3. Core Principles
+
 - Customer First
 - Visual First
-- Conversation Driven
 - Simplicity Wins
 - One Decision Per Step
 - Product Driven
@@ -37,10 +61,19 @@ Forge should always improve speed, accuracy, order location, and customer confid
 - Tablet First
 - Production Aware
 - Physical and Digital Workflows Must Match
+- Build for the Actual Two-Person Shop
 
-Forge must never trade order durability or recoverability for speed or feature growth. A customer must not be shown a successful submission unless the approved durable-save condition has been met. Failures must remain visible and recoverable rather than silently disappearing.
+Forge must never trade order durability or recoverability for speed or feature growth.
+
+A normal completed confirmation must not appear before Forge has either:
+
+1. Confirmed the order on the shared Forge server, or
+2. Clearly told the user that the order is saved only on the current tablet and is still waiting to upload.
+
+Failures must remain visible and recoverable rather than silently disappearing.
 
 # 4. The Forge Test
+
 Every proposed feature should satisfy at least one of the following:
 
 - Makes ordering faster
@@ -49,152 +82,295 @@ Every proposed feature should satisfy at least one of the following:
 - Makes orders easier to locate
 - Eliminates paper
 - Prevents relying on memory
+- Improves order recovery or data safety
 
-If a feature does not satisfy at least one of these tests, it should normally wait for Version 2.
+Features that do not pass this test should normally wait.
 
-# 5. Version 1 Scope
+# 5. Current Implementation Checkpoint
 
-## Current Implementation Checkpoint — 2026-07-31
-
-Current confirmed repository checkpoint:
+Confirmed checkpoint as of 2026-08-06:
 
 ```text
+Repository: khemenway08/forge
 Branch: develop
-Commit: ac3a02f66a7768236d93617a8b4223a477d2b37d
-Message: Enable keyboard capitalization for entry names
-Current live public build: 20260730-48
-Current live service-worker cache: forge-starter-v48
+Commit: 48b48e84bece23bf6378d78ab9001f27b382b9fc
+Commit message: Prepare build 20260731-49
+Live public build: 20260731-49
+Service-worker cache: forge-starter-v49
+Automated Node tests: 390 passed
 ```
 
-## Included
-- Custom Ornaments
-- Customer Information
-- Shipping and Pickup
-- Order Review
-- Durable Local Order Storage
-- Staff Dashboard
-- Orders Queue
-- Production Tray Assignment
-- Item-Level Production Completion
-- Production Batch View and Filtering
-- Ready-to-Pack Queue
-- Packing Verification
-- Tray Release and Reuse
-- Hilltop Design Catalog
-- WooCommerce Integration
+Confirmed manual reliability test:
 
-## Not Included
-- Customer-facing Signs flow
-- Customer-facing Kitchen flow
-- General Custom Request flow
-- Separate shipped and picked-up fulfillment actions in the active production workflow
-- Retail Inventory
-- Point of Sale
-- Payment Processing
-- Marketing Automation
-- AI Assistant
-- Advanced Analytics
-- Employee Assignments
-- Time Tracking
-- Productivity Metrics
-- Shift Scheduling
-- Workload Balancing
-- Employee Permissions Beyond a Staff PIN
+- An order was submitted while offline on an iPad.
+- Forge displayed the local saved recovery state.
+- Refresh restored the same pending order.
+- Reconnecting uploaded the order.
+- The order appeared once in Staff Orders.
 
-Forge Version 1 assumes production is performed by Kyle and Meagan or another two-person-equivalent workflow. It is not intended to operate as enterprise manufacturing software.
+# 6. Version 1 Scope
 
-# 6. Customer Experience
+## Included and Implemented
 
-Welcome → Choose Product → Choose Ornament → Customize Product → Add Another Item → Customer Information → Review → Review & Pay → Staff Payment Confirmation → Thank You
+### Customer ordering
 
-Customer information is collected once after all products have been added. Shipping is the default fulfillment method.
+- The Hilltop Shop customer branding
+- Welcome and product-category flow
+- Ornament ordering flows
+- Multi-item orders
+- Customer information
+- Shipping and pickup selection
+- Final review
+- External payment-method recording
+- Durable local order save
+- Shared Forge server order storage
+- Automatic upload retry
+- Recovery after refresh or temporary closure
+- Thank-you and local-pending states
+- Event-gated public ordering
+- Test Sessions
 
-Forge does not process payments in Version 1. Payments continue through external methods such as Square, cash, or Venmo. The order remains an unsaved Forge draft until a staff member confirms payment with a one-time stateless Staff PIN verification. That verification requires an internet connection, does not open or preserve a Staff Tools session, and only then allows Forge to save and submit the order.
+### Staff and production
 
-# 7. Staff Experience
-The staff experience is protected by a Staff PIN.
+- Forge staff branding
+- Staff PIN protection for staff tools
+- Staff dashboard
+- Staff Orders queue and order detail
+- Sequential human-readable Forge order numbers
+- Production tray assignment
+- Tray conflict prevention
+- Item-level completed quantities
+- Production progress counts
+- Production filters and batch summaries
+- Ready-to-Pack queue
+- Completion confirmation and tray release
+- Order cancellation and tray release
+- Internal notes
+- Event management
+- Completed-order history and filters
 
-Modules:
+### Hilltop Design Catalog
+
+- Staff-only isolated module
+- Designs
+- Hats
+- Materials
+- Shortlist
+- Finished Hats
+- Search and filtering
+- Card ordering and sorting
+- Design, hat, and material linking
+- Finished-hat linking workspace
+
+The catalog remains isolated from customer ordering, payment, production trays, active order status, and inventory.
+
+## Included but Not Fully Proven
+
+- Multi-tablet simultaneous submission behavior
+- Multiple staff devices editing the same order
+- Full backup and restore recovery
+- Old cached-build compatibility
+- Originating tablet identification
+- Durable item-by-item packing-verification history
+- Show-day monitoring and recovery procedures
+
+## Deferred
+
+- WooCommerce synchronization
+- Separate Mark Shipped action
+- Separate Mark Picked Up action
+- Carrier tracking
+- Shipping-label purchasing
+- Retail inventory
+- Customer accounts
+- Marketing automation
+- Promotional SMS
+- AI assistant
+- Advanced analytics
+- Employee assignments
+- Time tracking
+- Productivity metrics
+- Shift scheduling
+- Broad employee-role permissions
+
+# 7. Customer Experience
+
+Current customer flow:
+
+```text
+Welcome
+→ Choose Product
+→ Choose Ornament
+→ Customize Product
+→ Add Another Item or Continue
+→ Customer Information
+→ Final Review
+→ Select Recorded Payment Method
+→ Payment Received — Submit Order
+→ Server-Confirmed Thank You or Local Saved Recovery State
+```
+
+Customer information is collected once after all products have been added. Shipping remains the default fulfillment method unless the customer selects pickup.
+
+Forge does not process payments. Payment continues through Square, cash, or Venmo.
+
+## Current Payment Handoff Pilot
+
+The current live application works as follows:
+
+1. The customer or staff selects Card/Square, Cash, or Venmo.
+2. Selecting a method enables **Payment Received — Submit Order**.
+3. Pressing the button records the selected method and the current confirmation timestamp.
+4. Forge saves and submits the order.
+5. The submitted order enters Staff Orders without a separate backend approval step.
+
+There is no payment PIN in the active customer submission path. The Staff PIN protects staff tools only.
+
+This workflow is being intentionally left unchanged for the first one or two real shows. After those shows, The Hilltop Shop will review whether it caused:
+
+- Unpaid orders
+- Accidental submissions
+- Abandoned orders in Staff Orders
+- Payment-count mismatches
+- Confusion about who should press the final button
+
+Do not add a PIN or backend approval queue without evidence that the pilot workflow needs a control.
+
+# 8. Staff Experience
+
+The staff area is protected by a Staff PIN.
+
+Current modules include:
+
 - Dashboard
 - Orders
-- Production
 - Ready to Pack
+- Events and administrative tools
 - Hilltop Design Catalog
-- Customers
-- Settings
 
 The staff interface should answer four practical questions:
 
 1. What needs to be made?
 2. Where is every active order?
-3. What is ready to pack?
-4. What is still waiting or blocked?
+3. What is ready for final confirmation?
+4. What is waiting, blocked, cancelled, or complete?
 
-# 8. Product System
-Products define their own fields, options, sizes, colors, rules, images, and pricing. Forge generates forms from the Product Catalog whenever possible.
+Forge is optimized for Kyle and Meagan. It must not behave like enterprise manufacturing or workforce software.
 
-Product definitions control customer customization and pricing. Production trays and production statuses belong to the order workflow rather than individual product definitions.
+# 9. Product System
 
-# 9. Order Lifecycle
+Products define their own:
 
-Customer Submission → Durable Local Save → WooCommerce Synchronization → Production Tray Assignment → Batch Production → Item Completion → Ready to Pack → Packing Verification → Packed → Shipped or Picked Up
+- Fields
+- Options
+- Sizes
+- Colors
+- Personalization rules
+- Images
+- Prices
+- Production attributes
 
-Important lifecycle rules:
+`Product_Definitions.yaml` is the product-definition source of truth.
 
-- A customer order is safely stored before synchronization is attempted.
-- WooCommerce remains the primary customer and order record after synchronization is available.
-- Forge remains the production workflow system.
-- Production completion does not automatically mean an order has been packed or fulfilled.
-- Packing verification must occur before shipment or pickup completion.
+Production trays, production status, completion quantities, and staff notes belong to the order workflow rather than product definitions.
 
-Current implemented core workflow:
+# 10. Current Order Lifecycle
 
-- Tray assignment
-- Item completion
-- Ready to Pack
-- Packing verification
-- Tray release
-- Production batching and filtering
+Current implemented lifecycle:
 
-# 10. Production Tray System
-Production Trays are a locked Version 1 workflow decision.
+```text
+Draft
+→ Local Save
+→ Initial Server Upload Attempt
+→ Submitted
+→ Tray Assigned
+→ In Production
+→ Ready to Pack
+→ Completed
+```
 
-## Purpose
-Each active customer order is assigned to one physical production tray. Every completed item for that order remains in the assigned tray until packing is verified.
+Alternative terminal state:
 
-The digital tray number in Forge must match the permanent number on the physical tray.
+```text
+Submitted / Tray Assigned / In Production / Ready to Pack
+→ Cancelled
+```
+
+## Lifecycle Meaning
+
+- **Draft:** Not yet submitted and not present in Staff Orders.
+- **Local Save:** Complete order record is stored on the current tablet.
+- **Submitted:** The shared Forge server has stored the order and no tray is assigned.
+- **Tray Assigned:** A physical production tray is assigned.
+- **In Production:** At least one physical item has production progress.
+- **Ready to Pack:** All required quantities are complete and no blocking condition prevents completion.
+- **Completed:** Staff confirmed the physical order is packed or otherwise operationally complete, and the tray was released.
+- **Cancelled:** The order is removed from active production and any tray is released.
+
+## Important Distinction
+
+In the current Version 1 implementation, **Completed** is Forge's final internal production state. It means the tray workflow is finished and the tray has been released.
+
+It does not independently prove that a shipping carrier received the package or that a pickup customer physically collected it. Separate shipped and picked-up actions remain deferred.
+
+# 11. Durable Submission and Recovery
+
+Forge uses a local-first, server-confirmed submission process:
+
+1. Generate or retain one immutable Forge order UUID.
+2. Save the complete order to IndexedDB on the current tablet.
+3. Attempt the initial server upload.
+4. Show the normal completed confirmation only after server acknowledgement.
+5. When upload cannot be confirmed, display **Order Saved on This iPad** or **Needs Staff Attention** instead of a false completed message.
+6. Preserve the same order UUID and payload through retries and refresh.
+7. Retry recoverable failures after approximately 15 seconds, 60 seconds, and then 5-minute intervals.
+8. Retry again on startup, reconnect, visibility change, scheduled retry, or manual retry.
+
+A local-only order is recoverable only from the tablet that stored it until the shared server confirms the upload.
+
+# 12. Production Tray System
+
+Production trays remain a locked Version 1 workflow decision.
+
+Each active production order may be assigned to one numbered physical tray. Every completed item for the order should remain in that tray until final confirmation.
+
+The digital tray number must match the permanent physical tray number.
 
 Example:
 
-- Order #1042
-- Customer: Hemenway
-- Tray 12
-- 2 of 3 Items Complete
+```text
+Order 1042
+Customer: Hemenway
+Tray 12
+2 of 3 Complete
+```
 
 ## Physical Direction
-The preferred physical tray is a shallow, durable, stackable industrial optical-laboratory or eyeglass job tray.
 
-Each physical tray should have:
+Preferred tray type:
 
-- A permanent tray number
-- A reusable dry-erase customer label
+- Shallow
+- Durable plastic
+- Stackable
+- Optical-laboratory or eyeglass job-tray style
 
-Example:
+Each tray should have:
 
-- Permanent label: `Tray 12`
-- Reusable customer label: `HEMENWAY`
+- Permanent tray number
+- Reusable dry-erase customer label
 
 ## Assignment Rules
+
 - One active order may have no more than one assigned tray.
 - One tray may be assigned to no more than one active order.
 - Tray assignment is a staff action.
-- An order remains associated with its tray through production and packing.
-- The tray is released only after packing verification is completed.
-- A released tray becomes available for another order.
-- Historical order records must preserve which tray was used even after the tray is released.
+- Assigned and out-of-service trays are not selectable as available.
+- Completion or cancellation releases the active tray.
+- Historical assignment records preserve which tray was used.
 
-# 11. Item-Level Production Completion
-Forge tracks production completion for each order item.
+# 13. Item-Level Production Completion
+
+Forge tracks completed quantity for each order line.
 
 Examples:
 
@@ -204,202 +380,262 @@ Examples:
 
 Rules:
 
-- Each item begins as not complete.
-- Staff marks an item complete after it has been produced and placed in the assigned tray.
-- Forge calculates order progress automatically from item completion states.
-- When all required items are complete, the order moves to Ready to Pack.
-- Open production flags or unresolved quote-required work may prevent an order from becoming Ready to Pack.
+- Each item begins pending.
+- Staff records physical completion after the finished piece is placed in the assigned tray.
+- Completed quantity cannot exceed required quantity.
+- Forge calculates order progress automatically.
+- When every required quantity is complete, the order becomes Ready to Pack.
+- Blocking conditions must prevent false readiness.
 
-# 12. Production Batch Workflow
-Items may be produced in batches across multiple customer orders.
+# 14. Production Batch Workflow
 
-Forge should group and filter structured item attributes such as:
+Items may be grouped across orders for efficient production.
+
+Useful grouping and filtering fields include:
 
 - Product
+- Ornament type
 - Size
-- Tree Color
-- Bow Color
+- Tree color
+- Bow color
 - Year
-- Production Status
-- Fulfillment Method
+- Production status
+- Fulfillment method
 - Event
-- Open Flags
+- Open flags
+- Tray number
 
-Example batch counts:
+Batch production never changes tray ownership. Each completed physical item returns to the tray assigned to its customer order.
 
-- 14 × Large Family Tree / Green / Red Bow
-- 8 × Present Stack / White Bow
-- 3 × Veteran Flag
-- 2 × Custom Icon Requests
+# 15. Ready-to-Pack and Completion Workflow
 
-Batch production never changes the rule that finished items are returned to the tray assigned to their customer order.
+Only orders with all required quantities complete should enter Ready to Pack.
 
-# 13. Ready-to-Pack and Packing Workflow
-Only orders with all required production items complete may appear in Ready to Pack.
-
-The packing screen should display:
+The completion view should show:
 
 - Order number
 - Customer name
 - Tray number
 - Fulfillment method
 - Every expected item
-- Completion confirmation for each item
-- Open flags or blocking notes
+- Required and completed quantities
+- Key personalization details
+- Blocking notes when applicable
 
-Staff verifies the physical tray contents against the packing checklist.
+Current primary action:
 
-When staff selects **Pack Order**:
+**Complete & Release Tray**
 
-- The order is marked packed.
-- The packed timestamp is recorded.
-- The tray is released immediately.
+When staff confirms completion:
+
+- The order becomes `completed`.
+- `completed_at` is recorded.
+- The active tray is released.
 - The tray becomes available for another order.
-- The historical tray assignment remains attached to the order record.
+- Historical tray assignment remains preserved.
 
-Packed does not necessarily mean shipped or picked up. Fulfillment is tracked separately.
+The current implementation does not create a separate durable item-by-item packing-verification record. Whether that record is worth adding should be decided after real show use, not assumed.
 
-Practical current rule:
+# 16. Physical Shop Alignment
 
-- **Pack Order** is the final required production action for the current two-person workflow.
-- Separate shipped and picked-up actions are deferred until they provide a real operational benefit or are required by WooCommerce synchronization.
-- The conceptual distinction between packed and fulfilled remains part of the long-term architecture.
+Forge should mirror the actual production path:
 
-# 14. Physical Shop Alignment
-Forge should mirror the real production path:
+```text
+Laser
+→ Assembly
+→ Production Tray Rack
+→ Packing Table
+→ Shipping or Pickup
+```
 
-Laser → Assembly → Production Tray Rack → Packing Table → Shipping or Pickup
+The software must not require a major shop redesign.
 
-Forge should not require a major shop redesign. Version 1 assumes one dedicated production-tray storage area.
-
-Initial physical planning target:
+Initial physical planning remains:
 
 - Approximately 24 trays
-- Expandable to approximately 36 trays
-- Simple shelving sized to the selected tray dimensions
+- Expandable later
+- Simple shelving sized to the selected trays
+- Permanent tray numbering
+- Reusable customer labels
 
-# 15. Data Philosophy
-WooCommerce is the primary customer and order system.
+The physical tray setup is not yet complete and remains an operational priority.
 
-Forge manages:
+# 17. Data Philosophy
 
-- Product definitions
-- Personalization
-- Durable local order capture
-- Production tray assignment
+## Current Source of Truth
+
+The current shared operational order record is the Forge server database.
+
+The current tablet-local record is a recovery layer and temporary source when the server cannot be reached.
+
+WooCommerce is not currently synchronized and is not the current source of truth for Forge orders.
+
+## Ownership
+
+Forge currently manages:
+
+- Complete submitted order snapshots
+- Customer and fulfillment information
+- Product and personalization snapshots
+- Payment-method metadata
+- Event association
+- Order number and UUID
+- Tray assignment
 - Item completion
-- Production batching
-- Internal notes and flags
-- Packing verification
-- Fulfillment workflow
+- Production status
+- Internal notes
+- Cancellation
+- Completion and tray release
+- Outbound confirmation-message records
+- Hilltop Design Catalog data
 
-The full historical order configuration must always be preserved. Structured attributes may also be stored for filtering, reporting, and batching.
+WooCommerce may later become a connected commercial record, but Forge must remain independently durable.
 
-Forge must never rely only on paper or staff memory to determine:
+# 18. System Architecture
 
-- Where an order is located
-- Which items are complete
-- Which orders are ready to pack
-- Which trays are available
+Current architecture:
 
-# 16. System Architecture
+```text
+Customer Tablet
+    ↓
+Forge Progressive Web App
+    ↓
+IndexedDB Local Order Record
+    ↓
+Forge Server API
+    ↓
+Forge Shared Database
+    ↓
+Staff Orders and Production Workflow
+```
 
-Customer iPad → Forge Progressive Web App → Durable Local Save → Forge Server Integration → WooCommerce → Production Dashboard → Production Trays → Packing → Shipping or Pickup
+Future optional extension:
 
-Forge should operate as a Progressive Web App and remain tolerant of temporary internet loss.
+```text
+Forge Shared Database
+    ↓
+Server-Side WooCommerce Integration
+    ↓
+WooCommerce Order Record
+```
 
-The browser-facing application must never contain WooCommerce secret credentials.
+The browser-facing application must never contain WooCommerce credentials or private server configuration.
 
-# 17. Design Philosophy
-Customer UI uses The Hilltop Shop branding.
+# 19. Design Philosophy
 
-Staff UI uses Forge branding.
+Customer screens use The Hilltop Shop branding and should remain:
 
-Customer screens should remain warm, calm, visual, and product-focused.
+- Warm
+- Calm
+- Visual
+- Product-focused
+- Easy for a first-time customer
 
-Staff production screens should remain industrial, fast, readable, and focused on the next physical action.
+Staff screens use Forge branding and should remain:
 
-The Hilltop Design Catalog is an existing staff-only isolated workspace for designs, hats, materials, shortlist curation, and finished-hat combinations. It must remain separate from customer ordering, payments, active order production workflow, and inventory assumptions.
+- Industrial
+- Fast
+- Readable
+- Touch-friendly
+- Focused on the next physical action
 
-# 18. Personalization Rules
+Completed screens should not be redesigned as part of unrelated work.
+
+# 20. Personalization Rules
+
+General order:
+
 1. Product
-2. Size
-3. Colors
-4. Family Name
-5. People
-6. Pets
+2. Size when applicable
+3. Colors when applicable
+4. Family or primary personalization
+5. People and pets when applicable
 
-Customers control engraving order. Forge preserves that order through production and WooCommerce synchronization.
+For the persistent people/pet entry pattern:
 
-# 19. Product Images
-Always use real product photography. Keep the product visible during customization whenever space allows.
+- Type a name.
+- Tap **Add**.
+- Type the next name.
+- Tap **Add**.
+- Repeat as needed.
 
-# 20. Locked Decisions
-- Shipping after products
-- Multi-item orders before customer information
-- WooCommerce is the primary customer and order record
-- Forge is the production workflow system
-- Forge does not process payments in Version 1
-- Customer controls personalization order
-- Tablet-first design
-- Hilltop branding for customers
-- Forge branding for staff
-- Hats excluded from Version 1
-- Product definitions drive forms
-- Production trays replace paper order packets during production
-- One active tray per order
-- Item-level production completion
-- Ready-to-Pack requires all required items complete
-- Packing verification releases the tray
-- Tray numbers are reusable but assignment history is permanent
-- Version 1 is optimized for a two-person shop
-- Enterprise workforce-management features are excluded
+There is no separate Save or Done Adding Names action.
 
-# 21. Future Vision
-Potential future features include:
+Forge preserves the customer-selected order through production and future synchronization.
 
-- Retail products
-- Inventory
-- AI assistant
-- Barcode workflows
-- Shipping-label purchasing and printing
-- Customer accounts
-- Expanded analytics
-- Additional employee roles and permissions
+# 21. Product Images
 
-Future features must not complicate the Version 1 workflow unless they pass the Forge Test.
+Always use real approved product photography for customer ordering.
 
-# 22. Near-Term Priorities
+Do not replace actual product designs with generated illustrations, clip art, or redesigned artwork.
 
-1. Order lifecycle and data-loss audit
-2. Backup and restore verification
-3. Submission and duplicate-prevention hardening
-4. Multi-iPad and interruption testing
-5. Focused deployment tooling
-6. Monitoring and show recovery procedures
-7. Review and payment simplification
-8. PWA and offline hardening
-9. WooCommerce synchronization after stability is proven
+Keep the product visible during customization whenever space allows.
 
-# 23. Success Criteria
+# 22. Locked Decisions
+
+- Multi-item orders are completed before customer information.
+- Shipping is the default fulfillment choice.
+- Forge does not process payments.
+- The current payment-method submission flow remains a pilot until real-show evidence supports a change.
+- Staff PIN protects staff tools, not the active customer submission button.
+- Forge server storage is the current shared source of truth.
+- WooCommerce integration is deferred.
+- Tablet-first design remains primary.
+- Hilltop branding is customer-facing.
+- Forge branding is staff-facing.
+- Product definitions drive customer forms.
+- Physical numbered trays replace paper production packets.
+- One active tray per order.
+- One active order per tray.
+- Item-level completed quantities determine production progress.
+- Ready to Pack requires all required quantities complete.
+- Complete & Release Tray is the current final internal production action.
+- Completion releases the tray and preserves assignment history.
+- Separate shipped and picked-up actions are deferred.
+- Version 1 is optimized for Kyle and Meagan.
+- Employee-management features are excluded.
+
+# 23. Near-Term Priorities
+
+1. Approve and save the reconciled source documents.
+2. Choose and secure the tablets used at shows.
+3. Complete the physical production-tray setup.
+4. Verify database backup and restore in a nonproduction environment.
+5. Run the full two-tablet and interruption test matrix.
+6. Create morning-of-show, during-show recovery, and end-of-show reconciliation checklists.
+7. Review the payment handoff after one or two real shows.
+8. Add device identification and improve visibility of tablet-local pending orders when justified.
+9. Decide whether durable item-by-item packing verification is necessary.
+10. Begin WooCommerce work only after stability and recovery are proven.
+
+# 24. Success Criteria
+
 - Faster than paper
-- Fewer ordering and production errors
-- Every active order is easy to locate
-- Item completion is visible without checking paper
+- Fewer ordering and production mistakes
+- Every shared order is visible to staff
+- A local-only order is clearly identified and recoverable
+- Every active order has a known physical location after tray assignment
+- Production progress is visible without checking paper
 - Ready-to-Pack orders are identified automatically
-- Packing is verified before fulfillment
-- Production trays are safely reused
-- WooCommerce receives complete orders
-- Multiple iPads are supported
+- Completion safely releases trays
+- Multiple tablets can submit without duplicate or conflicting orders
+- Backups can be restored successfully
 - Kyle or Meagan can operate the core workflow without special training
 
-# 24. Version History
+# 25. Version History
 
-## Version 2.2
-Added the current implementation checkpoint, recorded the implemented tray workflow and Hilltop Design Catalog module, clarified that Pack Order is the current final practical production action, and aligned the near-term priorities with the live roadmap.
+## Version 2.3 — 2026-08-06
+
+Reconciled the product definition with live build `20260731-49`. Removed the outdated customer payment-PIN workflow, documented the current payment pilot, changed the active terminal production state from Packed to Completed, documented local-first/server-confirmed submission recovery, made Forge server storage the current source of truth, and marked WooCommerce as deferred.
+
+## Version 2.2 — 2026-07-31
+
+Recorded the earlier implementation checkpoint, tray workflow, Hilltop Design Catalog, and stability priorities.
 
 ## Version 2.1
-Expanded Forge Version 1 from order capture into a complete small-shop workflow covering production trays, item completion, packing verification, tray reuse, and fulfillment. Added the Forge Test and explicitly excluded enterprise workforce-management features.
+
+Expanded Forge into the production-tray and item-completion workflow.
 
 ## Version 2.0
+
 Initial software specification.
