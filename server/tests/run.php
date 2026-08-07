@@ -3802,7 +3802,7 @@ $runner->run('catalog importer continues after a partial failure and reports the
     }
 });
 
-$runner->run('catalog thumbnail endpoint source enforces authenticated png jpeg webp uploads with a 5mb limit', static function (): void {
+$runner->run('catalog thumbnail endpoint safely skips first-thumbnail cleanup and preserves replacement and validation safeguards', static function (): void {
     $endpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/design-thumbnail.php');
 
     assertTrue(is_string($endpointSource));
@@ -3812,6 +3812,9 @@ $runner->run('catalog thumbnail endpoint source enforces authenticated png jpeg 
     assertTrue(strpos($endpointSource, "'image/jpeg'") !== false);
     assertTrue(strpos($endpointSource, "'image/webp'") !== false);
     assertTrue(strpos($endpointSource, 'FORGE_DESIGN_CATALOG_MAX_UPLOAD_BYTES = 5242880') !== false);
+    assertTrue(strpos($endpointSource, "is_string(\$previousThumbnailPath)\n        ? forge_design_catalog_resolve_absolute_thumbnail_path(\$previousThumbnailPath)\n        : null") !== false);
+    assertTrue(strpos($endpointSource, 'if ($previousAbsolutePath !== null && $previousAbsolutePath !== $absolutePath && is_file($previousAbsolutePath))') !== false);
+    assertTrue(strpos($endpointSource, '@unlink($previousAbsolutePath)') !== false);
 });
 
 $runner->run('catalog list endpoint no longer seeds localhost development fixtures', static function (): void {

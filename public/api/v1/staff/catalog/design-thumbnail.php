@@ -105,7 +105,9 @@ try {
     }
 
     $previousThumbnailPath = is_array($result) ? ($result['previous_thumbnail_path'] ?? null) : null;
-    $previousAbsolutePath = forge_design_catalog_resolve_absolute_thumbnail_path(is_string($previousThumbnailPath) ? $previousThumbnailPath : null);
+    $previousAbsolutePath = is_string($previousThumbnailPath)
+        ? forge_design_catalog_resolve_absolute_thumbnail_path($previousThumbnailPath)
+        : null;
     if ($previousAbsolutePath !== null && $previousAbsolutePath !== $absolutePath && is_file($previousAbsolutePath)) {
         @unlink($previousAbsolutePath);
     }
