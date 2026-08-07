@@ -19,6 +19,7 @@
     design_not_found: 'That design could not be found.',
     design_delete_blocked: 'Clear Finished Hat links before deleting this Design.',
     catalog_order_conflict: 'The design order changed elsewhere. Reload and try again.',
+    idempotency_conflict: 'This Create Design request conflicts with an existing Design. Close the dialog and try again.',
     storage_unavailable: 'Design catalog storage is currently unavailable.',
     server_error: 'Design catalog is currently unavailable.',
     unavailable: 'Design catalog is currently unavailable.',
@@ -114,12 +115,16 @@
       }
     }
 
-    async function createDesign(input) {
-      return saveDesign('create', null, input);
+    async function createDesign(input, idempotencyKey) {
+      const normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
+      if (!normalizedIdempotencyKey) {
+        throw new ForgeStaffDesignCatalogApiError('invalid_request', 'A valid Create Design request key is required.');
+      }
+      return saveDesign('create', null, input, normalizedIdempotencyKey);
     }
 
     async function updateDesign(designId, input) {
-      return saveDesign('update', designId, input);
+      return saveDesign('update', designId, input, null);
     }
 
     async function deleteDesign(designId) {
@@ -164,7 +169,7 @@
       return reorderCatalogRecords('designs', orderedIds);
     }
 
-    async function saveDesign(mode, designId, input) {
+    async function saveDesign(mode, designId, input, idempotencyKey) {
       const payload = normalizeDesignInputPayload(input);
       const requestBody = JSON.stringify(payload);
       const url = mode === 'update'
@@ -176,7 +181,8 @@
           method: 'POST',
           headers: {
             Accept: 'application/json',
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            ...(mode === 'create' ? { 'Idempotency-Key': idempotencyKey } : {})
           },
           credentials: 'same-origin',
           cache: 'no-store',
@@ -439,6 +445,13 @@
 
   function asTrimmedString(value) {
     return typeof value === 'string' ? value.trim() : '';
+  }
+
+  function normalizeIdempotencyKey(value) {
+    const normalized = asTrimmedString(value).toLowerCase();
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(normalized)
+      ? normalized
+      : '';
   }
 
   function asNullableTrimmedString(value) {

@@ -10,7 +10,7 @@ const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'
 const catalogApiSource = fs.readFileSync(path.join(process.cwd(), 'public/js/forge-staff-design-catalog-api.js'), 'utf8');
 const catalogModuleSource = fs.readFileSync(path.join(process.cwd(), 'public/js/forge-staff-design-catalog.js'), 'utf8');
 const catalogCssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
-const BUILD_VERSION = '20260731-49';
+const BUILD_VERSION = '20260807-50';
 
 test('catalog scripts load before app.js and only in the protected staff shell', () => {
   assert.match(
@@ -147,9 +147,97 @@ test('design create dialog prevents duplicate saves and gives clear success feed
   assert.match(catalogModuleSource, /const wasCreate = state\.dialogMode === 'create';/);
   assert.match(catalogModuleSource, /state\.notice = 'Design added successfully\.';/);
   assert.match(catalogModuleSource, /state\.pendingFocusDesignId = design\.id;/);
+  assert.match(catalogModuleSource, /state\.dialogCreateIdempotencyKey = mode === 'create' \? createIdempotencyKey\(\) : '';/);
+  assert.match(catalogModuleSource, /apiClient\.createDesign\(payload, state\.dialogCreateIdempotencyKey\)/);
+  assert.match(catalogModuleSource, /state\.dialogCreateIdempotencyKey = '';/);
   assert.match(catalogModuleSource, /focusPendingDesignCard\(\);/);
   assert.match(catalogModuleSource, /card\.scrollIntoView\(\{ block: 'nearest', inline: 'nearest' \}\);/);
   assert.match(catalogModuleSource, /card\.focus\(\{ preventScroll: true \}\);/);
+});
+
+test('design create request keys use secure UUID generation without changing names or payloads', () => {
+  const requestKey = catalogModule.createDesignCreateIdempotencyKey({
+    crypto: {
+      randomUUID() {
+        return '123e4567-e89b-42d3-a456-426614174121';
+      }
+    }
+  });
+
+  assert.equal(requestKey, '123e4567-e89b-42d3-a456-426614174121');
+  assert.match(catalogModuleSource, /function createDesignCreateIdempotencyKey\(windowLike\)/);
+  assert.match(catalogModuleSource, /cryptoLike\.randomUUID/);
+  assert.match(catalogModuleSource, /cryptoLike\.getRandomValues/);
+  assert.doesNotMatch(catalogModuleSource, /Math\.random/);
+});
+
+test('design API client sends one idempotency key for create retries and keeps updates unchanged', async () => {
+  const calls = [];
+  const client = catalogApi.createForgeStaffDesignCatalogApiClient({
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return new Response(JSON.stringify({
+        application: 'Forge',
+        api_version: '1',
+        status: 'ok',
+        data: {
+          design: {
+            id: '123e4567-e89b-42d3-a456-426614174131',
+            design_name: 'Retry Safe Ranch Badge'
+          }
+        }
+      }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const input = {
+    design_name: 'Retry Safe Ranch Badge',
+    category: 'other',
+    store_fit: 'undecided',
+    status: 'review',
+    production_method: 'tbd',
+    production_file_location: '',
+    made_on_hat: 'unknown',
+    notes: ''
+  };
+  const requestKey = '123e4567-e89b-42d3-a456-426614174132';
+
+  const first = await client.createDesign(input, requestKey);
+  const retry = await client.createDesign(input, requestKey);
+  await client.updateDesign('123e4567-e89b-42d3-a456-426614174131', input);
+
+  assert.equal(first.design.id, retry.design.id);
+  assert.equal(calls[0].url, '/api/v1/staff/catalog/designs.php');
+  assert.equal(calls[0].options.headers['Idempotency-Key'], requestKey);
+  assert.equal(calls[1].options.headers['Idempotency-Key'], requestKey);
+  assert.equal(calls[2].options.headers['Idempotency-Key'], undefined);
+  assert.equal(calls[0].options.credentials, 'same-origin');
+  assert.equal(calls[0].options.cache, 'no-store');
+  assert.deepEqual(JSON.parse(calls[0].options.body), input);
+
+  const conflictClient = catalogApi.createForgeStaffDesignCatalogApiClient({
+    fetchImpl: async () => new Response(JSON.stringify({
+      application: 'Forge',
+      api_version: '1',
+      status: 'error',
+      error: { code: 'idempotency_conflict' }
+    }), {
+      status: 409,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  });
+
+  await assert.rejects(
+    conflictClient.createDesign(input, requestKey),
+    (error) => {
+      assert.equal(error.code, 'idempotency_conflict');
+      assert.equal(error.message, 'This Create Design request conflicts with an existing Design. Close the dialog and try again.');
+      assert.equal(error.status, 409);
+      return true;
+    }
+  );
 });
 
 test('design delete action is edit-only names the design and protects linked records in the UI', () => {

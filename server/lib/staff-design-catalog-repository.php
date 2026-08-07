@@ -49,6 +49,10 @@ final class StaffDesignCatalogDeleteConflictException extends \RuntimeException
     }
 }
 
+final class StaffDesignCatalogIdempotencyConflictException extends \RuntimeException
+{
+}
+
 final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportRepositoryInterface
 {
     public const CATEGORY_OPTIONS = [
@@ -200,19 +204,36 @@ final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportR
 
     /**
      * @param array<string, mixed> $input
-     * @return array<string, mixed>
+     * @return array{design: array<string, mixed>, created: bool}
      */
-    public function createDesign(array $input): array
+    public function createDesign(array $input, ?string $idempotencyKey = null): array
     {
         $normalized = validateAndNormalizeStaffCatalogDesignInput($input);
+        $normalizedIdempotencyKey = normalizeStaffCatalogCreateIdempotencyKey($idempotencyKey);
+        if ($normalizedIdempotencyKey === null) {
+            throw new StaffDesignCatalogValidationException([
+                'idempotency_key' => 'A valid Create Design request key is required.',
+            ]);
+        }
+
+        $payloadHash = OrderPayload::hashCanonicalPayload($normalized);
         $id = createStaffCatalogDesignUuid();
         $timestamp = gmdate('Y-m-d H:i:s.u');
-        $sortOrder = getNextStaffCatalogSortOrder($this->pdo, 'forge_catalog_designs');
 
         try {
+            $this->pdo->beginTransaction();
+            $existing = $this->findDesignCreateByIdempotencyKey($normalizedIdempotencyKey);
+            if ($existing !== null) {
+                $this->pdo->commit();
+                return $this->resolveExistingDesignCreate($existing, $payloadHash);
+            }
+
+            $sortOrder = getNextStaffCatalogSortOrder($this->pdo, 'forge_catalog_designs');
             $statement = $this->pdo->prepare(
                 'INSERT INTO forge_catalog_designs (
                     id,
+                    create_idempotency_key,
+                    create_payload_sha256,
                     design_name,
                     thumbnail_path,
                     category,
@@ -227,6 +248,8 @@ final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportR
                     updated_at
                  ) VALUES (
                     :id,
+                    :create_idempotency_key,
+                    :create_payload_sha256,
                     :design_name,
                     :thumbnail_path,
                     :category,
@@ -243,6 +266,8 @@ final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportR
             );
             $statement->execute([
                 ':id' => $id,
+                ':create_idempotency_key' => $normalizedIdempotencyKey,
+                ':create_payload_sha256' => $payloadHash,
                 ':design_name' => $normalized['design_name'],
                 ':thumbnail_path' => $normalized['thumbnail_path'],
                 ':category' => $normalized['category'],
@@ -256,8 +281,23 @@ final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportR
                 ':created_at' => $timestamp,
                 ':updated_at' => $timestamp,
             ]);
+            $this->pdo->commit();
         } catch (PDOException $exception) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+
+            $existing = $this->findDesignCreateByIdempotencyKey($normalizedIdempotencyKey);
+            if ($existing !== null) {
+                return $this->resolveExistingDesignCreate($existing, $payloadHash);
+            }
+
             throw new StorageUnavailableException('Design catalog storage is currently unavailable.', 0, $exception);
+        } catch (\Throwable $exception) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $exception;
         }
 
         $created = $this->getDesign($id);
@@ -265,7 +305,63 @@ final class PdoStaffDesignCatalogRepository implements StaffDesignCatalogImportR
             throw new StorageUnavailableException('Design catalog storage is currently unavailable.');
         }
 
-        return $created;
+        return [
+            'design' => $created,
+            'created' => true,
+        ];
+    }
+
+    /**
+     * @return array{id: string, create_payload_sha256: string}|null
+     */
+    private function findDesignCreateByIdempotencyKey(string $idempotencyKey): ?array
+    {
+        try {
+            $statement = $this->pdo->prepare(
+                'SELECT id, create_payload_sha256
+                 FROM forge_catalog_designs
+                 WHERE create_idempotency_key = :create_idempotency_key
+                 LIMIT 1'
+            );
+            $statement->execute([
+                ':create_idempotency_key' => $idempotencyKey,
+            ]);
+            $record = $statement->fetch();
+        } catch (PDOException $exception) {
+            throw new StorageUnavailableException('Design catalog storage is currently unavailable.', 0, $exception);
+        }
+
+        if (!is_array($record) || !is_string($record['id'] ?? null) || !is_string($record['create_payload_sha256'] ?? null)) {
+            return null;
+        }
+
+        return [
+            'id' => $record['id'],
+            'create_payload_sha256' => $record['create_payload_sha256'],
+        ];
+    }
+
+    /**
+     * @param array{id: string, create_payload_sha256: string} $existing
+     * @return array{design: array<string, mixed>, created: false}
+     */
+    private function resolveExistingDesignCreate(array $existing, string $payloadHash): array
+    {
+        if (!hash_equals($existing['create_payload_sha256'], $payloadHash)) {
+            throw new StaffDesignCatalogIdempotencyConflictException(
+                'This Create Design request conflicts with an existing Design.'
+            );
+        }
+
+        $design = $this->getDesign($existing['id']);
+        if ($design === null) {
+            throw new StorageUnavailableException('Design catalog storage is currently unavailable.');
+        }
+
+        return [
+            'design' => $design,
+            'created' => false,
+        ];
     }
 
     /**
@@ -592,6 +688,14 @@ function normalizeStaffCatalogDesignId($id): ?string
     }
 
     return $normalized;
+}
+
+/**
+ * @param mixed $idempotencyKey
+ */
+function normalizeStaffCatalogCreateIdempotencyKey($idempotencyKey): ?string
+{
+    return normalizeStaffCatalogDesignId($idempotencyKey);
 }
 
 /**

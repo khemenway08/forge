@@ -3571,6 +3571,17 @@ $runner->run('catalog migration creates the isolated forge_catalog_designs table
     assertTrue(strpos($migrationSource, 'forge_production_trays') === false);
 });
 
+$runner->run('design create idempotency migration adds only nullable request metadata and a unique key', static function (): void {
+    $migrationSource = file_get_contents(dirname(__DIR__) . '/migrations/016_add_design_create_idempotency.sql');
+
+    assertTrue(is_string($migrationSource));
+    assertTrue(strpos($migrationSource, 'ALTER TABLE forge_catalog_designs') !== false);
+    assertTrue(strpos($migrationSource, 'create_idempotency_key CHAR(36) NULL') !== false);
+    assertTrue(strpos($migrationSource, 'create_payload_sha256 CHAR(64) NULL') !== false);
+    assertTrue(strpos($migrationSource, 'UNIQUE KEY ux_forge_catalog_designs_create_idempotency_key') !== false);
+    assertTrue(strpos($migrationSource, 'forge_orders') === false);
+});
+
 $runner->run('catalog design validation accepts approved enum values', static function (): void {
     $normalized = \Forge\Server\validateAndNormalizeStaffCatalogDesignInput([
         'design_name' => '  Lone Star Ranch Stamp  ',
@@ -3611,6 +3622,46 @@ $runner->run('catalog design validation rejects invalid enum values safely', sta
             assertSame('Select a valid category.', $exception->getFieldErrors()['category']);
         }
     );
+});
+
+$runner->run('design create idempotency returns one stored design for retries and rejects conflicting payloads', static function (): void {
+    $pdo = createDesignCatalogTestPdo();
+    $repository = new \Forge\Server\PdoStaffDesignCatalogRepository($pdo);
+    $idempotencyKey = '123e4567-e89b-42d3-a456-426614174111';
+    $input = [
+        'design_name' => 'Retry Safe Ranch Badge',
+        'category' => 'other',
+        'store_fit' => 'undecided',
+        'status' => 'review',
+        'production_method' => 'tbd',
+        'production_file_location' => '',
+        'made_on_hat' => 'unknown',
+        'notes' => '',
+    ];
+
+    $first = $repository->createDesign($input, $idempotencyKey);
+    $retry = (new \Forge\Server\PdoStaffDesignCatalogRepository($pdo))->createDesign($input, $idempotencyKey);
+
+    assertSame(true, $first['created']);
+    assertSame(false, $retry['created']);
+    assertSame($first['design']['id'], $retry['design']['id']);
+    assertSame(1, (int) $pdo->query('SELECT COUNT(*) FROM forge_catalog_designs')->fetchColumn());
+
+    $conflictingInput = $input;
+    $conflictingInput['notes'] = 'Different retry payload';
+    assertThrows(
+        static function () use ($repository, $conflictingInput, $idempotencyKey): void {
+            $repository->createDesign($conflictingInput, $idempotencyKey);
+        },
+        static function (\Throwable $exception): void {
+            assertTrue($exception instanceof \Forge\Server\StaffDesignCatalogIdempotencyConflictException);
+            assertSame('This Create Design request conflicts with an existing Design.', $exception->getMessage());
+        }
+    );
+
+    $second = $repository->createDesign($input, '123e4567-e89b-42d3-a456-426614174112');
+    assertSame(true, $second['created']);
+    assertSame(2, (int) $pdo->query('SELECT COUNT(*) FROM forge_catalog_designs')->fetchColumn());
 });
 
 $runner->run('catalog importer derives readable design names from filenames', static function (): void {
@@ -3837,6 +3888,17 @@ $runner->run('catalog list endpoint source requires staff authentication and doe
     assertTrue(strpos($endpointSource, 'requireAuthenticatedStaffSession') !== false);
     assertTrue(strpos($repositorySource, 'forge_orders') === false);
     assertTrue(strpos($repositorySource, 'forge_tray_assignment_history') === false);
+});
+
+$runner->run('catalog create endpoint requires an idempotency key and returns safe conflicts', static function (): void {
+    $endpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/catalog/designs.php');
+
+    assertTrue(is_string($endpointSource));
+    assertTrue(strpos($endpointSource, "HTTP_IDEMPOTENCY_KEY") !== false);
+    assertTrue(strpos($endpointSource, 'A valid Idempotency-Key header is required.') !== false);
+    assertTrue(strpos($endpointSource, "'idempotency_conflict'") !== false);
+    assertTrue(strpos($endpointSource, 'StaffDesignCatalogIdempotencyConflictException') !== false);
+    assertTrue(strpos($endpointSource, "\$result['created'] ? 201 : 200") !== false);
 });
 
 $runner->run('hat catalog migration creates the isolated forge_catalog_hats table', static function (): void {
@@ -4504,7 +4566,7 @@ $runner->run('shared catalog sort-order helper rejects duplicate stale and incom
 
 $runner->run('design hat material and finished-hat repositories append sort order and persist saved custom ordering', static function (): void {
     $designRepository = new \Forge\Server\PdoStaffDesignCatalogRepository(createDesignCatalogTestPdo());
-    $firstDesign = $designRepository->createDesign([
+    $firstDesignResult = $designRepository->createDesign([
         'design_name' => 'Alpha Ranch',
         'category' => 'other',
         'store_fit' => 'undecided',
@@ -4513,8 +4575,9 @@ $runner->run('design hat material and finished-hat repositories append sort orde
         'production_file_location' => '',
         'made_on_hat' => 'unknown',
         'notes' => ''
-    ]);
-    $secondDesign = $designRepository->createDesign([
+    ], '123e4567-e89b-42d3-a456-426614174101');
+    $firstDesign = $firstDesignResult['design'];
+    $secondDesignResult = $designRepository->createDesign([
         'design_name' => 'Bravo Trail',
         'category' => 'other',
         'store_fit' => 'undecided',
@@ -4523,7 +4586,8 @@ $runner->run('design hat material and finished-hat repositories append sort orde
         'production_file_location' => '',
         'made_on_hat' => 'unknown',
         'notes' => ''
-    ]);
+    ], '123e4567-e89b-42d3-a456-426614174102');
+    $secondDesign = $secondDesignResult['design'];
     assertSame(1000, $firstDesign['sort_order']);
     assertSame(2000, $secondDesign['sort_order']);
     $designRepository->reorderDesigns([(string) $secondDesign['id'], (string) $firstDesign['id']]);
@@ -4618,7 +4682,7 @@ $runner->run('design repository blocks linked deletes and deletes unlinked desig
     $pdo = createDesignCatalogTestPdo();
     $repository = new \Forge\Server\PdoStaffDesignCatalogRepository($pdo);
 
-    $linkedDesign = $repository->createDesign([
+    $linkedDesignResult = $repository->createDesign([
         'design_name' => 'Linked Design',
         'category' => 'other',
         'store_fit' => 'undecided',
@@ -4627,8 +4691,9 @@ $runner->run('design repository blocks linked deletes and deletes unlinked desig
         'production_file_location' => '',
         'made_on_hat' => 'unknown',
         'notes' => ''
-    ]);
-    $unlinkedDesign = $repository->createDesign([
+    ], '123e4567-e89b-42d3-a456-426614174103');
+    $linkedDesign = $linkedDesignResult['design'];
+    $unlinkedDesignResult = $repository->createDesign([
         'design_name' => 'Unlinked Design',
         'category' => 'other',
         'store_fit' => 'undecided',
@@ -4637,7 +4702,8 @@ $runner->run('design repository blocks linked deletes and deletes unlinked desig
         'production_file_location' => '',
         'made_on_hat' => 'unknown',
         'notes' => ''
-    ]);
+    ], '123e4567-e89b-42d3-a456-426614174104');
+    $unlinkedDesign = $unlinkedDesignResult['design'];
 
     $pdo->prepare(
         'INSERT INTO forge_catalog_finished_hats (
@@ -5202,6 +5268,8 @@ function createDesignCatalogTestPdo(): PDO
     $pdo->exec(
         'CREATE TABLE forge_catalog_designs (
             id TEXT PRIMARY KEY,
+            create_idempotency_key TEXT DEFAULT NULL UNIQUE,
+            create_payload_sha256 TEXT DEFAULT NULL,
             design_name TEXT NOT NULL,
             thumbnail_path TEXT DEFAULT NULL,
             category TEXT NOT NULL,

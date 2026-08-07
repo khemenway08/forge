@@ -70,10 +70,30 @@
     { value: 'production_method', label: 'Production Method' }
   ];
 
+  function createDesignCreateIdempotencyKey(windowLike) {
+    const cryptoLike = windowLike?.crypto || (typeof globalThis !== 'undefined' ? globalThis.crypto : null);
+    if (cryptoLike && typeof cryptoLike.randomUUID === 'function') {
+      return cryptoLike.randomUUID();
+    }
+
+    if (cryptoLike && typeof cryptoLike.getRandomValues === 'function') {
+      const values = cryptoLike.getRandomValues(new Uint8Array(16));
+      values[6] = (values[6] & 0x0f) | 0x40;
+      values[8] = (values[8] & 0x3f) | 0x80;
+      const hex = Array.from(values, (value) => value.toString(16).padStart(2, '0')).join('');
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    }
+
+    throw new Error('Secure request identifiers are unavailable.');
+  }
+
   function createStaffDesignCatalogModule(options = {}) {
     const apiClient = options.apiClient || null;
     const documentRef = options.document || document;
     const windowLike = options.window || window;
+    const createIdempotencyKey = typeof options.createIdempotencyKey === 'function'
+      ? options.createIdempotencyKey
+      : () => createDesignCreateIdempotencyKey(windowLike);
     const orderingApi = resolveCatalogOrderingApi(options.orderingApi);
     const imageViewer = resolveCatalogImageViewer(options.imageViewer, documentRef, windowLike);
     const canLoadProtectedRecords = typeof options.canLoadProtectedRecords === 'function'
@@ -99,6 +119,7 @@
       dialogFieldErrors: {},
       dialogValues: { ...DEFAULT_FORM_VALUES },
       dialogDesignId: '',
+      dialogCreateIdempotencyKey: '',
       dialogThumbnailPath: '',
       dialogThumbnailFile: null,
       dialogThumbnailFileName: '',
@@ -655,6 +676,7 @@
       state.dialogError = '';
       state.dialogFieldErrors = {};
       state.dialogDesignId = record?.id || '';
+      state.dialogCreateIdempotencyKey = mode === 'create' ? createIdempotencyKey() : '';
       state.dialogValues = record ? {
         design_name: record.design_name || '',
         category: record.category || DEFAULT_FORM_VALUES.category,
@@ -688,6 +710,7 @@
       state.dialogSaving = false;
       state.dialogDeleting = false;
       state.dialogDeleteConfirmOpen = false;
+      state.dialogCreateIdempotencyKey = '';
       dialogBackdrop.hidden = true;
       if (lastFocusTarget instanceof HTMLElement) {
         lastFocusTarget.focus();
@@ -892,7 +915,7 @@
       try {
         const saveResult = state.dialogMode === 'edit'
           ? await apiClient.updateDesign(state.dialogDesignId, payload)
-          : await apiClient.createDesign(payload);
+          : await apiClient.createDesign(payload, state.dialogCreateIdempotencyKey);
         let design = normalizeDesignRecord(saveResult.design);
 
         if (state.dialogThumbnailFile) {
@@ -1348,6 +1371,7 @@
     DEFAULT_FORM_VALUES,
     MISSING_THUMBNAIL_COPY,
     SORT_OPTIONS,
+    createDesignCreateIdempotencyKey,
     createStaffDesignCatalogModule,
     filterDesignRecords,
     normalizeDesignRecord,

@@ -47,12 +47,21 @@ try {
 
     $rawBody = file_get_contents('php://input');
     $payload = \Forge\Server\OrderPayload::decodeJsonObject($rawBody === false ? '' : $rawBody);
-    $created = $repository->createDesign($payload);
+    $idempotencyKey = \Forge\Server\normalizeStaffCatalogCreateIdempotencyKey($_SERVER['HTTP_IDEMPOTENCY_KEY'] ?? null);
+    if ($idempotencyKey === null) {
+        \Forge\Server\ApiResponse::send(
+            422,
+            \Forge\Server\ApiResponse::error('invalid_request', 'A valid Idempotency-Key header is required.')
+        );
+        exit;
+    }
+
+    $result = $repository->createDesign($payload, $idempotencyKey);
 
     \Forge\Server\ApiResponse::send(
-        201,
+        $result['created'] ? 201 : 200,
         \Forge\Server\ApiResponse::success([
-            'design' => $created,
+            'design' => $result['design'],
         ])
     );
 } catch (\Forge\Server\ApiProblem $problem) {
@@ -63,6 +72,11 @@ try {
     );
 } catch (\Forge\Server\StaffDesignCatalogValidationException $exception) {
     forge_design_catalog_send_validation_error($exception->getFieldErrors(), $exception->getMessage());
+} catch (\Forge\Server\StaffDesignCatalogIdempotencyConflictException $exception) {
+    \Forge\Server\ApiResponse::send(
+        409,
+        \Forge\Server\ApiResponse::error('idempotency_conflict', 'This Create Design request conflicts with an existing Design.')
+    );
 } catch (\Forge\Server\StorageUnavailableException $exception) {
     forge_staff_send_fallback_response(
         503,
