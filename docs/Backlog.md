@@ -417,7 +417,7 @@ Potential later work:
 - More catalog fields
 - Bulk edits
 - Export and print tools
-- Finished Hat location inventory only after the Blank Hat inventory foundation is proven
+- Finished Hat location inventory is implemented as the next reusable inventory-domain milestone; future work remains Square/WooCommerce synchronization, automatic deductions, and reorder automation.
 
 ## Priority 13 — Additional Customer Product Categories
 

@@ -562,6 +562,45 @@ test('app integration activates finished hats through the protected catalog shel
   assert.match(appSource, /activeSection === 'finished-hats'/);
 });
 
+test('finished hats expose compact staff location management and exclude inactive locations from new assignments', () => {
+  assert.match(finishedHatSource, /catalog-manage-inventory-locations/);
+  assert.match(finishedHatSource, /renderInventoryLocationManager/);
+  assert.match(finishedHatSource, /catalog-save-inventory-location/);
+  assert.match(finishedHatSource, /catalog-edit-inventory-location/);
+  assert.match(finishedHatSource, /location\.status === 'active'/);
+  assert.match(finishedHatSource, /listLocations\?\.\(true\)/);
+  assert.match(finishedHatSource, /Legacy Placement Label/);
+});
+
+test('finished hat inventory uses the staff dark panel treatment and distinguishes legacy placement metadata', () => {
+  assert.match(finishedHatSource, /Placement: \$\{getPlacementStatusLabel/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-inventory-panel\s*\{[\s\S]*background:\s*rgba\(255,255,255,\.035\);[\s\S]*color:\s*var\(--staff-text\)/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-inventory-row input[\s\S]*background:\s*rgba\(10,13,16,\.78\)/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-inventory-panel button\s*\{[\s\S]*max-width:\s*100%/);
+});
+
+test('finished hat detail places compact inventory beside the photo with collapsed operational utilities', () => {
+  assert.match(finishedHatSource, /staff-finished-hat-detail-top/);
+  assert.match(finishedHatSource, /staff-finished-hat-top-inventory/);
+  assert.match(finishedHatSource, /Total On Hand/);
+  assert.match(finishedHatSource, /Transfer Stock/);
+  assert.match(finishedHatSource, /\+ Add Location/);
+  assert.match(finishedHatSource, /Inventory History ›/);
+  assert.doesNotMatch(finishedHatSource, /Operational inventory is separate from legacy placement metadata/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-detail-top\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, \.95fr\) minmax\(330px, 1\.05fr\)/);
+  assert.match(catalogCssSource, /@media \(max-width: 760px\) \{[\s\S]*\.staff-finished-hat-detail-top\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+});
+
+test('finished hat inventory keeps location assignment and management separate from More stock actions', () => {
+  assert.match(finishedHatSource, /\+ Add Location/);
+  assert.match(finishedHatSource, /catalog-finished-inventory-assign/);
+  assert.match(finishedHatSource, /catalog-manage-inventory-locations/);
+  assert.match(finishedHatSource, /Back to Finished Hat/);
+  assert.match(finishedHatSource, /location\.status === 'active'/);
+  assert.match(finishedHatSource, /data-reason="returned"[\s\S]*Verified qty[\s\S]*catalog-finished-inventory-correct/);
+  assert.doesNotMatch(finishedHatSource, /More<\/button>[\s\S]*catalog-manage-inventory-locations/);
+});
+
 function createCatalogTestContainer() {
   const listeners = new Map();
   return {

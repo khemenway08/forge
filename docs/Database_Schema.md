@@ -359,7 +359,18 @@ Blank Hat stock is stored in the reusable inventory domain, not as quantity colu
 - The first physical count uses `reason_code = initial_count`, `quantity_before = NULL`, `quantity_after = confirmed quantity`, and `quantity_delta = NULL`. It intentionally does not invent a numeric delta from an unknown quantity.
 - Later movements record their signed delta and use `received`, `used_removed`, or `correction` reasons.
 
-Blank Hats have one global on-hand quantity; no inventory location is exposed or stored for them. Finished Hat locations can later extend the same item and movement concepts without replacing this core model.
+Blank Hats have one global on-hand quantity; no inventory location is exposed or stored for them.
+
+## Finished Hat Location Inventory
+
+Finished Hats use the same inventory-item and immutable-movement concepts with `tracking_mode = by_location`.
+
+- `forge_inventory_locations` is the normalized, reusable location directory. It seeds Hilltop as an internal location and supports active/inactive boutique, consignment, and external locations.
+- `forge_inventory_location_balances` explicitly assigns a location to an inventory item. Unassigned locations are not applicable to that Finished Hat; an assigned balance with `NULL` quantity is **Not Counted**; `0` is confirmed zero.
+- A Finished Hat total is derived only from confirmed assigned balances. No assigned balances is Not Counted; any uncounted assigned balance makes the result partial; only fully counted assignments produce Total On Hand.
+- `forge_inventory_movements` optionally carries a location and transfer ID. Transfers write paired immutable Transfer Out and Transfer In movements in one transaction.
+
+Legacy Finished Hat `placement_status` and `location_label` remain catalog metadata only. They do not derive stock, locations, sold quantity, or inventory totals.
 
 Inventory is Hilltop-specific in this release. It contains no Square, WooCommerce, or provider identifiers; a future external mapping boundary can be added without coupling the core inventory records to Square.
 

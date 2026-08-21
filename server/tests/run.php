@@ -3931,6 +3931,18 @@ $runner->run('inventory migration and normalizers preserve Not Counted and initi
     assertSame(null, $movement['quantity_delta']);
 });
 
+$runner->run('finished hat location inventory migration is additive and preserves explicit assignment semantics', static function (): void {
+    $migrationSource = file_get_contents(dirname(__DIR__, 2) . '/server/migrations/018_create_forge_inventory_locations.sql');
+    assertTrue(is_string($migrationSource));
+    assertTrue(strpos($migrationSource, 'forge_inventory_locations') !== false);
+    assertTrue(strpos($migrationSource, 'forge_inventory_location_balances') !== false);
+    assertTrue(strpos($migrationSource, 'tracking_mode') !== false);
+    assertTrue(strpos($migrationSource, 'hilltop_internal') !== false);
+    $balance = \Forge\Server\normalizeInventoryLocationBalance(['inventory_location_id' => 'hilltop', 'on_hand_quantity' => null, 'version' => 0]);
+    assertSame(null, $balance['on_hand_quantity']);
+    assertSame(0, $balance['version']);
+});
+
 $runner->run('hat catalog validation accepts approved optional fields and blank base cost remains null', static function (): void {
     $normalized = \Forge\Server\validateAndNormalizeStaffCatalogHatInput([
         'hat_name' => '  Richardson 112 Navy White  ',
@@ -5855,5 +5867,20 @@ function seedOutboundMessage(PDO $pdo, array $options = []): void
         ':updated_at' => (string) ($options['updated_at'] ?? '2026-07-28 12:00:00.000000'),
     ]);
 }
+
+$runner->run('inventory location endpoints and repository support staff management without catalog placement coupling', static function (): void {
+    $repositorySource = file_get_contents(dirname(__DIR__) . '/lib/inventory-location-repository.php');
+    $locationsEndpoint = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/inventory/locations.php');
+    $locationEndpoint = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/inventory/location.php');
+    assertTrue(is_string($repositorySource));
+    assertTrue(is_string($locationsEndpoint));
+    assertTrue(is_string($locationEndpoint));
+    assertTrue(strpos($repositorySource, "['active','inactive']") !== false);
+    assertTrue(strpos($repositorySource, 'location_code') !== false);
+    assertTrue(strpos($repositorySource, 'forge_catalog_finished_hats') !== false);
+    assertTrue(strpos($repositorySource, 'placement_status') === false);
+    assertTrue(strpos($locationsEndpoint, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($locationEndpoint, 'requireAuthenticatedStaffSession') !== false);
+});
 
 $runner->finish();

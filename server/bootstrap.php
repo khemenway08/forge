@@ -26,6 +26,7 @@ require_once __DIR__ . '/lib/staff-design-catalog-repository.php';
 require_once __DIR__ . '/lib/staff-hat-catalog-importer.php';
 require_once __DIR__ . '/lib/staff-hat-catalog-repository.php';
 require_once __DIR__ . '/lib/inventory-repository.php';
+require_once __DIR__ . '/lib/inventory-location-repository.php';
 require_once __DIR__ . '/lib/staff-hat-catalog-metadata-backfill.php';
 require_once __DIR__ . '/lib/staff-finished-hat-catalog-importer.php';
 require_once __DIR__ . '/lib/staff-finished-hat-assisted-linker.php';
@@ -82,6 +83,12 @@ function buildInventoryRepositoryFromEnvironment(): PdoInventoryRepository
 {
     $pdo = DatabaseConnectionFactory::createFromEnvironment(loadPrivateDatabaseConfig());
     return new PdoInventoryRepository($pdo);
+}
+
+function buildInventoryLocationRepositoryFromEnvironment(): PdoInventoryLocationRepository
+{
+    $pdo = DatabaseConnectionFactory::createFromEnvironment(loadPrivateDatabaseConfig());
+    return new PdoInventoryLocationRepository($pdo);
 }
 
 function buildStaffFinishedHatCatalogRepositoryFromEnvironment(): PdoStaffFinishedHatCatalogRepository

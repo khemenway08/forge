@@ -1,0 +1,11 @@
+<?php
+declare(strict_types=1);
+require_once dirname(__DIR__) . '/_endpoint.php';
+$bootstrapPath = forge_staff_resolve_bootstrap_path();
+if ($bootstrapPath === null) { forge_staff_send_fallback_response(500, ['status'=>'error','error'=>['code'=>'server_error','message'=>'Inventory is currently unavailable.']]); exit; }
+try { require_once $bootstrapPath; $method=strtoupper((string)($_SERVER['REQUEST_METHOD']??'GET')); \Forge\Server\requireAuthenticatedStaffSession($_SERVER); $repository=\Forge\Server\buildInventoryLocationRepositoryFromEnvironment();
+    if($method==='GET'){\Forge\Server\ApiResponse::send(200,\Forge\Server\ApiResponse::success(['locations'=>$repository->listLocations(isset($_GET['include_inactive']))]));exit;}
+    if($method!=='POST'){\Forge\Server\ApiResponse::send(405,\Forge\Server\ApiResponse::error('method_not_allowed','This endpoint accepts GET and POST requests only.'),['Allow'=>'GET, POST']);exit;}
+    if(!\Forge\Server\OrderPayload::isJsonContentType($_SERVER['CONTENT_TYPE']??null)){\Forge\Server\ApiResponse::send(415,\Forge\Server\ApiResponse::error('unsupported_media_type','The request must use Content-Type: application/json.'));exit;}
+    $payload=\Forge\Server\OrderPayload::decodeJsonObject(file_get_contents('php://input')?:''); $location=$repository->saveLocation($payload); \Forge\Server\ApiResponse::send(201,\Forge\Server\ApiResponse::success(['location'=>$location]));
+} catch(\Forge\Server\ApiProblem $e){\Forge\Server\ApiResponse::send($e->getHttpStatus(),\Forge\Server\ApiResponse::error($e->getErrorCodeValue(),$e->getSafeMessage()),$e->getHeaders());}catch(\Forge\Server\InventoryValidationException $e){\Forge\Server\ApiResponse::send(422,\Forge\Server\ApiResponse::error('invalid_request',$e->getMessage()));}catch(\Forge\Server\StorageUnavailableException $e){forge_staff_send_fallback_response(503,['status'=>'error','error'=>['code'=>'storage_unavailable','message'=>'Inventory storage is currently unavailable.']]);}catch(\Throwable $e){forge_staff_log_unexpected_exception($e,$bootstrapPath,'inventory locations');forge_staff_send_fallback_response(500,['status'=>'error','error'=>['code'=>'server_error','message'=>'Inventory is currently unavailable.']]);}

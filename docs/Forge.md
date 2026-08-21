@@ -162,6 +162,7 @@ Confirmed manual reliability test:
 - Design, hat, and material linking
 - Finished-hat linking workspace
 - Blank Hat physical inventory with Not Counted, On Hand, adjustment controls, and movement history
+- Finished Hat location inventory with explicit assignment, physical counts, derived totals, and transfers
 
 The catalog and its inventory remain isolated from customer ordering, payment, production trays, and active order status.
 

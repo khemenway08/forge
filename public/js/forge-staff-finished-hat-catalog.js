@@ -53,6 +53,7 @@
     const designApiClient = options.designApiClient || null;
     const hatApiClient = options.hatApiClient || null;
     const materialApiClient = options.materialApiClient || null;
+    const inventoryApiClient = options.inventoryApiClient || null;
     const documentRef = options.document || document;
     const windowLike = options.window || window;
     const orderingApi = resolveCatalogOrderingApi(options.orderingApi);
@@ -68,6 +69,11 @@
       requiresAuthentication: false,
       dialogSaving: false,
       records: [],
+      inventories: {},
+      inventoryLocations: [],
+      locationEditingId: '',
+      locationValues: { location_name: '', location_type: 'boutique', status: 'active', notes: '' },
+      locationManagerReturnRecord: null,
       filters: {
         search: '',
         design_name: '',
@@ -185,6 +191,14 @@
         state.records = Array.isArray(result.finished_hats)
           ? sortRecordsForCustomOrder(result.finished_hats.map(normalizeFinishedHatRecord))
           : [];
+        if (inventoryApiClient?.getLocationInventory) {
+          const [locations, inventories] = await Promise.all([
+            inventoryApiClient.listLocations?.(true) || { locations: [] },
+            Promise.all(state.records.map(async (record) => [record.id, await inventoryApiClient.getLocationInventory('catalog_finished_hat', record.id)]))
+          ]);
+          state.inventoryLocations = Array.isArray(locations?.locations) ? locations.locations : [];
+          state.inventories = Object.fromEntries(inventories.map(([id, response]) => [id, response?.inventory || null]));
+        }
         reorderController?.sync(state.records.map((record) => record.id));
         state.loaded = true;
         state.loading = false;
@@ -276,6 +290,7 @@
             </div>
             <div class="staff-catalog-designs-actions">
               <p class="staff-catalog-designs-count" data-catalog-finished-hat-results-count>${filteredRecords.length} result${filteredRecords.length === 1 ? '' : 's'}</p>
+              <button class="secondary-button" type="button" data-action="catalog-manage-inventory-locations">Manage Locations</button>
               <button class="primary-button" type="button" data-action="catalog-add-finished-hat">Add Finished Hat</button>
             </div>
           </div>
@@ -420,6 +435,7 @@
       const compactSummary = getFinishedHatCompactSummary(record);
       const missingLinksSummary = getFinishedHatMissingLinksSummary(record);
       const primaryBadge = getFinishedHatPrimaryBadge(record);
+      const inventory = state.inventories[record.id];
       return `
         <div class="staff-catalog-card-shell${reorderController?.isDraggingId(record.id) ? ' staff-catalog-card-shell--dragging' : ''}${reorderController?.isSaving() ? ' staff-catalog-card-shell--saving' : ''}" data-catalog-order-id="${escapeAttribute(record.id)}">
           ${reorderEnabled ? `
@@ -457,6 +473,7 @@
               <div class="staff-finished-hat-card-summary">
                 ${compactSummary ? `<p class="staff-finished-hat-card-summary-line">${escapeHtml(compactSummary)}</p>` : ''}
                 ${missingLinksSummary ? `<p class="staff-finished-hat-card-missing-links">${escapeHtml(missingLinksSummary)}</p>` : ''}
+                <p class="staff-finished-hat-card-summary-line staff-finished-hat-inventory-summary">${escapeHtml(formatFinishedHatInventorySummary(inventory))}</p>
               </div>
             </div>
           </article>
@@ -518,6 +535,10 @@
       }
       if (action === 'catalog-add-finished-hat') {
         openDialog('create', null, event.target);
+        return;
+      }
+      if (action === 'catalog-manage-inventory-locations') {
+        openDialog('locations', null, event.target);
         return;
       }
       if (action === 'catalog-open-finished-hat-detail') {
@@ -643,6 +664,8 @@
       state.dialogPhotoFile = null;
       state.dialogPhotoFileName = '';
       state.dialogValues = createDialogValues(record);
+      state.locationEditingId = '';
+      state.locationValues = { location_name: '', location_type: 'boutique', status: 'active', notes: '' };
       resetPickerState();
       renderDialog();
       if (mode !== 'detail') {
@@ -682,7 +705,9 @@
       if (headerActionsNode) {
         headerActionsNode.innerHTML = state.pickerOpen
           ? `<button class="secondary-button" type="button" data-action="catalog-cancel-link-picker">Back</button>`
-          : (state.dialogMode === 'detail'
+          : (state.dialogMode === 'locations'
+            ? `${state.locationManagerReturnRecord ? '<button class="secondary-button" type="button" data-action="catalog-return-finished-hat-inventory">Back to Finished Hat</button>' : ''}<button class="secondary-button" type="button" data-action="catalog-close-finished-hat-dialog">Close</button>`
+            : (state.dialogMode === 'detail'
             ? `
               <button class="primary-button" type="button" data-action="catalog-edit-finished-hat-detail">Edit</button>
               <button class="secondary-button" type="button" data-action="catalog-close-finished-hat-dialog">Close</button>
@@ -690,7 +715,7 @@
             : `
               <button class="primary-button" type="submit" form="staff-finished-hat-dialog-form" ${state.dialogSaving ? 'disabled' : ''}>${escapeHtml(state.dialogSaving ? 'Saving...' : (state.dialogMode === 'edit' ? 'Save Finished Hat' : 'Add Finished Hat'))}</button>
               <button class="secondary-button" type="button" data-action="catalog-close-finished-hat-dialog">Cancel</button>
-            `);
+            `));
       }
 
       statusNode.innerHTML = state.dialogError
@@ -700,6 +725,12 @@
       if (state.pickerOpen) {
         formNode.innerHTML = renderVisualPicker();
         focusPickerSoon();
+        return;
+      }
+
+      if (state.dialogMode === 'locations') {
+        formNode.innerHTML = renderInventoryLocationManager();
+        focusDialogSoon();
         return;
       }
 
@@ -717,28 +748,33 @@
       return `
         <div class="staff-finished-hat-detail">
           <div class="staff-design-dialog-grid">
-            <div class="staff-design-thumbnail-panel staff-design-dialog-field staff-design-dialog-field--wide">
-              <span>Primary Photo</span>
-              <div class="staff-design-thumbnail-preview">
-                ${getFinishedHatPreviewDisplay(null, record.photo_path, record.finished_hat_name).html}
+            <div class="staff-finished-hat-detail-top staff-design-dialog-field--wide">
+              <div class="staff-design-thumbnail-panel staff-design-dialog-field">
+                <span>Primary Photo</span>
+                <div class="staff-design-thumbnail-preview">
+                  ${getFinishedHatPreviewDisplay(null, record.photo_path, record.finished_hat_name).html}
+                </div>
               </div>
-            </div>
-            <div class="staff-finished-hat-detail-panel staff-design-dialog-field staff-design-dialog-field--wide">
-              <span>Finished Hat Name</span>
-              <strong class="staff-finished-hat-detail-title">${escapeHtml(record.finished_hat_name || 'Finished Hat')}</strong>
-              <div class="staff-finished-hat-detail-badges">
-                <span class="staff-design-status-badge staff-design-status-badge--${escapeAttribute(record.status || 'review')}">${escapeHtml(getFinishedHatStatusLabel(record.status))}</span>
-                <span class="staff-design-status-badge staff-design-status-badge--neutral">${escapeHtml(getPlacementStatusLabel(record.placement_status))}</span>
-                ${record.needs_linking ? `<span class="staff-design-status-badge staff-design-status-badge--review">${escapeHtml(getFinishedHatMissingLinksSummary(record) || 'Needs Linking')}</span>` : ''}
+              <div class="staff-finished-hat-top-inventory">
+                <div class="staff-finished-hat-detail-panel staff-design-dialog-field">
+                  <span>Finished Hat Name</span>
+                  <strong class="staff-finished-hat-detail-title">${escapeHtml(record.finished_hat_name || 'Finished Hat')}</strong>
+                  <div class="staff-finished-hat-detail-badges">
+                    <span class="staff-design-status-badge staff-design-status-badge--${escapeAttribute(record.status || 'review')}">${escapeHtml(getFinishedHatStatusLabel(record.status))}</span>
+                    <span class="staff-design-status-badge staff-design-status-badge--neutral">${escapeHtml(`Placement: ${getPlacementStatusLabel(record.placement_status)}`)}</span>
+                    ${record.needs_linking ? `<span class="staff-design-status-badge staff-design-status-badge--review">${escapeHtml(getFinishedHatMissingLinksSummary(record) || 'Needs Linking')}</span>` : ''}
+                  </div>
+                  ${renderFinishedHatCompactCard(record)}
+                </div>
+                ${renderFinishedHatInventoryPanel(record, state.inventories[record.id], state.inventoryLocations)}
               </div>
-              ${renderFinishedHatCompactCard(record)}
             </div>
             ${renderLinkWorkspaceSection('design', record)}
             ${renderLinkWorkspaceSection('hat', record)}
             ${renderLinkWorkspaceSection('material', record)}
             ${renderFinishedHatDetailField('Patch Shape', record.patch_shape)}
             ${renderFinishedHatDetailField('Patch Size', record.patch_size)}
-            ${renderFinishedHatDetailField('Location Label', record.location_label)}
+            ${renderFinishedHatDetailField('Legacy Placement Label', record.location_label)}
             ${renderFinishedHatDetailField('Retail Price', formatRetailPrice(record.retail_price))}
             ${renderFinishedHatDetailField('Notes', record.notes, true)}
           </div>
@@ -791,6 +827,35 @@
           ${missingSummary ? `<p class="staff-finished-hat-link-summary-card-missing">${escapeHtml(missingSummary)}</p>` : ''}
         </div>
       `;
+    }
+
+    function renderInventoryLocationManager() {
+      const editing = state.inventoryLocations.find((location) => location.id === state.locationEditingId) || null;
+      const values = editing ? state.locationValues : state.locationValues;
+      return `<section class="staff-finished-hat-location-manager"><div class="staff-finished-hat-inventory-panel-header"><span>Inventory Locations</span><strong>Locations are shared across Finished Hats.</strong></div>
+        <div class="staff-finished-hat-location-list">${state.inventoryLocations.map((location) => `<div class="staff-finished-hat-inventory-row"><strong>${escapeHtml(location.location_name)}</strong><span>${escapeHtml(location.location_type)} · ${escapeHtml(location.status)}</span><button type="button" class="secondary-button" data-action="catalog-edit-inventory-location" data-location-id="${escapeAttribute(location.id)}">Edit</button></div>`).join('') || '<p>No inventory locations are available yet.</p>'}</div>
+        <div class="staff-finished-hat-location-editor"><strong>${editing ? 'Edit Location' : 'Add Location'}</strong><label>Location Name <input type="text" data-location-field="location_name" value="${escapeAttribute(values.location_name || '')}"></label><label>Location Type <select data-location-field="location_type"><option value="internal" ${values.location_type === 'internal' ? 'selected' : ''}>Internal</option><option value="boutique" ${values.location_type === 'boutique' ? 'selected' : ''}>Boutique</option><option value="consignment" ${values.location_type === 'consignment' ? 'selected' : ''}>Consignment</option></select></label><label>Status <select data-location-field="status"><option value="active" ${values.status === 'active' ? 'selected' : ''}>Active</option><option value="inactive" ${values.status === 'inactive' ? 'selected' : ''}>Inactive</option></select></label><label>Note <textarea data-location-field="notes">${escapeHtml(values.notes || '')}</textarea></label><div><button type="button" class="primary-button" data-action="catalog-save-inventory-location">${editing ? 'Save Location' : 'Add Location'}</button>${editing ? '<button type="button" class="secondary-button" data-action="catalog-cancel-inventory-location-edit">Cancel</button>' : ''}</div></div>
+      </section>`;
+    }
+
+    function formatFinishedHatInventorySummary(inventory) {
+      if (!inventory || inventory.completeness === 'not_counted') return 'Inventory: Not Counted';
+      if (inventory.completeness === 'partial') return `Counted On Hand: ${inventory.derived_quantity} · ${inventory.not_counted_location_count} location${inventory.not_counted_location_count === 1 ? '' : 's'} Not Counted`;
+      return `Total On Hand: ${inventory.derived_quantity}`;
+    }
+
+    function renderFinishedHatInventoryPanel(record, inventory, locations) {
+      const assigned = inventory?.balances || [];
+      const unassigned = (locations || []).filter((location) => location.status === 'active' && !assigned.some((balance) => balance.inventory_location_id === location.id));
+      const totalLabel = inventory?.completeness === 'complete' ? 'Total On Hand' : (inventory?.completeness === 'partial' ? 'Counted On Hand' : 'Inventory');
+      const totalValue = inventory?.completeness === 'not_counted' || !inventory ? 'Not Counted' : String(inventory.derived_quantity);
+      return `<section class="staff-finished-hat-inventory-panel"><div class="staff-finished-hat-inventory-panel-header"><span>Finished Hat Inventory</span></div><div class="staff-finished-hat-inventory-total"><span>${escapeHtml(totalLabel)}</span><strong>${escapeHtml(totalValue)}</strong>${inventory?.completeness === 'partial' ? `<small>${escapeHtml(`${inventory.not_counted_location_count} location${inventory.not_counted_location_count === 1 ? '' : 's'} still Not Counted`)}</small>` : ''}</div>
+        <div class="staff-finished-hat-inventory-locations">${assigned.map((balance) => `<div class="staff-finished-hat-inventory-row"><div class="staff-finished-hat-inventory-location-quantity"><span>${escapeHtml(balance.location_name)}</span><strong>${balance.on_hand_quantity === null ? 'Not Counted' : balance.on_hand_quantity}</strong></div>
+          ${balance.on_hand_quantity === null ? `<div class="staff-finished-hat-inventory-initial-count"><input data-finished-inventory-count="${escapeAttribute(balance.inventory_location_id)}" type="number" min="0" step="1" placeholder="Physical Count"><button type="button" class="primary-button" data-action="catalog-finished-inventory-count" data-location-id="${escapeAttribute(balance.inventory_location_id)}">Save Count</button></div>` : `<div class="staff-finished-hat-inventory-actions"><button type="button" class="secondary-button" data-action="catalog-finished-inventory-adjust" data-location-id="${escapeAttribute(balance.inventory_location_id)}" data-reason="sold">− Sold</button><button type="button" class="secondary-button" data-action="catalog-finished-inventory-adjust" data-location-id="${escapeAttribute(balance.inventory_location_id)}" data-reason="received_built">+ Built</button><details class="staff-finished-hat-inventory-more"><summary>More</summary><div><button type="button" class="ghost-button" data-action="catalog-finished-inventory-adjust" data-location-id="${escapeAttribute(balance.inventory_location_id)}" data-reason="returned">+ Returned</button><input data-finished-inventory-correction="${escapeAttribute(balance.inventory_location_id)}" type="number" min="0" step="1" placeholder="Verified qty"><button type="button" class="ghost-button" data-action="catalog-finished-inventory-correct" data-location-id="${escapeAttribute(balance.inventory_location_id)}">Save Correction</button></div></details></div>`}</div>`).join('') || '<p class="staff-finished-hat-inventory-empty">No locations assigned.</p>'}</div>
+        <div class="staff-finished-hat-inventory-utilities">${unassigned.length ? `<details><summary>+ Add Location</summary><div class="staff-finished-hat-inventory-utility-body"><select data-finished-inventory-assign>${unassigned.map((location) => `<option value="${escapeAttribute(location.id)}">${escapeHtml(location.location_name)}</option>`).join('')}</select><button type="button" class="secondary-button" data-action="catalog-finished-inventory-assign">Assign Location</button></div></details>` : ''}<button type="button" class="ghost-button" data-action="catalog-manage-inventory-locations">Manage Locations</button>
+        ${(assigned.filter((balance) => balance.on_hand_quantity !== null).length >= 2) ? `<details><summary>Transfer Stock</summary><div class="staff-finished-hat-inventory-transfer"><select data-finished-inventory-transfer-source>${assigned.filter((b) => b.on_hand_quantity !== null).map((b) => `<option value="${escapeAttribute(b.inventory_location_id)}">${escapeHtml(b.location_name)}</option>`).join('')}</select><select data-finished-inventory-transfer-destination>${assigned.filter((b) => b.on_hand_quantity !== null).map((b) => `<option value="${escapeAttribute(b.inventory_location_id)}">${escapeHtml(b.location_name)}</option>`).join('')}</select><input type="number" min="1" step="1" data-finished-inventory-transfer-quantity placeholder="Qty"><button type="button" class="secondary-button" data-action="catalog-finished-inventory-transfer">Transfer</button></div></details>` : ''}</div>
+        ${assigned.length ? `<details class="staff-finished-hat-inventory-history"><summary>Inventory History ›</summary>${(inventory.movements || []).map((movement) => `<p>${escapeHtml(movement.location_name || '')} · ${escapeHtml(movement.reason_code)} · ${escapeHtml(String(movement.quantity_before ?? 'Unknown'))} → ${escapeHtml(String(movement.quantity_after))}</p>`).join('') || '<p>No movements yet.</p>'}</details>` : ''}
+      </section>`;
     }
 
     function renderLinkWorkspaceSection(type, record) {
@@ -1003,6 +1068,49 @@
         switchDialogToEdit();
         return;
       }
+      if (action === 'catalog-manage-inventory-locations') {
+        state.locationManagerReturnRecord = state.dialogMode === 'detail' ? state.dialogRecord : null;
+        state.dialogMode = 'locations';
+        state.dialogError = '';
+        renderDialog();
+        return;
+      }
+      if (action === 'catalog-return-finished-hat-inventory') {
+        state.dialogMode = 'detail';
+        state.dialogRecord = state.locationManagerReturnRecord;
+        state.locationManagerReturnRecord = null;
+        renderDialog();
+        return;
+      }
+      if (action === 'catalog-edit-inventory-location') {
+        const location = state.inventoryLocations.find((item) => item.id === actionTarget?.dataset?.locationId);
+        if (location) { state.locationEditingId = location.id; state.locationValues = { location_name: location.location_name || '', location_type: location.location_type || 'boutique', status: location.status || 'active', notes: location.notes || '' }; renderDialog(); }
+        return;
+      }
+      if (action === 'catalog-cancel-inventory-location-edit') {
+        state.locationEditingId = ''; state.locationValues = { location_name: '', location_type: 'boutique', status: 'active', notes: '' }; renderDialog(); return;
+      }
+      if (action === 'catalog-save-inventory-location') { saveInventoryLocation(); return; }
+      if (action === 'catalog-finished-inventory-assign') {
+        saveFinishedHatInventoryAssignment();
+        return;
+      }
+      if (action === 'catalog-finished-inventory-count') {
+        saveFinishedHatInventoryCount(actionTarget);
+        return;
+      }
+      if (action === 'catalog-finished-inventory-adjust') {
+        saveFinishedHatInventoryAdjustment(actionTarget);
+        return;
+      }
+      if (action === 'catalog-finished-inventory-correct') {
+        saveFinishedHatInventoryCorrection(actionTarget);
+        return;
+      }
+      if (action === 'catalog-finished-inventory-transfer') {
+        saveFinishedHatInventoryTransfer();
+        return;
+      }
       if (action === 'catalog-open-link-picker') {
         const type = String(actionTarget?.dataset?.linkType || '');
         openLinkPicker(type, actionTarget);
@@ -1048,6 +1156,7 @@
       if (target.name && Object.prototype.hasOwnProperty.call(state.dialogValues, target.name)) {
         state.dialogValues[target.name] = String(target.value || '');
       }
+      if (target.dataset?.locationField) state.locationValues[target.dataset.locationField] = String(target.value || '');
       if (target.dataset?.action === 'catalog-picker-search') {
         state.pickerSearch = String(target.value || '');
         renderDialog();
@@ -1069,6 +1178,7 @@
       if (target.name && Object.prototype.hasOwnProperty.call(state.dialogValues, target.name)) {
         state.dialogValues[target.name] = String(target.value || '');
       }
+      if (target.dataset?.locationField) state.locationValues[target.dataset.locationField] = String(target.value || '');
       const pickerFilterKey = target.dataset?.pickerFilter;
       if (pickerFilterKey) {
         state.pickerFilters[pickerFilterKey] = String(target.value || '');
@@ -1145,6 +1255,60 @@
         state.dialogError = safeErrorMessage(error, 'Finished hat changes could not be saved right now.');
         renderDialog();
       }
+    }
+
+    async function refreshFinishedHatInventory(finishedHatId) {
+      if (!inventoryApiClient?.getLocationInventory || !finishedHatId) return;
+      const result = await inventoryApiClient.getLocationInventory('catalog_finished_hat', finishedHatId);
+      state.inventories[finishedHatId] = result?.inventory || null;
+      renderContent();
+      renderDialog();
+    }
+
+    async function saveInventoryLocation() {
+      if (!inventoryApiClient?.saveLocation) { state.dialogError = 'Inventory location management is currently unavailable.'; renderDialog(); return; }
+      try {
+        const input = { ...state.locationValues };
+        if (state.locationEditingId) { input.id = state.locationEditingId; input.location_code = state.inventoryLocations.find((location) => location.id === state.locationEditingId)?.location_code || ''; }
+        else input.location_code = slugifyInventoryLocationCode(input.location_name);
+        const response = await inventoryApiClient.saveLocation(input);
+        const location = response?.location;
+        if (location) { const index = state.inventoryLocations.findIndex((item) => item.id === location.id); if (index >= 0) state.inventoryLocations.splice(index, 1, location); else state.inventoryLocations.push(location); }
+        state.inventoryLocations.sort((a, b) => String(a.location_name).localeCompare(String(b.location_name)));
+        state.locationEditingId = ''; state.locationValues = { location_name: '', location_type: 'boutique', status: 'active', notes: '' }; state.dialogError = ''; renderDialog();
+      } catch (error) { state.dialogError = safeErrorMessage(error, 'Inventory location could not be saved.'); renderDialog(); }
+    }
+
+    function slugifyInventoryLocationCode(name) { const base = String(name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 52) || 'location'; return `${base}_${Math.random().toString(36).slice(2, 8)}`; }
+
+    async function saveFinishedHatInventoryAssignment() {
+      const select = formNode?.querySelector('[data-finished-inventory-assign]');
+      try { await inventoryApiClient.assignLocation({ subject_type: 'catalog_finished_hat', subject_id: state.dialogFinishedHatId, location_id: select?.value || '' }); await refreshFinishedHatInventory(state.dialogFinishedHatId); } catch (error) { state.dialogError = safeErrorMessage(error, 'Inventory location could not be assigned.'); renderDialog(); }
+    }
+
+    async function saveFinishedHatInventoryCount(actionTarget) {
+      const locationId = actionTarget?.dataset?.locationId || '';
+      const inventory = state.inventories[state.dialogFinishedHatId]; const balance = inventory?.balances?.find((item) => item.inventory_location_id === locationId);
+      const input = formNode?.querySelector(`[data-finished-inventory-count="${locationId}"]`);
+      try { await inventoryApiClient.adjustLocationInventory({ subject_type:'catalog_finished_hat', subject_id:state.dialogFinishedHatId, location_id:locationId, expected_quantity:null, expected_version:balance?.version ?? 0, target_quantity:input?.value ?? '', reason_code:'initial_count', note:'' }); await refreshFinishedHatInventory(state.dialogFinishedHatId); } catch (error) { state.dialogError=safeErrorMessage(error,'Physical count could not be saved.'); renderDialog(); }
+    }
+
+    async function saveFinishedHatInventoryAdjustment(actionTarget) {
+      const locationId=actionTarget?.dataset?.locationId||''; const reason=actionTarget?.dataset?.reason||'correction'; const inventory=state.inventories[state.dialogFinishedHatId]; const balance=inventory?.balances?.find((item)=>item.inventory_location_id===locationId); if(!balance) return;
+      const direction = reason === 'sold' ? -1 : 1; const target=balance.on_hand_quantity + direction;
+      if (target < 0) { state.dialogError = 'Inventory cannot go below zero.'; renderDialog(); return; }
+      try { await inventoryApiClient.adjustLocationInventory({subject_type:'catalog_finished_hat',subject_id:state.dialogFinishedHatId,location_id:locationId,expected_quantity:balance.on_hand_quantity,expected_version:balance.version,target_quantity:target,reason_code:reason,note:''}); await refreshFinishedHatInventory(state.dialogFinishedHatId); } catch(error) { state.dialogError=safeErrorMessage(error,'Inventory could not be updated.'); renderDialog(); }
+    }
+
+    async function saveFinishedHatInventoryCorrection(actionTarget) {
+      const locationId=actionTarget?.dataset?.locationId||''; const inventory=state.inventories[state.dialogFinishedHatId]; const balance=inventory?.balances?.find((item)=>item.inventory_location_id===locationId); const input=formNode?.querySelector(`[data-finished-inventory-correction="${locationId}"]`);
+      if (!balance) return;
+      try { await inventoryApiClient.adjustLocationInventory({subject_type:'catalog_finished_hat',subject_id:state.dialogFinishedHatId,location_id:locationId,expected_quantity:balance.on_hand_quantity,expected_version:balance.version,target_quantity:input?.value ?? '',reason_code:'correction',note:''}); await refreshFinishedHatInventory(state.dialogFinishedHatId); } catch(error) { state.dialogError=safeErrorMessage(error,'Verified quantity could not be saved.'); renderDialog(); }
+    }
+
+    async function saveFinishedHatInventoryTransfer() {
+      const sourceId=formNode?.querySelector('[data-finished-inventory-transfer-source]')?.value || ''; const destinationId=formNode?.querySelector('[data-finished-inventory-transfer-destination]')?.value || ''; const quantity=formNode?.querySelector('[data-finished-inventory-transfer-quantity]')?.value || ''; const inventory=state.inventories[state.dialogFinishedHatId]; const source=inventory?.balances?.find((b)=>b.inventory_location_id===sourceId);const destination=inventory?.balances?.find((b)=>b.inventory_location_id===destinationId);
+      try { await inventoryApiClient.transferInventory({subject_type:'catalog_finished_hat',subject_id:state.dialogFinishedHatId,source_location_id:sourceId,destination_location_id:destinationId,expected_source_quantity:source?.on_hand_quantity,expected_source_version:source?.version,expected_destination_quantity:destination?.on_hand_quantity,expected_destination_version:destination?.version,quantity,note:''}); await refreshFinishedHatInventory(state.dialogFinishedHatId); } catch(error) { state.dialogError=safeErrorMessage(error,'Inventory could not be transferred.');renderDialog(); }
     }
 
     async function openLinkPicker(type, trigger) {

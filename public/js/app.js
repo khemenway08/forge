@@ -760,7 +760,7 @@ const staffHatCatalogModule = createOptionalStaffHatCatalogModule(staffHatCatalo
 const staffMaterialCatalogApiClient = createOptionalStaffMaterialCatalogApiClient();
 const staffMaterialCatalogModule = createOptionalStaffMaterialCatalogModule(staffMaterialCatalogApiClient);
 const staffFinishedHatCatalogApiClient = createOptionalStaffFinishedHatCatalogApiClient();
-const staffFinishedHatCatalogModule = createOptionalStaffFinishedHatCatalogModule(staffFinishedHatCatalogApiClient);
+const staffFinishedHatCatalogModule = createOptionalStaffFinishedHatCatalogModule(staffFinishedHatCatalogApiClient, staffInventoryApiClient);
 const staffRuntime = createSafeStaffRuntime(orderStore, staffApiClient);
 const orderSyncService = forgeOrderServerSync.createOrderServerSyncService({
   orderStore,
@@ -977,7 +977,7 @@ function createOptionalStaffFinishedHatCatalogApiClient() {
   }
 }
 
-function createOptionalStaffFinishedHatCatalogModule(apiClient) {
+function createOptionalStaffFinishedHatCatalogModule(apiClient, inventoryApiClient) {
   if (!forgeStaffFinishedHatCatalog || typeof forgeStaffFinishedHatCatalog.createStaffFinishedHatCatalogModule !== 'function') {
     console.error('Forge staff finished hat catalog module bootstrap skipped because ForgeStaffFinishedHatCatalog was unavailable.');
     return null;
@@ -986,6 +986,7 @@ function createOptionalStaffFinishedHatCatalogModule(apiClient) {
   try {
     return forgeStaffFinishedHatCatalog.createStaffFinishedHatCatalogModule({
       apiClient,
+      inventoryApiClient,
       designApiClient: staffDesignCatalogApiClient,
       hatApiClient: staffHatCatalogApiClient,
       materialApiClient: staffMaterialCatalogApiClient,

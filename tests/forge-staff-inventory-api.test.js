@@ -47,3 +47,18 @@ test('inventory conflict exposes the safe reload message', async () => {
   });
   await assert.rejects(() => client.getSubjectInventory('catalog_hat', 'hat-3'), (error) => error.code === 'inventory_conflict');
 });
+
+test('location inventory preserves explicit assignment, Not Counted, partial totals, and confirmed zero', () => {
+  const inventory = inventoryApi.normalizeLocationInventory({
+    subject_type: 'catalog_finished_hat', subject_id: 'finished-1', completeness: 'partial',
+    assigned_location_count: 2, counted_location_count: 1, not_counted_location_count: 1, derived_quantity: 0,
+    balances: [
+      { inventory_location_id: 'hilltop', location_name: 'Hilltop', on_hand_quantity: 0, version: 1 },
+      { inventory_location_id: 'boutique', location_name: 'Boutique', on_hand_quantity: null, version: 0 }
+    ]
+  });
+  assert.equal(inventory.completeness, 'partial');
+  assert.equal(inventory.derived_quantity, 0);
+  assert.equal(inventory.balances[0].on_hand_quantity, 0);
+  assert.equal(inventory.balances[1].on_hand_quantity, null);
+});
