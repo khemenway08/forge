@@ -70,26 +70,32 @@ final class PdoStaffHatCatalogRepository implements StaffHatCatalogImportReposit
         try {
             $statement = $this->pdo->query(
                 'SELECT
-                    id,
-                    hat_name,
-                    photo_path,
-                    manufacturer,
-                    model,
-                    color,
-                    vendor,
-                    base_cost,
-                    status,
-                    notes,
-                    sort_order,
-                    created_at,
-                    updated_at
+                    forge_catalog_hats.id,
+                    forge_catalog_hats.hat_name,
+                    forge_catalog_hats.photo_path,
+                    forge_catalog_hats.manufacturer,
+                    forge_catalog_hats.model,
+                    forge_catalog_hats.color,
+                    forge_catalog_hats.vendor,
+                    forge_catalog_hats.base_cost,
+                    forge_catalog_hats.status,
+                    forge_catalog_hats.notes,
+                    forge_catalog_hats.sort_order,
+                    forge_catalog_hats.created_at,
+                    forge_catalog_hats.updated_at,
+                    inventory_items.on_hand_quantity AS inventory_on_hand_quantity,
+                    inventory_items.version AS inventory_version,
+                    inventory_items.updated_at AS inventory_updated_at
                  FROM forge_catalog_hats
+                 LEFT JOIN forge_inventory_items AS inventory_items
+                    ON inventory_items.subject_type = \'catalog_hat\'
+                   AND inventory_items.subject_id = forge_catalog_hats.id
                  ORDER BY
-                    CASE WHEN sort_order > 0 THEN 0 ELSE 1 END ASC,
-                    sort_order ASC,
-                    hat_name ASC,
-                    created_at ASC,
-                    id ASC'
+                    CASE WHEN forge_catalog_hats.sort_order > 0 THEN 0 ELSE 1 END ASC,
+                    forge_catalog_hats.sort_order ASC,
+                    forge_catalog_hats.hat_name ASC,
+                    forge_catalog_hats.created_at ASC,
+                    forge_catalog_hats.id ASC'
             );
             $records = $statement ? $statement->fetchAll() : [];
         } catch (PDOException $exception) {
@@ -121,21 +127,27 @@ final class PdoStaffHatCatalogRepository implements StaffHatCatalogImportReposit
         try {
             $statement = $this->pdo->prepare(
                 'SELECT
-                    id,
-                    hat_name,
-                    photo_path,
-                    manufacturer,
-                    model,
-                    color,
-                    vendor,
-                    base_cost,
-                    status,
-                    notes,
-                    sort_order,
-                    created_at,
-                    updated_at
+                    forge_catalog_hats.id,
+                    forge_catalog_hats.hat_name,
+                    forge_catalog_hats.photo_path,
+                    forge_catalog_hats.manufacturer,
+                    forge_catalog_hats.model,
+                    forge_catalog_hats.color,
+                    forge_catalog_hats.vendor,
+                    forge_catalog_hats.base_cost,
+                    forge_catalog_hats.status,
+                    forge_catalog_hats.notes,
+                    forge_catalog_hats.sort_order,
+                    forge_catalog_hats.created_at,
+                    forge_catalog_hats.updated_at,
+                    inventory_items.on_hand_quantity AS inventory_on_hand_quantity,
+                    inventory_items.version AS inventory_version,
+                    inventory_items.updated_at AS inventory_updated_at
                  FROM forge_catalog_hats
-                 WHERE id = :id
+                 LEFT JOIN forge_inventory_items AS inventory_items
+                    ON inventory_items.subject_type = \'catalog_hat\'
+                   AND inventory_items.subject_id = forge_catalog_hats.id
+                 WHERE forge_catalog_hats.id = :id
                  LIMIT 1'
             );
             $statement->execute([
@@ -522,6 +534,14 @@ function normalizeStaffCatalogHatRecord($record): array
         'sort_order' => max(0, (int) ($normalized['sort_order'] ?? 0)),
         'created_at' => normalizeStaffCatalogHatDateTime($normalized['created_at'] ?? ''),
         'updated_at' => normalizeStaffCatalogHatDateTime($normalized['updated_at'] ?? ''),
+        'inventory' => [
+            'counted' => array_key_exists('inventory_on_hand_quantity', $normalized) && $normalized['inventory_on_hand_quantity'] !== null,
+            'on_hand_quantity' => isset($normalized['inventory_on_hand_quantity']) ? (int) $normalized['inventory_on_hand_quantity'] : null,
+            'version' => max(0, (int) ($normalized['inventory_version'] ?? 0)),
+            'updated_at' => isset($normalized['inventory_updated_at'])
+                ? normalizeStaffCatalogHatDateTime($normalized['inventory_updated_at'])
+                : null,
+        ],
     ];
 }
 

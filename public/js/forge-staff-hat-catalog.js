@@ -36,6 +36,7 @@
 
   function createStaffHatCatalogModule(options = {}) {
     const apiClient = options.apiClient || null;
+    const inventoryApiClient = options.inventoryApiClient || null;
     const documentRef = options.document || document;
     const windowLike = options.window || window;
     const orderingApi = resolveCatalogOrderingApi(options.orderingApi);
@@ -65,6 +66,11 @@
       dialogPhotoPath: '',
       dialogPhotoFile: null,
       dialogPhotoFileName: '',
+      inventoryLoading: false,
+      inventorySaving: false,
+      inventory: null,
+      inventoryError: '',
+      inventoryAdjustOpen: false,
       sortKey: 'custom',
       notice: '',
       noticeTone: 'muted',
@@ -183,7 +189,7 @@
             <div class="staff-catalog-designs-heading">
               <p class="eyebrow staff-orders-eyebrow">Shared Library</p>
               <h3>Hats</h3>
-              <p>Search and manage blank hat records for future design combinations without affecting customer ordering.</p>
+              <p>Search and manage blank hat records and on-hand inventory without affecting customer ordering.</p>
             </div>
             <div class="staff-catalog-designs-actions">
               <p class="staff-catalog-designs-count" data-catalog-hat-results-count>${filteredRecords.length} result${filteredRecords.length === 1 ? '' : 's'}</p>
@@ -358,7 +364,8 @@
                 ${renderHatMetaRow('Model', record.model)}
                 ${renderHatMetaRow('Color', record.color)}
                 ${renderHatMetaRow('Vendor', record.vendor)}
-                ${renderHatMetaRow('Base Cost', formatHatBaseCost(record.base_cost))}
+                ${renderHatMetaRow('On Hand', formatHatOnHand(record.inventory))}
+                ${renderHatMetaRow('Cost Each', formatHatBaseCost(record.base_cost))}
               </dl>
             </div>
           </button>
@@ -541,19 +548,43 @@
                 <input id="catalog-hat-vendor" name="vendor" type="text" maxlength="160">
               </label>
               <label class="staff-design-dialog-field">
-                <span>Base Cost</span>
+                <span>Cost Each</span>
                 <input id="catalog-hat-base-cost" name="base_cost" type="text" inputmode="decimal" maxlength="16" placeholder="e.g. 12.50">
               </label>
-              <div class="staff-design-dialog-field staff-design-dialog-field--wide">
-                <span>Hat Photo</span>
-                <div class="staff-design-thumbnail-panel">
-                  <div class="staff-design-thumbnail-preview" data-catalog-hat-photo-preview></div>
-                  <label class="secondary-button staff-design-thumbnail-input">
-                    <input id="catalog-hat-photo" name="photo" type="file" accept="image/png,image/jpeg,image/webp">
-                    Choose Photo
-                  </label>
-                  <p class="staff-design-thumbnail-copy" data-catalog-hat-photo-copy>No photo selected</p>
+              <div class="staff-hat-editor-photo-inventory staff-design-dialog-field--wide">
+                <div class="staff-design-dialog-field">
+                  <span>Hat Photo</span>
+                  <div class="staff-design-thumbnail-panel">
+                    <div class="staff-design-thumbnail-preview" data-catalog-hat-photo-preview></div>
+                    <label class="secondary-button staff-design-thumbnail-input">
+                      <input id="catalog-hat-photo" name="photo" type="file" accept="image/png,image/jpeg,image/webp">
+                      Choose Photo
+                    </label>
+                    <p class="staff-design-thumbnail-copy" data-catalog-hat-photo-copy>No photo selected</p>
+                  </div>
                 </div>
+                <section class="staff-inventory-panel" data-catalog-hat-inventory-panel hidden>
+                <div class="staff-inventory-panel-heading">
+                  <div><span>Blank Hat Inventory</span><h4 data-catalog-hat-inventory-title>Not Counted</h4></div>
+                  <p data-catalog-hat-inventory-copy>Enter the quantity physically on hand.</p>
+                </div>
+                <div class="staff-inventory-initial-count" data-catalog-hat-inventory-initial-count hidden>
+                  <label><span>Physical Count</span><input type="number" min="0" step="1" inputmode="numeric" data-catalog-hat-inventory-initial-target></label>
+                  <button class="primary-button" type="button" data-action="catalog-hat-inventory-save-initial">Save Initial Count</button>
+                </div>
+                <div class="staff-inventory-counted-controls" data-catalog-hat-inventory-counted-controls hidden>
+                  <button class="secondary-button" type="button" data-action="catalog-hat-inventory-decrement">−1 Used / Removed</button>
+                  <button class="secondary-button" type="button" data-action="catalog-hat-inventory-increment">+1 Received</button>
+                  <button class="text-button" type="button" data-action="catalog-hat-inventory-open-adjust">Adjust Quantity</button>
+                </div>
+                <div class="staff-inventory-adjust" data-catalog-hat-inventory-adjust hidden>
+                  <label><span>Verified Quantity</span><input type="number" min="0" step="1" inputmode="numeric" data-catalog-hat-inventory-adjust-target></label>
+                  <label><span>Note <em>(optional)</em></span><input type="text" maxlength="4000" placeholder="Why was this corrected?" data-catalog-hat-inventory-adjust-note></label>
+                  <div class="staff-inventory-adjust-actions"><button class="primary-button" type="button" data-action="catalog-hat-inventory-save-adjust">Save Adjustment</button><button class="text-button" type="button" data-action="catalog-hat-inventory-close-adjust">Cancel</button></div>
+                </div>
+                <p class="staff-orders-status" data-catalog-hat-inventory-status aria-live="polite"></p>
+                <div class="staff-inventory-history-section"><h5>Inventory History</h5><ol class="staff-inventory-history" data-catalog-hat-inventory-history></ol></div>
+                </section>
               </div>
               <label class="staff-design-dialog-field staff-design-dialog-field--wide">
                 <span>Notes</span>
@@ -574,7 +605,14 @@
         const action = event.target.closest('[data-action]')?.dataset.action;
         if (event.target === dialogBackdrop || action === 'catalog-close-hat-dialog') {
           closeDialog();
+          return;
         }
+        if (action === 'catalog-hat-inventory-increment') { submitInventoryAdjustment(1, 'received'); }
+        if (action === 'catalog-hat-inventory-decrement') { submitInventoryAdjustment(-1, 'used_removed'); }
+        if (action === 'catalog-hat-inventory-save-initial') { submitInitialInventoryCount(); }
+        if (action === 'catalog-hat-inventory-open-adjust') { state.inventoryAdjustOpen = true; renderInventoryPanel(); }
+        if (action === 'catalog-hat-inventory-close-adjust') { state.inventoryAdjustOpen = false; renderInventoryPanel(); }
+        if (action === 'catalog-hat-inventory-save-adjust') { submitInventoryAdjustmentForm(); }
       });
       dialogBackdrop.addEventListener('change', onDialogChange);
       dialogBackdrop.addEventListener('keydown', onDialogKeydown);
@@ -602,12 +640,20 @@
       state.dialogPhotoPath = record?.photo_path || '';
       state.dialogPhotoFile = null;
       state.dialogPhotoFileName = '';
+      state.inventory = record?.inventory || null;
+      state.inventoryError = '';
+      state.inventoryLoading = false;
+      state.inventorySaving = false;
+      state.inventoryAdjustOpen = false;
       renderDialog();
       dialogBackdrop.hidden = false;
       dialogNode.focus();
       windowLike.setTimeout(() => {
         dialogBackdrop.querySelector('[name="hat_name"]')?.focus();
       }, 0);
+      if (record?.id) {
+        loadInventory(record.id);
+      }
     }
 
     function closeDialog() {
@@ -656,6 +702,7 @@
       }
 
       renderPhotoPanel();
+      renderInventoryPanel();
       renderDialogStatus();
       applyDialogFieldErrors();
     }
@@ -676,6 +723,121 @@
       copyNode.textContent = state.dialogPhotoFileName
         ? `Selected: ${state.dialogPhotoFileName}`
         : (state.dialogPhotoPath ? 'Current photo will remain until replaced.' : 'No photo selected');
+    }
+
+    async function loadInventory(hatId) {
+      if (!inventoryApiClient || typeof inventoryApiClient.getSubjectInventory !== 'function') {
+        state.inventoryError = 'Inventory is currently unavailable.';
+        renderInventoryPanel();
+        return;
+      }
+      state.inventoryLoading = true;
+      renderInventoryPanel();
+      try {
+        const result = await inventoryApiClient.getSubjectInventory('catalog_hat', hatId);
+        if (!result || result.authenticated === false || result.unauthenticated) {
+          state.inventoryError = 'Staff authentication is required.';
+        } else {
+          state.inventory = normalizeInventorySummary(result.inventory);
+          updateOpenHatInventory(state.inventory);
+          state.inventoryError = '';
+        }
+      } catch (error) {
+        state.inventoryError = safeErrorMessage(error, 'Inventory could not be loaded right now.');
+      }
+      state.inventoryLoading = false;
+      renderInventoryPanel();
+    }
+
+    function renderInventoryPanel() {
+      const panel = dialogBackdrop?.querySelector('[data-catalog-hat-inventory-panel]');
+      if (!panel) return;
+      const title = panel.querySelector('[data-catalog-hat-inventory-title]');
+      const copy = panel.querySelector('[data-catalog-hat-inventory-copy]');
+      const initialCount = panel.querySelector('[data-catalog-hat-inventory-initial-count]');
+      const countedControls = panel.querySelector('[data-catalog-hat-inventory-counted-controls]');
+      const adjustment = panel.querySelector('[data-catalog-hat-inventory-adjust]');
+      const initialTarget = panel.querySelector('[data-catalog-hat-inventory-initial-target]');
+      const adjustmentTarget = panel.querySelector('[data-catalog-hat-inventory-adjust-target]');
+      const status = panel.querySelector('[data-catalog-hat-inventory-status]');
+      const history = panel.querySelector('[data-catalog-hat-inventory-history]');
+      const canAdjust = state.dialogMode === 'edit' && Boolean(state.dialogHatId);
+      panel.hidden = !canAdjust;
+      if (!canAdjust) return;
+      const inventory = normalizeInventorySummary(state.inventory);
+      if (title) title.textContent = inventory.counted ? `On Hand: ${formatHatOnHand(inventory)}` : 'Not Counted';
+      if (copy) copy.textContent = inventory.counted
+        ? 'Use the quick controls for common movements, or adjust a verified quantity.'
+        : 'Enter the quantity physically on hand.';
+      const unavailable = state.inventoryLoading || state.inventorySaving || Boolean(state.inventoryError);
+      if (initialCount) initialCount.hidden = inventory.counted || unavailable;
+      if (countedControls) countedControls.hidden = !inventory.counted || unavailable;
+      if (adjustment) adjustment.hidden = !inventory.counted || !state.inventoryAdjustOpen || unavailable;
+      if (initialTarget && documentRef.activeElement !== initialTarget) initialTarget.value = '';
+      if (adjustmentTarget && documentRef.activeElement !== adjustmentTarget) adjustmentTarget.value = inventory.counted ? String(inventory.on_hand_quantity) : '';
+      panel.querySelectorAll('button, input, select').forEach((node) => { node.disabled = state.inventoryLoading || state.inventorySaving || Boolean(state.inventoryError); });
+      if (status) status.textContent = state.inventoryLoading ? 'Loading inventory history...' : (state.inventorySaving ? 'Saving inventory...' : state.inventoryError);
+      if (history) history.innerHTML = inventory.movements.length
+        ? inventory.movements.map(renderInventoryMovement).join('')
+        : '<li class="staff-inventory-history-empty">No physical count recorded yet.</li>';
+    }
+
+    function renderInventoryMovement(movement) {
+      const initial = movement.quantity_before === null;
+      const quantity = initial
+        ? `Initial count confirmed: ${movement.quantity_after}`
+        : `${movement.quantity_before} → ${movement.quantity_after} (${movement.quantity_delta >= 0 ? '+' : ''}${movement.quantity_delta})`;
+      return `<li><strong>${escapeHtml(getInventoryReasonLabel(movement.reason_code))}</strong><span>${escapeHtml(quantity)}</span>${movement.note ? `<small>${escapeHtml(movement.note)}</small>` : ''}<small>${escapeHtml(formatInventoryMovementTimestamp(movement.created_at))}</small></li>`;
+    }
+
+    async function submitInventoryAdjustment(delta, quickReason) {
+      const inventory = normalizeInventorySummary(state.inventory);
+      if (!inventory.counted) { return; }
+      await saveInventoryAdjustment(Math.max(0, inventory.on_hand_quantity + delta), quickReason, '');
+    }
+
+    async function submitInitialInventoryCount() {
+      const panel = dialogBackdrop?.querySelector('[data-catalog-hat-inventory-panel]');
+      const target = panel?.querySelector('[data-catalog-hat-inventory-initial-target]');
+      const value = String(target?.value || '').trim();
+      if (!/^\d+$/.test(value)) { state.inventoryError = 'Enter a whole-number physical quantity of zero or more.'; renderInventoryPanel(); return; }
+      await saveInventoryAdjustment(Number(value), 'initial_count', '');
+    }
+
+    async function submitInventoryAdjustmentForm() {
+      const panel = dialogBackdrop?.querySelector('[data-catalog-hat-inventory-panel]');
+      const target = panel?.querySelector('[data-catalog-hat-inventory-adjust-target]');
+      const note = panel?.querySelector('[data-catalog-hat-inventory-adjust-note]');
+      const value = String(target?.value || '').trim();
+      if (!/^\d+$/.test(value)) { state.inventoryError = 'Enter a whole-number verified quantity of zero or more.'; renderInventoryPanel(); return; }
+      await saveInventoryAdjustment(Number(value), 'correction', String(note?.value || ''));
+    }
+
+    async function saveInventoryAdjustment(targetQuantity, reasonCode, note) {
+      if (!inventoryApiClient || typeof inventoryApiClient.adjustSubjectInventory !== 'function' || state.inventorySaving) return;
+      const inventory = normalizeInventorySummary(state.inventory);
+      state.inventorySaving = true;
+      state.inventoryError = '';
+      renderInventoryPanel();
+      try {
+        const result = await inventoryApiClient.adjustSubjectInventory({ subject_type: 'catalog_hat', subject_id: state.dialogHatId, expected_quantity: inventory.counted ? inventory.on_hand_quantity : null, expected_version: inventory.version, target_quantity: targetQuantity, reason_code: reasonCode, note });
+        if (!result || result.authenticated === false || result.unauthenticated) throw new Error('Staff authentication is required.');
+        state.inventory = normalizeInventorySummary(result.inventory);
+        state.inventoryAdjustOpen = false;
+        updateOpenHatInventory(state.inventory);
+      } catch (error) {
+        state.inventoryError = safeErrorMessage(error, 'Inventory could not be saved right now.');
+        if (error?.code === 'inventory_conflict') loadInventory(state.dialogHatId);
+      }
+      state.inventorySaving = false;
+      renderInventoryPanel();
+    }
+
+    function updateOpenHatInventory(inventory) {
+      const index = state.records.findIndex((record) => record.id === state.dialogHatId);
+      if (index < 0) return;
+      state.records[index] = { ...state.records[index], inventory: normalizeInventorySummary(inventory) };
+      renderContent();
     }
 
     function renderDialogStatus() {
@@ -949,6 +1111,7 @@
       color: normalizeNullableString(normalized.color),
       vendor: normalizeNullableString(normalized.vendor),
       base_cost: normalizeNullableString(normalized.base_cost),
+      inventory: normalizeInventorySummary(normalized.inventory),
       status: typeof normalized.status === 'string' ? normalized.status.trim() : '',
       notes: normalizeNullableString(normalized.notes),
       sort_order: normalizePositiveInteger(normalized.sort_order),
@@ -1037,6 +1200,54 @@
       currency: 'USD'
     }).format(numericValue);
   }
+
+  function normalizeInventorySummary(value) {
+    const inventory = value && typeof value === 'object' ? value : {};
+    const quantity = normalizeNullableNonNegativeInteger(inventory.on_hand_quantity);
+    return {
+      counted: Boolean(inventory.counted) && quantity !== null,
+      on_hand_quantity: quantity,
+      version: normalizeNonNegativeInteger(inventory.version),
+      updated_at: normalizeNullableString(inventory.updated_at),
+      movements: Array.isArray(inventory.movements) ? inventory.movements.map((movement) => ({
+        ...movement,
+        quantity_before: normalizeNullableNonNegativeInteger(movement?.quantity_before),
+        quantity_after: normalizeNonNegativeInteger(movement?.quantity_after),
+        quantity_delta: normalizeNullableInteger(movement?.quantity_delta)
+      })) : []
+    };
+  }
+
+  function formatHatOnHand(inventory) {
+    const normalized = normalizeInventorySummary(inventory);
+    return normalized.counted ? String(normalized.on_hand_quantity) : 'Not Counted';
+  }
+
+  function getInventoryReasonLabel(reason) {
+    return ({ initial_count: 'Initial Count', received: 'Received', used_removed: 'Used / Removed', correction: 'Correction' })[reason] || 'Adjustment';
+  }
+
+  function formatInventoryMovementTimestamp(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return 'Recorded time unavailable';
+    const sqlTimestamp = raw.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})(?:\.(\d+))?$/);
+    const isoTimestamp = sqlTimestamp
+      ? `${sqlTimestamp[1]}T${sqlTimestamp[2]}.${String(sqlTimestamp[3] || '').padEnd(3, '0').slice(0, 3)}Z`
+      : raw;
+    const date = new Date(isoTimestamp);
+    if (Number.isNaN(date.getTime())) return 'Recorded time unavailable';
+    const dateText = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(date);
+    const timeText = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date);
+    return `${dateText} · ${timeText}`;
+  }
+
+  function normalizeNonNegativeInteger(value) {
+    const number = typeof value === 'number' ? value : (typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value.trim()) : NaN);
+    return Number.isSafeInteger(number) && number >= 0 ? number : 0;
+  }
+
+  function normalizeNullableNonNegativeInteger(value) { return value === null || value === undefined || value === '' ? null : normalizeNonNegativeInteger(value); }
+  function normalizeNullableInteger(value) { if (value === null || value === undefined || value === '') return null; const number = typeof value === 'number' ? value : (typeof value === 'string' && /^-?\d+$/.test(value.trim()) ? Number(value.trim()) : NaN); return Number.isSafeInteger(number) ? number : null; }
 
   function compareHatsByName(left, right) {
     const orderingApi = resolveCatalogOrderingApi();
@@ -1198,6 +1409,9 @@
     getHatPhotoDisplay,
     getHatStatusLabel,
     formatHatBaseCost,
+    formatHatOnHand,
+    formatInventoryMovementTimestamp,
+    normalizeInventorySummary,
     sortHatRecords
   };
 }));

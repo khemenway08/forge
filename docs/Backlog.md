@@ -417,7 +417,7 @@ Potential later work:
 - More catalog fields
 - Bulk edits
 - Export and print tools
-- Inventory connections only if separately approved
+- Finished Hat location inventory only after the Blank Hat inventory foundation is proven
 
 ## Priority 13 — Additional Customer Product Categories
 
@@ -448,7 +448,6 @@ Do not build now:
 - AI assistant
 - Marketing automation
 - Promotional SMS
-- Retail inventory
 - Carrier tracking
 - Shipping-label purchasing
 - Separate shipped and picked-up actions

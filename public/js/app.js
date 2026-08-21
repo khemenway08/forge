@@ -111,6 +111,7 @@ const forgeStaffDesignCatalogApi = globalThis.ForgeStaffDesignCatalogApi;
 const forgeStaffDesignCatalog = globalThis.ForgeStaffDesignCatalog;
 const forgeStaffHatCatalogApi = globalThis.ForgeStaffHatCatalogApi;
 const forgeStaffHatCatalog = globalThis.ForgeStaffHatCatalog;
+const forgeStaffInventoryApi = globalThis.ForgeStaffInventoryApi;
 const forgeStaffMaterialCatalogApi = globalThis.ForgeStaffMaterialCatalogApi;
 const forgeStaffMaterialCatalog = globalThis.ForgeStaffMaterialCatalog;
 const forgeStaffFinishedHatCatalogApi = globalThis.ForgeStaffFinishedHatCatalogApi;
@@ -754,7 +755,8 @@ const staffApiClient = createOptionalStaffApiClient();
 const staffDesignCatalogApiClient = createOptionalStaffDesignCatalogApiClient();
 const staffDesignCatalogModule = createOptionalStaffDesignCatalogModule(staffDesignCatalogApiClient);
 const staffHatCatalogApiClient = createOptionalStaffHatCatalogApiClient();
-const staffHatCatalogModule = createOptionalStaffHatCatalogModule(staffHatCatalogApiClient);
+const staffInventoryApiClient = createOptionalStaffInventoryApiClient();
+const staffHatCatalogModule = createOptionalStaffHatCatalogModule(staffHatCatalogApiClient, staffInventoryApiClient);
 const staffMaterialCatalogApiClient = createOptionalStaffMaterialCatalogApiClient();
 const staffMaterialCatalogModule = createOptionalStaffMaterialCatalogModule(staffMaterialCatalogApiClient);
 const staffFinishedHatCatalogApiClient = createOptionalStaffFinishedHatCatalogApiClient();
@@ -887,7 +889,20 @@ function createOptionalStaffHatCatalogApiClient() {
   }
 }
 
-function createOptionalStaffHatCatalogModule(apiClient) {
+function createOptionalStaffInventoryApiClient() {
+  if (!forgeStaffInventoryApi || typeof forgeStaffInventoryApi.createForgeStaffInventoryApiClient !== 'function') {
+    console.error('Forge staff inventory API bootstrap skipped because ForgeStaffInventoryApi was unavailable.');
+    return null;
+  }
+  try {
+    return forgeStaffInventoryApi.createForgeStaffInventoryApiClient();
+  } catch (error) {
+    console.error('Forge staff inventory API bootstrap failed', error);
+    return null;
+  }
+}
+
+function createOptionalStaffHatCatalogModule(apiClient, inventoryApiClient) {
   if (!forgeStaffHatCatalog || typeof forgeStaffHatCatalog.createStaffHatCatalogModule !== 'function') {
     console.error('Forge staff hat catalog module bootstrap skipped because ForgeStaffHatCatalog was unavailable.');
     return null;
@@ -896,6 +911,7 @@ function createOptionalStaffHatCatalogModule(apiClient) {
   try {
     return forgeStaffHatCatalog.createStaffHatCatalogModule({
       apiClient,
+      inventoryApiClient,
       document,
       window,
       canLoadProtectedRecords() {

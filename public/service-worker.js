@@ -20,6 +20,7 @@ const PRECACHE_ASSETS = [
   `./js/forge-staff-design-catalog-api.js?v=${BUILD_VERSION}`,
   `./js/forge-staff-design-catalog.js?v=${BUILD_VERSION}`,
   `./js/forge-staff-hat-catalog-api.js?v=${BUILD_VERSION}`,
+  `./js/forge-staff-inventory-api.js?v=${BUILD_VERSION}`,
   `./js/forge-staff-hat-catalog.js?v=${BUILD_VERSION}`,
   `./js/forge-staff-material-catalog-api.js?v=${BUILD_VERSION}`,
   `./js/forge-staff-material-catalog.js?v=${BUILD_VERSION}`,

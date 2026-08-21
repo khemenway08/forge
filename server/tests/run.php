@@ -3910,6 +3910,27 @@ $runner->run('hat catalog migration creates the isolated forge_catalog_hats tabl
     assertTrue(strpos($migrationSource, 'status VARCHAR(16) NOT NULL') !== false);
 });
 
+$runner->run('inventory migration and normalizers preserve Not Counted and initial-count semantics', static function (): void {
+    $migrationSource = file_get_contents(dirname(__DIR__, 2) . '/server/migrations/017_create_forge_inventory.sql');
+    assertTrue(is_string($migrationSource));
+    assertTrue(strpos($migrationSource, 'CREATE TABLE IF NOT EXISTS forge_inventory_items') !== false);
+    assertTrue(strpos($migrationSource, 'CREATE TABLE IF NOT EXISTS forge_inventory_movements') !== false);
+    assertTrue(strpos($migrationSource, 'quantity_delta INT DEFAULT NULL') !== false);
+
+    $movement = \Forge\Server\normalizeInventoryMovement([
+        'id' => 'movement-1',
+        'movement_type' => 'count',
+        'reason_code' => 'initial_count',
+        'quantity_before' => null,
+        'quantity_after' => 0,
+        'quantity_delta' => null,
+        'created_at' => '2026-08-21 12:00:00.000000',
+    ]);
+    assertSame(null, $movement['quantity_before']);
+    assertSame(0, $movement['quantity_after']);
+    assertSame(null, $movement['quantity_delta']);
+});
+
 $runner->run('hat catalog validation accepts approved optional fields and blank base cost remains null', static function (): void {
     $normalized = \Forge\Server\validateAndNormalizeStaffCatalogHatInput([
         'hat_name' => '  Richardson 112 Navy White  ',
@@ -5314,6 +5335,17 @@ function createHatCatalogTestPdo(): PDO
             status TEXT NOT NULL,
             notes TEXT DEFAULT NULL,
             sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )'
+    );
+    $pdo->exec(
+        'CREATE TABLE forge_inventory_items (
+            id TEXT PRIMARY KEY,
+            subject_type TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            on_hand_quantity INTEGER DEFAULT NULL,
+            version INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )'

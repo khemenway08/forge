@@ -8,7 +8,7 @@ const hatCatalogModule = require('../public/js/forge-staff-hat-catalog.js');
 const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
 const catalogCssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
 
-test('hat record normalization preserves nullable fields and base cost', () => {
+test('hat record normalization preserves nullable fields, cost, and Not Counted inventory', () => {
   const normalized = hatCatalogModule.normalizeHatRecord({
     id: ' hat-1 ',
     hat_name: ' Richardson 112 Navy White ',
@@ -18,6 +18,7 @@ test('hat record normalization preserves nullable fields and base cost', () => {
     color: ' Navy / White ',
     vendor: ' Hilltop Vendor ',
     base_cost: ' 12.50 ',
+    inventory: { counted: false, on_hand_quantity: null, version: 0 },
     status: ' active ',
     notes: ' Best seller '
   });
@@ -26,6 +27,19 @@ test('hat record normalization preserves nullable fields and base cost', () => {
   assert.equal(normalized.photo_path, '/uploads/hat-photos/hat-1.png');
   assert.equal(normalized.base_cost, '12.50');
   assert.equal(hatCatalogModule.formatHatBaseCost(normalized.base_cost), '$12.50');
+  assert.equal(hatCatalogModule.formatHatOnHand(normalized.inventory), 'Not Counted');
+});
+
+test('hat inventory formatting preserves a confirmed zero separately from Not Counted', () => {
+  const countedZero = hatCatalogModule.normalizeInventorySummary({ counted: true, on_hand_quantity: 0, version: 1 });
+  assert.equal(countedZero.counted, true);
+  assert.equal(hatCatalogModule.formatHatOnHand(countedZero), '0');
+});
+
+test('inventory movement timestamps render as local staff-facing date and time without SQL microseconds', () => {
+  const formatted = hatCatalogModule.formatInventoryMovementTimestamp('2026-08-21 17:03:26.000000');
+  assert.match(formatted, /Aug 21, 2026 · \d{1,2}:\d{2}\s(?:AM|PM)/);
+  assert.doesNotMatch(formatted, /\.000000|2026-08-21/);
 });
 
 test('hat filters cover search plus manufacturer model and status', () => {
@@ -84,6 +98,18 @@ test('hat catalog wires shared sort and reorder controls while keeping card edit
   assert.match(moduleSource, /catalog-sort-hats/);
   assert.match(moduleSource, /catalog-hat-reorder-handle/);
   assert.match(moduleSource, /reorderHats\(orderedIds\)/);
+  assert.match(moduleSource, /catalog-hat-inventory-save/);
+  assert.match(moduleSource, /Initial count confirmed/);
+  assert.match(moduleSource, /Cost Each/);
+  assert.match(moduleSource, /Physical Count/);
+  assert.match(moduleSource, /Save Initial Count/);
+  assert.match(moduleSource, /Adjust Quantity/);
+  assert.match(moduleSource, /Inventory History/);
+  assert.match(moduleSource, /staff-hat-editor-photo-inventory/);
+  assert.match(catalogCssSource, /\.staff-hat-editor-photo-inventory\s*\{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1\.3fr\)\s+minmax\(320px,\s*\.7fr\);/);
+  assert.match(catalogCssSource, /container-type:\s*inline-size;/);
+  assert.match(catalogCssSource, /@container\s*\(max-width:\s*410px\)/);
+  assert.doesNotMatch(moduleSource, /catalog-hat-inventory-reason/);
 });
 
 test('initial unauthenticated hat render does not request protected records and authenticated render loads hats', async () => {

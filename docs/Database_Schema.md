@@ -348,6 +348,21 @@ Current catalog areas include:
 - Linking relationships
 - Sort order and display status
 
+## Blank Hat Inventory
+
+Blank Hat stock is stored in the reusable inventory domain, not as quantity columns on `forge_catalog_hats`.
+
+- `forge_inventory_items` identifies an inventory-tracked subject. The current subject type is `catalog_hat`.
+- `on_hand_quantity` is nullable: `NULL` means **Not Counted**, while `0` is a confirmed physical count of zero.
+- `version` supports optimistic concurrency-safe count and adjustment updates.
+- `forge_inventory_movements` is immutable history with the prior and confirmed quantities, reason, optional note, and timestamp.
+- The first physical count uses `reason_code = initial_count`, `quantity_before = NULL`, `quantity_after = confirmed quantity`, and `quantity_delta = NULL`. It intentionally does not invent a numeric delta from an unknown quantity.
+- Later movements record their signed delta and use `received`, `used_removed`, or `correction` reasons.
+
+Blank Hats have one global on-hand quantity; no inventory location is exposed or stored for them. Finished Hat locations can later extend the same item and movement concepts without replacing this core model.
+
+Inventory is Hilltop-specific in this release. It contains no Square, WooCommerce, or provider identifiers; a future external mapping boundary can be added without coupling the core inventory records to Square.
+
 Rules:
 
 - Catalog records do not change order totals.
@@ -441,6 +456,8 @@ Current migration sequence includes:
 013  Add cancelled_at
 014  Create outbound messages
 015  Add completed_at
+016  Add Design create idempotency
+017  Create reusable inventory items and movements
 ```
 
 Compatibility rules:

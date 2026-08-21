@@ -1,0 +1,49 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const inventoryApi = require('../public/js/forge-staff-inventory-api.js');
+
+function jsonResponse(status, payload) {
+  return { status, ok: status >= 200 && status < 300, async text() { return JSON.stringify(payload); } };
+}
+
+test('inventory API preserves Not Counted and an unambiguous initial-count movement', async () => {
+  const requests = [];
+  const client = inventoryApi.createForgeStaffInventoryApiClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return jsonResponse(200, { data: { inventory: {
+        subject_type: 'catalog_hat', subject_id: 'hat-1', counted: true, on_hand_quantity: 0, version: 1,
+        movements: [{ id: 'move-1', movement_type: 'count', reason_code: 'initial_count', quantity_before: null, quantity_after: 0, quantity_delta: null, created_at: '2026-08-21 12:00:00.000000' }]
+      } } });
+    }
+  });
+  const result = await client.adjustSubjectInventory({ subject_type: 'catalog_hat', subject_id: 'hat-1', expected_quantity: null, expected_version: 0, target_quantity: 0, reason_code: 'initial_count', note: '' });
+  assert.equal(result.inventory.counted, true);
+  assert.equal(result.inventory.on_hand_quantity, 0);
+  assert.equal(result.inventory.movements[0].quantity_before, null);
+  assert.equal(result.inventory.movements[0].quantity_delta, null);
+  assert.equal(requests[0].url, '/api/v1/staff/inventory/stock.php');
+  assert.deepEqual(JSON.parse(requests[0].options.body), { subject_type: 'catalog_hat', subject_id: 'hat-1', expected_quantity: null, expected_version: 0, target_quantity: 0, reason_code: 'initial_count', note: '' });
+});
+
+test('inventory API reads a subject snapshot and preserves Not Counted', async () => {
+  const client = inventoryApi.createForgeStaffInventoryApiClient({
+    fetchImpl: async (url, options) => {
+      assert.match(url, /subject_type=catalog_hat/);
+      assert.match(url, /subject_id=hat-2/);
+      assert.equal(options.method, 'GET');
+      return jsonResponse(200, { data: { inventory: { subject_type: 'catalog_hat', subject_id: 'hat-2', counted: false, on_hand_quantity: null, version: 0, movements: [] } } });
+    }
+  });
+  const result = await client.getSubjectInventory('catalog_hat', 'hat-2');
+  assert.equal(result.inventory.counted, false);
+  assert.equal(result.inventory.on_hand_quantity, null);
+  assert.equal(result.inventory.version, 0);
+});
+
+test('inventory conflict exposes the safe reload message', async () => {
+  const client = inventoryApi.createForgeStaffInventoryApiClient({
+    fetchImpl: async () => jsonResponse(409, { error: { code: 'inventory_conflict', message: 'This inventory record was updated elsewhere. Reload and try again.' } })
+  });
+  await assert.rejects(() => client.getSubjectInventory('catalog_hat', 'hat-3'), (error) => error.code === 'inventory_conflict');
+});

@@ -161,8 +161,9 @@ Confirmed manual reliability test:
 - Card ordering and sorting
 - Design, hat, and material linking
 - Finished-hat linking workspace
+- Blank Hat physical inventory with Not Counted, On Hand, adjustment controls, and movement history
 
-The catalog remains isolated from customer ordering, payment, production trays, active order status, and inventory.
+The catalog and its inventory remain isolated from customer ordering, payment, production trays, and active order status.
 
 ## Included but Not Fully Proven
 
@@ -181,7 +182,6 @@ The catalog remains isolated from customer ordering, payment, production trays, 
 - Separate Mark Picked Up action
 - Carrier tracking
 - Shipping-label purchasing
-- Retail inventory
 - Customer accounts
 - Marketing automation
 - Promotional SMS
@@ -488,6 +488,7 @@ Forge currently manages:
 - Completion and tray release
 - Outbound confirmation-message records
 - Hilltop Design Catalog data
+- Blank Hat inventory items and movement history
 
 WooCommerce may later become a connected commercial record, but Forge must remain independently durable.
 
