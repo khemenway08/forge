@@ -23,6 +23,8 @@
     notes: ''
   };
   const MISSING_PHOTO_COPY = 'No photo yet';
+  const HAT_PHOTO_MAX_BYTES = 5242880;
+  const HAT_PHOTO_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
   const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
   const SORT_OPTIONS = [
     { value: 'custom', label: 'Custom Order' },
@@ -66,6 +68,8 @@
       dialogPhotoPath: '',
       dialogPhotoFile: null,
       dialogPhotoFileName: '',
+      dialogPhotoPreviewUrl: '',
+      dialogPhotoDragActive: false,
       inventoryLoading: false,
       inventorySaving: false,
       inventory: null,
@@ -554,13 +558,13 @@
               <div class="staff-hat-editor-photo-inventory staff-design-dialog-field--wide">
                 <div class="staff-design-dialog-field">
                   <span>Hat Photo</span>
-                  <div class="staff-design-thumbnail-panel">
+                  <div class="staff-design-thumbnail-panel staff-hat-photo-dropzone" data-catalog-hat-photo-dropzone>
                     <div class="staff-design-thumbnail-preview" data-catalog-hat-photo-preview></div>
                     <label class="secondary-button staff-design-thumbnail-input">
                       <input id="catalog-hat-photo" name="photo" type="file" accept="image/png,image/jpeg,image/webp">
                       Choose Photo
                     </label>
-                    <p class="staff-design-thumbnail-copy" data-catalog-hat-photo-copy>No photo selected</p>
+                    <p class="staff-design-thumbnail-copy" data-catalog-hat-photo-copy>Drop hat photo here, or choose a file</p>
                   </div>
                 </div>
                 <section class="staff-inventory-panel" data-catalog-hat-inventory-panel hidden>
@@ -616,6 +620,10 @@
       });
       dialogBackdrop.addEventListener('change', onDialogChange);
       dialogBackdrop.addEventListener('keydown', onDialogKeydown);
+      dialogBackdrop.addEventListener('dragenter', onPhotoDragEnter);
+      dialogBackdrop.addEventListener('dragover', onPhotoDragOver);
+      dialogBackdrop.addEventListener('dragleave', onPhotoDragLeave);
+      dialogBackdrop.addEventListener('drop', onPhotoDrop);
       formNode.addEventListener('submit', onDialogSubmit);
     }
 
@@ -640,6 +648,8 @@
       state.dialogPhotoPath = record?.photo_path || '';
       state.dialogPhotoFile = null;
       state.dialogPhotoFileName = '';
+      clearHatPhotoPreviewUrl();
+      state.dialogPhotoDragActive = false;
       state.inventory = record?.inventory || null;
       state.inventoryError = '';
       state.inventoryLoading = false;
@@ -662,6 +672,7 @@
       }
       state.dialogOpen = false;
       state.dialogSaving = false;
+      clearHatPhotoPreviewUrl();
       dialogBackdrop.hidden = true;
       if (lastFocusTarget instanceof HTMLElement) {
         lastFocusTarget.focus();
@@ -714,7 +725,11 @@
         return;
       }
 
-      if (state.dialogPhotoPath) {
+      const dropzone = dialogBackdrop.querySelector('[data-catalog-hat-photo-dropzone]');
+      if (dropzone?.classList) dropzone.classList.toggle('staff-hat-photo-dropzone--dragging', state.dialogPhotoDragActive);
+      if (state.dialogPhotoPreviewUrl) {
+        previewNode.innerHTML = `<img src="${escapeAttribute(state.dialogPhotoPreviewUrl)}" alt="Selected hat photo preview"${PINTEREST_NOPIN_IMAGE_ATTRIBUTES}>`;
+      } else if (state.dialogPhotoPath) {
         previewNode.innerHTML = `<img src="${escapeAttribute(state.dialogPhotoPath)}" alt="Current hat photo"${PINTEREST_NOPIN_IMAGE_ATTRIBUTES}>`;
       } else {
         previewNode.innerHTML = `<div class="staff-design-thumbnail-preview-placeholder">${escapeHtml(MISSING_PHOTO_COPY)}</div>`;
@@ -722,7 +737,7 @@
 
       copyNode.textContent = state.dialogPhotoFileName
         ? `Selected: ${state.dialogPhotoFileName}`
-        : (state.dialogPhotoPath ? 'Current photo will remain until replaced.' : 'No photo selected');
+        : (state.dialogPhotoPath ? 'Current photo will remain until replaced.' : 'Drop hat photo here, or choose a file');
     }
 
     async function loadInventory(hatId) {
@@ -876,14 +891,60 @@
         return;
       }
 
-      const file = target.files && target.files[0] ? target.files[0] : null;
-      state.dialogPhotoFile = file;
-      state.dialogPhotoFileName = file ? String(file.name || '').trim() : '';
-      state.dialogFieldErrors = {
-        ...state.dialogFieldErrors
-      };
+      selectHatPhotoFiles(target.files);
+    }
+
+    function getHatPhotoDropzone(target) {
+      return target?.closest ? target.closest('[data-catalog-hat-photo-dropzone]') : null;
+    }
+
+    function onPhotoDragEnter(event) {
+      if (!getHatPhotoDropzone(event.target)) return;
+      event.preventDefault();
+      state.dialogPhotoDragActive = true;
+      renderPhotoPanel();
+    }
+
+    function onPhotoDragOver(event) {
+      if (!getHatPhotoDropzone(event.target)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    }
+
+    function onPhotoDragLeave(event) {
+      if (!getHatPhotoDropzone(event.target)) return;
+      state.dialogPhotoDragActive = false;
+      renderPhotoPanel();
+    }
+
+    function onPhotoDrop(event) {
+      if (!getHatPhotoDropzone(event.target)) return;
+      event.preventDefault();
+      state.dialogPhotoDragActive = false;
+      selectHatPhotoFiles(event.dataTransfer?.files);
+    }
+
+    function selectHatPhotoFiles(files) {
+      const selection = validateHatPhotoFiles(files);
+      if (selection.error) {
+        state.dialogFieldErrors = { ...state.dialogFieldErrors, photo: selection.error };
+        state.dialogError = selection.error;
+        renderDialog();
+        return;
+      }
+      clearHatPhotoPreviewUrl();
+      state.dialogPhotoFile = selection.file;
+      state.dialogPhotoFileName = String(selection.file.name || '').trim();
+      state.dialogPhotoPreviewUrl = createHatPhotoPreviewUrl(selection.file);
+      state.dialogFieldErrors = { ...state.dialogFieldErrors };
       delete state.dialogFieldErrors.photo;
+      state.dialogError = '';
       renderDialog();
+    }
+
+    function clearHatPhotoPreviewUrl() {
+      if (state.dialogPhotoPreviewUrl && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(state.dialogPhotoPreviewUrl);
+      state.dialogPhotoPreviewUrl = '';
     }
 
     function onDialogKeydown(event) {
@@ -1218,6 +1279,26 @@
     };
   }
 
+  function validateHatPhotoFiles(files) {
+    const photoFiles = files ? Array.from(files) : [];
+    if (photoFiles.length !== 1) {
+      return { file: null, error: photoFiles.length > 1 ? 'Choose only one hat photo.' : 'Choose a PNG, JPEG, or WebP hat photo to upload.' };
+    }
+    const file = photoFiles[0];
+    if (!HAT_PHOTO_MIME_TYPES.includes(String(file?.type || '').toLowerCase())) {
+      return { file: null, error: 'Only PNG, JPEG, and WebP hat photos are allowed.' };
+    }
+    if (!Number.isFinite(Number(file?.size)) || Number(file.size) <= 0 || Number(file.size) > HAT_PHOTO_MAX_BYTES) {
+      return { file: null, error: 'Hat photo files must be 5 MB or smaller.' };
+    }
+    return { file, error: '' };
+  }
+
+  function createHatPhotoPreviewUrl(file) {
+    if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return '';
+    return URL.createObjectURL(file);
+  }
+
   function formatHatOnHand(inventory) {
     const normalized = normalizeInventorySummary(inventory);
     return normalized.counted ? String(normalized.on_hand_quantity) : 'Not Counted';
@@ -1402,6 +1483,8 @@
     STATUS_LABELS,
     DEFAULT_FORM_VALUES,
     MISSING_PHOTO_COPY,
+    HAT_PHOTO_MAX_BYTES,
+    HAT_PHOTO_MIME_TYPES,
     SORT_OPTIONS,
     createStaffHatCatalogModule,
     filterHatRecords,
@@ -1412,6 +1495,8 @@
     formatHatOnHand,
     formatInventoryMovementTimestamp,
     normalizeInventorySummary,
+    validateHatPhotoFiles,
+    createHatPhotoPreviewUrl,
     sortHatRecords
   };
 }));

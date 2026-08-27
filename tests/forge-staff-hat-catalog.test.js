@@ -83,6 +83,27 @@ test('hat edit photo preview uses the shared contain-based preview frame instead
   assert.doesNotMatch(catalogCssSource, /\.staff-design-thumbnail-preview img\s*\{[\s\S]*object-fit:\s*cover;/);
 });
 
+test('hat photo selection validation supports the same single PNG JPEG and WebP upload rules for browse and drop', () => {
+  const validPhoto = { name: 'hat.webp', type: 'image/webp', size: 1024 };
+  assert.equal(hatCatalogModule.validateHatPhotoFiles([validPhoto]).file, validPhoto);
+  assert.match(hatCatalogModule.validateHatPhotoFiles([{ name: 'hat.gif', type: 'image/gif', size: 1024 }]).error, /Only PNG, JPEG, and WebP/);
+  assert.match(hatCatalogModule.validateHatPhotoFiles([validPhoto, validPhoto]).error, /only one hat photo/i);
+  assert.match(hatCatalogModule.validateHatPhotoFiles([{ name: 'large.png', type: 'image/png', size: hatCatalogModule.HAT_PHOTO_MAX_BYTES + 1 }]).error, /5 MB/);
+});
+
+test('add and edit hat photo areas support drag and drop with the existing file selection path', () => {
+  const moduleSource = fs.readFileSync(path.join(process.cwd(), 'public/js/forge-staff-hat-catalog.js'), 'utf8');
+  assert.match(moduleSource, /data-catalog-hat-photo-dropzone/);
+  assert.match(moduleSource, /addEventListener\('dragenter', onPhotoDragEnter\)/);
+  assert.match(moduleSource, /addEventListener\('drop', onPhotoDrop\)/);
+  assert.match(moduleSource, /selectHatPhotoFiles\(target\.files\)/);
+  assert.match(moduleSource, /selectHatPhotoFiles\(event\.dataTransfer\?\.files\)/);
+  assert.match(moduleSource, /staff-hat-photo-dropzone--dragging/);
+  assert.match(moduleSource, /createHatPhotoPreviewUrl\(selection\.file\)/);
+  assert.match(moduleSource, /Drop hat photo here, or choose a file/);
+  assert.match(catalogCssSource, /\.staff-hat-photo-dropzone--dragging/);
+});
+
 test('hat cards and dialog actions use the shared top-aligned catalog pattern', () => {
   const moduleSource = fs.readFileSync(path.join(process.cwd(), 'public/js/forge-staff-hat-catalog.js'), 'utf8');
   assert.match(moduleSource, /staff-catalog-designs-filter staff-catalog-designs-filter--search/);

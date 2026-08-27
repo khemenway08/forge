@@ -3256,7 +3256,7 @@ h1 {
 
 .staff-finished-hat-card-summary-line {
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -3265,6 +3265,9 @@ h1 {
   color: var(--hilltop-forest);
   font-weight: 800;
 }
+
+.staff-finished-hat-card .staff-design-card-body { min-height: 112px; }
+.staff-finished-hat-inventory-summary { color: var(--staff-text); font-weight: 700; }
 
 .staff-finished-hat-dialog-header-actions {
   display: flex;
@@ -3292,7 +3295,14 @@ h1 {
 .staff-finished-hat-detail-badges {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
+  align-items: center;
+}
+
+.staff-finished-hat-placement-meta {
+  color: var(--staff-muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .staff-finished-hat-detail-field {
@@ -3347,6 +3357,87 @@ h1 {
   align-items: center;
   justify-content: flex-end;
   max-width: 100%;
+}
+
+.staff-finished-hat-build-details {
+  display: grid;
+  gap: 0;
+  padding: 0;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgba(255,255,255,.03);
+}
+
+.staff-finished-hat-build-details-header {
+  padding: 11px 14px;
+  border-bottom: 1px solid rgba(255,255,255,.1);
+}
+
+.staff-finished-hat-build-details-header > span,
+.staff-finished-hat-build-details-label {
+  color: var(--staff-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.staff-finished-hat-build-details-rows {
+  display: grid;
+}
+
+.staff-finished-hat-build-details-row {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+}
+
+.staff-finished-hat-build-details-row + .staff-finished-hat-build-details-row {
+  border-top: 1px solid rgba(255,255,255,.08);
+}
+
+.staff-finished-hat-build-details-value,
+.staff-finished-hat-build-details-linked {
+  min-width: 0;
+}
+
+.staff-finished-hat-build-details-linked {
+  overflow: hidden;
+  color: var(--staff-text);
+  font-size: 14px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staff-finished-hat-build-details-not-linked {
+  display: block;
+  color: var(--staff-text);
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.staff-finished-hat-build-details-not-linked {
+  color: var(--staff-muted);
+  font-weight: 600;
+}
+
+.staff-finished-hat-build-details-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.staff-finished-hat-build-details-actions .secondary-button,
+.staff-finished-hat-build-details-actions .ghost-button {
+  min-height: 32px;
+  padding: 5px 9px;
+  border-radius: 9px;
+  font-size: 12px;
 }
 
 .ghost-button {
@@ -3514,6 +3605,12 @@ h1 {
   align-content: start;
 }
 
+.staff-finished-hat-picker-grid--hat {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
 .staff-finished-hat-picker-tile {
   width: 100%;
   display: block;
@@ -3550,18 +3647,13 @@ h1 {
   background: rgba(255,255,255,.05);
 }
 
-.staff-finished-hat-picker-media--design,
-.staff-finished-hat-picker-media--hat {
+.staff-finished-hat-picker-media--design {
   background: rgba(255,255,255,.06);
 }
 
 .staff-finished-hat-picker-media--design {
   aspect-ratio: 4 / 3;
   min-height: 110px;
-}
-
-.staff-finished-hat-picker-media--hat {
-  background: #fff;
 }
 
 .staff-finished-hat-picker-media--material {
@@ -3581,10 +3673,41 @@ h1 {
   transform: none;
 }
 
-.staff-finished-hat-picker-image--design,
-.staff-finished-hat-picker-image--hat {
+.staff-finished-hat-picker-image--design {
   object-fit: contain;
 }
+
+.finished-hat-hat-picker-option {
+  cursor: pointer;
+}
+
+.finished-hat-hat-picker-option--selected .staff-design-card {
+  border-color: rgba(239,108,26,.8);
+  box-shadow: 0 0 0 2px rgba(239,108,26,.24), 0 18px 42px rgba(0,0,0,.18);
+}
+
+.finished-hat-hat-picker-option:focus-visible {
+  outline: 2px solid rgba(239,108,26,.96);
+  outline-offset: 2px;
+  border-radius: 24px;
+}
+
+.finished-hat-hat-picker-meta {
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 3px;
+  padding: 12px 14px 14px;
+}
+
+.finished-hat-hat-picker-meta strong,
+.finished-hat-hat-picker-meta > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.finished-hat-hat-picker-meta strong { color: var(--staff-text); font-size: 13px; line-height: 1.3; }
+.finished-hat-hat-picker-meta > span { color: var(--staff-muted); font-size: 12px; line-height: 1.3; }
 
 .staff-finished-hat-picker-image--material {
   width: 100%;
@@ -4191,6 +4314,15 @@ body.forge-catalog-image-viewer-open {
 
   .staff-finished-hat-linked-summary {
     grid-template-columns: 1fr;
+  }
+
+  .staff-finished-hat-build-details-row {
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+
+  .staff-finished-hat-build-details-actions {
+    justify-content: flex-start;
   }
 
   .staff-finished-hat-picker-toolbar {
@@ -5896,5 +6028,15 @@ body.forge-catalog-image-viewer-open {
 .staff-finished-hat-location-manager, .staff-finished-hat-location-editor, .staff-finished-hat-location-list { display: grid; gap: 10px; }
 .staff-finished-hat-location-editor { padding-top: 12px; border-top: 1px solid var(--line, #d7d1c5); }
 .staff-finished-hat-location-editor label { display: grid; gap: 5px; font-weight: 600; }
+.staff-finished-hat-location-list .staff-finished-hat-inventory-row > div { display: grid; gap: 2px; }
+.staff-finished-hat-location-list .staff-finished-hat-inventory-row > div > span { font-size: 12px; }
+.staff-finished-hat-location-add { justify-self: start; }
+
+.staff-hat-photo-dropzone { border-radius: 16px; transition: border-color .16s ease, background .16s ease, box-shadow .16s ease; }
+.staff-hat-photo-dropzone--dragging { background: rgba(239,108,26,.1); box-shadow: 0 0 0 2px rgba(239,108,26,.5); }
+.staff-hat-photo-dropzone--dragging .staff-design-thumbnail-preview { border-color: rgba(239,108,26,.7); }
+.staff-finished-hat-photo-dropzone { border-radius: 16px; transition: border-color .16s ease, background .16s ease, box-shadow .16s ease; }
+.staff-finished-hat-photo-dropzone--dragging { background: rgba(239,108,26,.1); box-shadow: 0 0 0 2px rgba(239,108,26,.5); }
+.staff-finished-hat-photo-dropzone--dragging .staff-design-thumbnail-preview { border-color: rgba(239,108,26,.7); }
 @media (max-width: 760px) { .staff-finished-hat-detail-top { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 640px) { .staff-finished-hat-inventory-row > *, .staff-finished-hat-inventory-actions, .staff-finished-hat-inventory-initial-count { flex: 1 1 100%; } .staff-finished-hat-inventory-row button, .staff-finished-hat-inventory-transfer button { width: 100%; } .staff-finished-hat-inventory-more { width: 100%; } }

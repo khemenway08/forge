@@ -134,19 +134,23 @@ test('visual picker layout uses a constrained left column, flexible right column
   assert.match(catalogCssSource, /\.staff-link-picker-toolbar-actions\s*\{[\s\S]*flex-wrap:\s*wrap;[\s\S]*justify-content:\s*flex-end;/);
 });
 
-test('visual picker tile structure is image-only and independent from generic catalog cards', () => {
+test('visual picker keeps generic tiles isolated from the dedicated Hat product cards', () => {
   assert.match(catalogCssSource, /\.staff-finished-hat-picker-tile\s*\{[\s\S]*display:\s*block;[\s\S]*min-width:\s*0;[\s\S]*position:\s*relative;[\s\S]*overflow:\s*hidden;/);
   assert.match(catalogCssSource, /\.staff-finished-hat-picker-tile__marker\s*\{/);
   assert.doesNotMatch(catalogCssSource, /\.staff-finished-hat-picker-body\s*\{/);
   assert.doesNotMatch(catalogCssSource, /\.staff-finished-hat-picker-title\s*\{/);
-  assert.doesNotMatch(catalogCssSource, /\.staff-finished-hat-picker-meta\s*\{/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-picker-grid--hat\s*\{[\s\S]*grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(240px,\s*1fr\)\);[\s\S]*gap:\s*16px;[\s\S]*align-items:\s*start;/);
+  assert.match(catalogCssSource, /\.staff-design-card-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(240px,\s*1fr\)\);[\s\S]*gap:\s*16px;[\s\S]*align-items:\s*start;/);
+  assert.match(catalogCssSource, /\.staff-design-card\s*\{[\s\S]*display:\s*grid;[\s\S]*grid-template-rows:\s*auto 1fr;[\s\S]*overflow:\s*hidden;/);
+  assert.match(catalogCssSource, /\.staff-design-card-thumb\s*\{[\s\S]*min-height:\s*220px;[\s\S]*overflow:\s*hidden;/);
 });
 
-test('visual picker design and hat frames use dedicated contain-based image treatment while material keeps square swatches', () => {
+test('visual picker designs and materials retain their specialized frames while Choose Hat reuses the Hats catalog media frame', () => {
   assert.match(catalogCssSource, /\.staff-finished-hat-picker-media\s*\{[\s\S]*aspect-ratio:\s*4 \/ 3;[\s\S]*min-height:\s*110px;/);
   assert.match(catalogCssSource, /\.staff-finished-hat-picker-media--design\s*\{[\s\S]*aspect-ratio:\s*4 \/ 3;[\s\S]*min-height:\s*110px;/);
   assert.match(catalogCssSource, /\.staff-finished-hat-picker-media--material\s*\{[\s\S]*aspect-ratio:\s*1 \/ 1;/);
-  assert.match(catalogCssSource, /\.staff-finished-hat-picker-image--design,\s*\.staff-finished-hat-picker-image--hat\s*\{[\s\S]*object-fit:\s*contain;/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-picker-image--design\s*\{[\s\S]*object-fit:\s*contain;/);
+  assert.match(catalogCssSource, /\.staff-design-card-thumb img\s*\{[\s\S]*height:\s*220px;[\s\S]*object-fit:\s*cover;/);
   assert.match(catalogCssSource, /\.staff-finished-hat-picker-image--material\s*\{[\s\S]*height:\s*100%;/);
   assert.match(catalogCssSource, /\.staff-finished-hat-picker-image--material-contain\s*\{[\s\S]*object-fit:\s*contain;/);
   assert.match(catalogCssSource, /\.staff-finished-hat-picker-image--material-cover\s*\{[\s\S]*object-fit:\s*cover;/);
@@ -169,7 +173,7 @@ test('finished hat catalog images and picker thumbnails add Pinterest opt-out at
   assert.match(photoDisplay.html, /\balt="/);
   assert.match(finishedHatSource, /const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';/);
   assert.match(finishedHatSource, /thumbnailHtml:\s*design\.thumbnail_path[\s\S]*staff-finished-hat-picker-image--design[\s\S]*\$\{PINTEREST_NOPIN_IMAGE_ATTRIBUTES\}/);
-  assert.match(finishedHatSource, /thumbnailHtml:\s*hat\.photo_path[\s\S]*staff-finished-hat-picker-image--hat[\s\S]*\$\{PINTEREST_NOPIN_IMAGE_ATTRIBUTES\}/);
+  assert.match(finishedHatSource, /thumbnailHtml:\s*hat\.photo_path[\s\S]*finished-hat-hat-picker-image[\s\S]*\$\{PINTEREST_NOPIN_IMAGE_ATTRIBUTES\}/);
   assert.match(finishedHatSource, /thumbnailHtml:\s*material\.swatch_path[\s\S]*staff-finished-hat-picker-image--material[\s\S]*\$\{PINTEREST_NOPIN_IMAGE_ATTRIBUTES\}/);
   assert.match(finishedHatSource, /function getFinishedHatPreviewDisplay\(file, photoPath, finishedHatName\)/);
   assert.match(finishedHatSource, /html: `<img src="\$\{escapeAttribute\(objectUrl\)\}" alt="\$\{escapeAttribute\(\(finishedHatName \|\| 'Finished hat'\) \+ ' preview'\)\}"\$\{PINTEREST_NOPIN_IMAGE_ATTRIBUTES\}>`/);
@@ -341,7 +345,7 @@ test('picker search filters and clear filters update the visible library results
   });
   await flushMicrotasks();
 
-  assert.match(harness.formNode.innerHTML, /staff-finished-hat-picker-tile__media staff-finished-hat-picker-media staff-finished-hat-picker-media--hat/);
+  assert.match(harness.formNode.innerHTML, /finished-hat-hat-picker-card/);
   harness.dialogBackdrop.dispatch('input', {
     target: { dataset: { action: 'catalog-picker-search' }, value: 'richardson' }
   });
@@ -433,10 +437,10 @@ test('clear link and escape close behave safely in the visual picker', async () 
 
   assert.equal(harness.calls.updateFinishedHat.length, 1);
   assert.equal(harness.calls.updateFinishedHat[0].payload.material_id, '');
-  assert.match(harness.formNode.innerHTML, /Needs Design \+ Material|Needs Material/);
+  assert.match(harness.formNode.innerHTML, /Material[\s\S]*Not linked[\s\S]*Choose Material/);
 });
 
-test('picker uses the same image-only tile renderer for unfiltered filtered one-result zero-result and cached reopen states', async () => {
+test('picker uses its appropriate result renderer for unfiltered filtered one-result zero-result and cached reopen states', async () => {
   const harness = createFinishedHatCatalogHarness({
     designs: [
       { id: 'design-1', design_name: 'Texas Flag', category: 'Patriotic', production_method: 'Acrylic', status: 'active' },
@@ -462,11 +466,19 @@ test('picker uses the same image-only tile renderer for unfiltered filtered one-
     });
     await flushMicrotasks();
 
-    assert.match(harness.formNode.innerHTML, /staff-finished-hat-picker-tile/);
+    assert.match(
+      harness.formNode.innerHTML,
+      type === 'hat' ? /finished-hat-hat-picker-option/ : /staff-finished-hat-picker-tile/
+    );
     if (type === 'design') {
       assert.match(harness.formNode.innerHTML, /staff-finished-hat-picker-grid--design/);
     }
-    assert.doesNotMatch(harness.formNode.innerHTML, /staff-design-card-body|staff-design-card-top|staff-design-status-badge|staff-design-card-thumb/);
+    if (type === 'hat') {
+      assert.match(harness.formNode.innerHTML, /staff-design-card-thumb[\s\S]*staff-design-card-body/);
+      assert.doesNotMatch(harness.formNode.innerHTML, /staff-design-card-top|staff-design-status-badge/);
+    } else {
+      assert.doesNotMatch(harness.formNode.innerHTML, /staff-design-card-body|staff-design-card-top|staff-design-status-badge|staff-design-card-thumb/);
+    }
 
     if (type === 'design') {
       harness.dialogBackdrop.dispatch('input', {
@@ -482,7 +494,10 @@ test('picker uses the same image-only tile renderer for unfiltered filtered one-
       });
     }
 
-    assert.match(harness.formNode.innerHTML, /staff-finished-hat-picker-tile/);
+    assert.match(
+      harness.formNode.innerHTML,
+      type === 'hat' ? /finished-hat-hat-picker-option/ : /staff-finished-hat-picker-tile/
+    );
     assert.doesNotMatch(harness.formNode.innerHTML, /staff-finished-hat-picker-body|staff-finished-hat-picker-title|staff-finished-hat-picker-meta/);
 
     harness.dialogBackdrop.dispatch('input', {
@@ -498,8 +513,15 @@ test('picker uses the same image-only tile renderer for unfiltered filtered one-
     });
     await flushMicrotasks();
 
-    assert.match(harness.formNode.innerHTML, /staff-finished-hat-picker-tile/);
-    assert.doesNotMatch(harness.formNode.innerHTML, /staff-design-card-body|staff-finished-hat-picker-body/);
+    assert.match(
+      harness.formNode.innerHTML,
+      type === 'hat' ? /finished-hat-hat-picker-option/ : /staff-finished-hat-picker-tile/
+    );
+    if (type === 'hat') {
+      assert.match(harness.formNode.innerHTML, /staff-design-card-body/);
+    } else {
+      assert.doesNotMatch(harness.formNode.innerHTML, /staff-design-card-body|staff-finished-hat-picker-body/);
+    }
 
     harness.dialogBackdrop.dispatch('click', {
       target: { dataset: { action: 'catalog-cancel-link-picker' } }
@@ -589,6 +611,133 @@ test('finished hat detail places compact inventory beside the photo with collaps
   assert.doesNotMatch(finishedHatSource, /Operational inventory is separate from legacy placement metadata/);
   assert.match(catalogCssSource, /\.staff-finished-hat-detail-top\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, \.95fr\) minmax\(330px, 1\.05fr\)/);
   assert.match(catalogCssSource, /@media \(max-width: 760px\) \{[\s\S]*\.staff-finished-hat-detail-top\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+});
+
+test('finished hat detail groups relationship controls into compact Build Details rows', () => {
+  assert.match(finishedHatSource, /function renderBuildDetailsSection\(record\)/);
+  assert.match(finishedHatSource, />Build Details</);
+  assert.match(finishedHatSource, /renderBuildDetailsRow\('design', record\)[\s\S]*renderBuildDetailsRow\('hat', record\)[\s\S]*renderBuildDetailsRow\('material', record\)/);
+  assert.match(finishedHatSource, /Not linked/);
+  assert.match(finishedHatSource, /data-action="catalog-open-link-picker"[\s\S]*data-action="catalog-clear-link"/);
+  assert.doesNotMatch(finishedHatSource, /record\.needs_linking \? `<span class="staff-design-status-badge/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-build-details-row\s*\{[\s\S]*grid-template-columns:\s*90px minmax\(0, 1fr\) auto;/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-build-details-actions \.secondary-button,[\s\S]*min-height:\s*32px/);
+  assert.match(catalogCssSource, /@media \(max-width: 767px\) \{[\s\S]*\.staff-finished-hat-build-details-row\s*\{[\s\S]*grid-template-columns:\s*1fr;/);
+});
+
+test('finished hat cleanup keeps Build Details text-only, location forms on demand, and gallery setup concise', () => {
+  assert.match(finishedHatSource, /Needs setup/);
+  assert.doesNotMatch(finishedHatSource, /compactSummary \? `<p class="staff-finished-hat-card-summary-line/);
+  assert.match(finishedHatSource, /locationFormOpen: false/);
+  assert.match(finishedHatSource, /catalog-add-inventory-location/);
+  assert.match(finishedHatSource, /\+ Add Location/);
+  assert.match(finishedHatSource, /renderFinishedHatHatPickerCard\(option, selected\)/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-picker-grid--hat\s*\{[\s\S]*minmax\(240px, 1fr\)/);
+  assert.match(finishedHatSource, /staff-catalog-card-shell finished-hat-hat-picker-option/);
+  assert.match(finishedHatSource, /staff-design-card-thumb finished-hat-hat-picker-media/);
+  assert.doesNotMatch(finishedHatSource, /staff-finished-hat-build-details-thumb/);
+});
+
+test('Choose Hat reuses the working Hats catalog media frame and gallery inventory labels stay consistent', () => {
+  assert.match(catalogCssSource, /\.staff-design-card-thumb img\s*\{[\s\S]*height:\s*220px;[\s\S]*object-fit:\s*cover;/);
+  assert.match(finishedHatSource, /return `Inventory: \$\{inventory\.derived_quantity\}`;/);
+  assert.doesNotMatch(finishedHatSource, /return `Total On Hand: \$\{inventory\.derived_quantity\}`;/);
+});
+
+test('Choose Hat cards render populated Hat photo, manufacturer/model, color, and selection data', () => {
+  const option = finishedHatCatalogModule.normalizeHatOption({
+    id: 'hat-42', hat_name: 'Richardson 112 Loden Black', manufacturer: 'Richardson', model: '112', color: 'Loden / Black', photo_path: '/uploads/hat-photos/hat-42.webp', status: 'active'
+  });
+  const markup = finishedHatCatalogModule.renderFinishedHatHatPickerCard(option, true);
+  assert.match(markup, /<div[\s\S]*staff-catalog-card-shell finished-hat-hat-picker-option finished-hat-hat-picker-option--selected[\s\S]*role="option"[\s\S]*tabindex="0"/);
+  assert.match(markup, /<div class="staff-design-card finished-hat-hat-picker-card">[\s\S]*<div class="staff-design-card-thumb finished-hat-hat-picker-media">/);
+  assert.match(markup, /class="finished-hat-hat-picker-image" src="\/uploads\/hat-photos\/hat-42\.webp"/);
+  assert.match(markup, /Richardson \/ 112/);
+  assert.match(markup, /Loden \/ Black/);
+  assert.match(markup, /data-picker-option-id="hat-42"/);
+  assert.match(markup, /aria-selected="true"/);
+});
+
+test('Choose Hat renders one sibling option, catalog card, image, and metadata block for every Hat result', () => {
+  const options = Array.from({ length: 8 }, (_, index) => finishedHatCatalogModule.normalizeHatOption({
+    id: `hat-${index + 1}`,
+    hat_name: `Hat ${index + 1}`,
+    manufacturer: 'Richardson',
+    model: `Model ${index + 1}`,
+    color: `Color ${index + 1}`,
+    photo_path: `/uploads/hat-photos/hat-${index + 1}.webp`
+  }));
+  const gridMarkup = `<div class="staff-finished-hat-picker-grid staff-finished-hat-picker-grid--hat">${options.map((option) => finishedHatCatalogModule.renderFinishedHatHatPickerCard(option, false)).join('')}</div>`;
+
+  assert.equal((gridMarkup.match(/staff-catalog-card-shell finished-hat-hat-picker-option/g) || []).length, 8);
+  assert.equal((gridMarkup.match(/staff-design-card finished-hat-hat-picker-card/g) || []).length, 8);
+  assert.equal((gridMarkup.match(/class="finished-hat-hat-picker-image"/g) || []).length, 8);
+  assert.equal((gridMarkup.match(/class="staff-design-card-body finished-hat-hat-picker-meta"/g) || []).length, 8);
+  assert.equal((gridMarkup.match(/data-picker-option-id="hat-/g) || []).length, 8);
+  assert.match(gridMarkup, /<\/div>\s*<div\s+class="staff-catalog-card-shell finished-hat-hat-picker-option/);
+  assert.match(gridMarkup, /Richardson \/ Model 1[\s\S]*Color 1/);
+  assert.match(gridMarkup, /Richardson \/ Model 8[\s\S]*Color 8/);
+});
+
+test('Choose Hat catalog-card options preserve click and Enter/Space selection before Apply Selection', async () => {
+  const harness = createFinishedHatCatalogHarness({
+    hats: [
+      { id: 'hat-1', manufacturer: 'Richardson', model: '112', color: 'Loden / Black', hat_name: 'Richardson 112 Loden Black', photo_path: '/uploads/hat-photos/hat-1.webp', status: 'active' },
+      { id: 'hat-2', manufacturer: 'Richardson', model: '168', color: 'Navy / White', hat_name: 'Richardson 168 Navy White', photo_path: '/uploads/hat-photos/hat-2.webp', status: 'active' }
+    ]
+  });
+
+  harness.module.render(harness.container);
+  await flushMicrotasks();
+  harness.container.dispatch('click', createActionEvent('catalog-open-finished-hat-detail', '1'));
+  harness.dialogBackdrop.dispatch('click', { target: { dataset: { action: 'catalog-open-link-picker', linkType: 'hat' } } });
+  await flushMicrotasks();
+
+  harness.dialogBackdrop.dispatch('keydown', {
+    key: 'Enter',
+    preventDefault() {},
+    target: { dataset: { action: 'catalog-picker-select-card', pickerOptionId: 'hat-1' } }
+  });
+  assert.match(harness.formNode.innerHTML, /data-picker-option-id="hat-1"[\s\S]*aria-selected="true"/);
+
+  harness.dialogBackdrop.dispatch('keydown', {
+    key: ' ',
+    preventDefault() {},
+    target: { dataset: { action: 'catalog-picker-select-card', pickerOptionId: 'hat-2' } }
+  });
+  assert.match(harness.formNode.innerHTML, /data-picker-option-id="hat-2"[\s\S]*aria-selected="true"/);
+  assert.match(harness.formNode.innerHTML, /data-action="catalog-apply-link-picker"/);
+});
+
+test('Add and Edit Finished Hat primary photos support validated drag and drop through the existing selected-file state', () => {
+  const validPhoto = { name: 'finished-hat.webp', type: 'image/webp', size: 1024 };
+  assert.equal(finishedHatCatalogModule.validateFinishedHatPhotoFiles([validPhoto]).file, validPhoto);
+  assert.match(finishedHatCatalogModule.validateFinishedHatPhotoFiles([{ name: 'wrong.gif', type: 'image/gif', size: 1024 }]).error, /Only PNG, JPEG, and WebP/);
+  assert.match(finishedHatCatalogModule.validateFinishedHatPhotoFiles([validPhoto, validPhoto]).error, /only one finished hat photo/i);
+  assert.match(finishedHatCatalogModule.validateFinishedHatPhotoFiles([{ name: 'large.png', type: 'image/png', size: finishedHatCatalogModule.FINISHED_HAT_PHOTO_MAX_BYTES + 1 }]).error, /5 MB/);
+  assert.match(finishedHatSource, /data-catalog-finished-hat-photo-dropzone/);
+  assert.match(finishedHatSource, /addEventListener\('drop', onFinishedHatPhotoDrop, true\)/);
+  assert.match(finishedHatSource, /selectFinishedHatPhotoFiles\(target\.files\)/);
+  assert.match(finishedHatSource, /interceptFinishedHatPhotoDrop\(event, \(files\) => selectFinishedHatPhotoFiles\(files\)\)/);
+  assert.match(finishedHatSource, /staff-finished-hat-photo-dropzone--dragging/);
+  assert.match(finishedHatSource, /Drop finished hat photo here, or choose a file/);
+});
+
+test('Finished Hat file drops prevent browser navigation and pass the dropped files into the photo selection path', () => {
+  const droppedFiles = [{ name: 'finished-hat.png', type: 'image/png', size: 1024 }];
+  let prevented = false;
+  let stopped = false;
+  let receivedFiles = null;
+  finishedHatCatalogModule.interceptFinishedHatPhotoDrop({
+    dataTransfer: { files: droppedFiles },
+    preventDefault() { prevented = true; },
+    stopPropagation() { stopped = true; }
+  }, (files) => { receivedFiles = files; });
+  assert.equal(prevented, true);
+  assert.equal(stopped, true);
+  assert.equal(receivedFiles, droppedFiles);
+  assert.match(finishedHatSource, /onFinishedHatPhotoDragOver[\s\S]*event\.preventDefault\(\);[\s\S]*event\.stopPropagation\(\)/);
+  assert.match(finishedHatSource, /onFinishedHatPhotoDrop[\s\S]*interceptFinishedHatPhotoDrop\(event, \(files\) => selectFinishedHatPhotoFiles\(files\)\)/);
 });
 
 test('finished hat inventory keeps location assignment and management separate from More stock actions', () => {
