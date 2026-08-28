@@ -57,7 +57,8 @@
         search: '',
         manufacturer: '',
         model: '',
-        status: ''
+        status: '',
+        inventory_status: ''
       },
       dialogOpen: false,
       dialogMode: 'create',
@@ -178,6 +179,7 @@
 
       const focusState = options.preserveFocus ? captureCatalogFocus() : null;
       const filteredRecords = filterHatRecords(state.records, state.filters);
+      const inventorySummary = getHatInventorySummary(state.records);
       const reorderAvailability = getReorderAvailability();
       const sortedRecords = sortHatRecords(filteredRecords, state.sortKey);
       const hasActiveFilters = Boolean(
@@ -197,6 +199,7 @@
             </div>
             <div class="staff-catalog-designs-actions">
               <p class="staff-catalog-designs-count" data-catalog-hat-results-count>${filteredRecords.length} result${filteredRecords.length === 1 ? '' : 's'}</p>
+              <p class="staff-catalog-inventory-summary">Total Inventory: ${inventorySummary.total}</p>
               <button class="primary-button" type="button" data-action="catalog-add-hat">Add Hat</button>
             </div>
           </div>
@@ -216,6 +219,10 @@
             <label class="staff-catalog-designs-filter">
               <span>Status</span>
               <select data-action="catalog-filter-hat-status">${renderStatusOptions(state.filters.status, 'All Statuses')}</select>
+            </label>
+            <label class="staff-catalog-designs-filter">
+              <span>Inventory Status</span>
+              <select data-action="catalog-filter-hat-inventory-status">${renderInventoryStatusOptions(state.filters.inventory_status)}</select>
             </label>
             <label class="staff-catalog-designs-filter">
               <span>Sort</span>
@@ -248,6 +255,7 @@
         'catalog-filter-hat-manufacturer',
         'catalog-filter-hat-model',
         'catalog-filter-hat-status',
+        'catalog-filter-hat-inventory-status',
         'catalog-sort-hats'
       ].includes(action)) {
         return null;
@@ -424,7 +432,8 @@
           search: '',
           manufacturer: '',
           model: '',
-          status: ''
+          status: '',
+          inventory_status: ''
         };
         state.notice = '';
         renderContent();
@@ -474,6 +483,11 @@
       }
       if (action === 'catalog-filter-hat-status') {
         state.filters.status = String(event.target.value || '').trim();
+        renderContent();
+        return;
+      }
+      if (action === 'catalog-filter-hat-inventory-status') {
+        state.filters.inventory_status = String(event.target.value || '').trim();
         renderContent();
       }
     }
@@ -1133,6 +1147,7 @@
     const manufacturer = String(filters.manufacturer || '').trim().toLowerCase();
     const model = String(filters.model || '').trim().toLowerCase();
     const status = String(filters.status || '').trim();
+    const inventoryStatus = String(filters.inventory_status || '').trim();
 
     return normalizedRecords.filter((record) => {
       if (search) {
@@ -1155,6 +1170,9 @@
         return false;
       }
       if (status && record.status !== status) {
+        return false;
+      }
+      if (inventoryStatus && getHatInventoryStatus(record.inventory) !== inventoryStatus) {
         return false;
       }
       return true;
@@ -1235,6 +1253,12 @@
     return options.join('');
   }
 
+  function renderInventoryStatusOptions(selectedValue) {
+    return [
+      ['', 'All Inventory'], ['in_stock', 'In Stock'], ['out_of_stock', 'Out of Stock'], ['not_counted', 'Not Counted']
+    ].map(([value, label]) => `<option value="${value}"${value === selectedValue ? ' selected' : ''}>${label}</option>`).join('');
+  }
+
   function renderHatMetaRow(label, value) {
     if (!value) {
       return '';
@@ -1302,6 +1326,20 @@
   function formatHatOnHand(inventory) {
     const normalized = normalizeInventorySummary(inventory);
     return normalized.counted ? String(normalized.on_hand_quantity) : 'Not Counted';
+  }
+
+  function getHatInventoryStatus(inventory) {
+    const normalized = normalizeInventorySummary(inventory);
+    if (!normalized.counted) return 'not_counted';
+    return normalized.on_hand_quantity > 0 ? 'in_stock' : 'out_of_stock';
+  }
+
+  function getHatInventorySummary(records) {
+    return (Array.isArray(records) ? records : []).reduce((summary, record) => {
+      const inventory = normalizeInventorySummary(record?.inventory);
+      if (inventory.counted) summary.total += inventory.on_hand_quantity;
+      return summary;
+    }, { total: 0 });
   }
 
   function getInventoryReasonLabel(reason) {
@@ -1493,6 +1531,8 @@
     getHatStatusLabel,
     formatHatBaseCost,
     formatHatOnHand,
+    getHatInventoryStatus,
+    getHatInventorySummary,
     formatInventoryMovementTimestamp,
     normalizeInventorySummary,
     validateHatPhotoFiles,

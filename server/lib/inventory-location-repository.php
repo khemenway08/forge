@@ -69,6 +69,24 @@ final class PdoInventoryLocationRepository
         } catch (InventoryNotFoundException|InventoryValidationException|StorageUnavailableException $e) { if ($this->pdo->inTransaction()) $this->pdo->rollBack(); throw $e; } catch (PDOException $e) { if ($this->pdo->inTransaction()) $this->pdo->rollBack(); throw new StorageUnavailableException('Inventory storage is currently unavailable.',0,$e); }
     }
 
+    /** Atomically assigns an untracked location and records its first physical count. @return array<string,mixed> */
+    public function initialCountLocation(string $subjectId, string $locationId, $targetQuantity): array
+    {
+        $this->assertSubject($subjectId); $this->assertActiveLocation($locationId); $target = normalizeInventoryTargetQuantity($targetQuantity);
+        if ($target === null) throw new InventoryValidationException('Enter a whole-number physical quantity of zero or more.');
+        $time = gmdate('Y-m-d H:i:s.u');
+        try { $this->pdo->beginTransaction(); $item = $this->ensureItem($subjectId, $time); $balance = $this->balance($item['id'], $locationId, true);
+            if ($balance !== null && $balance['on_hand_quantity'] !== null) throw new InventoryConflictException('This inventory record was updated elsewhere. Reload and try again.');
+            if ($balance === null) {
+                $statement = $this->pdo->prepare('INSERT INTO forge_inventory_location_balances (id,inventory_item_id,inventory_location_id,on_hand_quantity,version,created_at,updated_at) VALUES (:id,:item,:location,:quantity,1,:created,:updated)');
+                $statement->execute([':id'=>createInventoryUuid(), ':item'=>$item['id'], ':location'=>$locationId, ':quantity'=>$target, ':created'=>$time, ':updated'=>$time]);
+            } else {
+                $this->updateBalance($balance, $target, $time);
+            }
+            $this->movement($item['id'], $locationId, null, $target, 'initial_count', null, null, $time); $this->pdo->commit(); return $this->snapshot($item, 100);
+        } catch (InventoryConflictException|InventoryValidationException|InventoryNotFoundException|StorageUnavailableException $e) { if ($this->pdo->inTransaction()) $this->pdo->rollBack(); throw $e; } catch (PDOException $e) { if ($this->pdo->inTransaction()) $this->pdo->rollBack(); throw new StorageUnavailableException('Inventory storage is currently unavailable.', 0, $e); }
+    }
+
     /** @return array<string,mixed> */
     public function adjustLocation(string $subjectId, string $locationId, $expectedQuantity, $expectedVersion, $targetQuantity, $reasonCode, $note = null): array
     {

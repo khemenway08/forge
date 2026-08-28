@@ -36,6 +36,19 @@ test('hat inventory formatting preserves a confirmed zero separately from Not Co
   assert.equal(hatCatalogModule.formatHatOnHand(countedZero), '0');
 });
 
+test('hat inventory status filter and total count only confirmed blank-hat units', () => {
+  const records = [
+    { id: 'in', hat_name: 'In', inventory: { counted: true, on_hand_quantity: 4 } },
+    { id: 'out', hat_name: 'Out', inventory: { counted: true, on_hand_quantity: 0 } },
+    { id: 'unknown', hat_name: 'Unknown', inventory: { counted: false, on_hand_quantity: null } }
+  ];
+  assert.equal(hatCatalogModule.getHatInventoryStatus(records[0].inventory), 'in_stock');
+  assert.equal(hatCatalogModule.getHatInventoryStatus(records[1].inventory), 'out_of_stock');
+  assert.equal(hatCatalogModule.getHatInventoryStatus(records[2].inventory), 'not_counted');
+  assert.equal(hatCatalogModule.filterHatRecords(records, { inventory_status: 'out_of_stock' })[0].id, 'out');
+  assert.equal(hatCatalogModule.getHatInventorySummary(records).total, 4);
+});
+
 test('inventory movement timestamps render as local staff-facing date and time without SQL microseconds', () => {
   const formatted = hatCatalogModule.formatInventoryMovementTimestamp('2026-08-21 17:03:26.000000');
   assert.match(formatted, /Aug 21, 2026 · \d{1,2}:\d{2}\s(?:AM|PM)/);

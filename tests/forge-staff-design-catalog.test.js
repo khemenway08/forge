@@ -10,7 +10,7 @@ const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'
 const catalogApiSource = fs.readFileSync(path.join(process.cwd(), 'public/js/forge-staff-design-catalog-api.js'), 'utf8');
 const catalogModuleSource = fs.readFileSync(path.join(process.cwd(), 'public/js/forge-staff-design-catalog.js'), 'utf8');
 const catalogCssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
-const BUILD_VERSION = '20260827-52';
+const BUILD_VERSION = '20260828-53';
 
 test('catalog scripts load before app.js and only in the protected staff shell', () => {
   assert.match(
@@ -132,6 +132,10 @@ test('catalog headers filters and card actions use the shared top-aligned consis
   assert.match(catalogCssSource, /\.staff-catalog-dialog-header-actions,\s*\.staff-design-dialog-header-actions,\s*\.staff-finished-hat-dialog-header-actions\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-wrap:\s*nowrap;/);
   assert.match(catalogCssSource, /\.staff-catalog-dialog-header-actions \.primary-button,\s*\.staff-catalog-dialog-header-actions \.secondary-button\s*\{[\s\S]*width:\s*auto;[\s\S]*white-space:\s*nowrap;/);
   assert.match(catalogCssSource, /@media \(max-width: 767px\) \{[\s\S]*\.staff-catalog-dialog-header-actions\s*\{[\s\S]*flex-wrap:\s*wrap;/);
+});
+
+test('shared library gallery reserves normal card tracks for one, two, and many filtered results', () => {
+  assert.match(catalogCssSource, /\.staff-design-card-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(240px,\s*1fr\)\);[\s\S]*gap:\s*16px;[\s\S]*align-items:\s*start;/);
 });
 
 test('catalog client and module do not introduce local browser persistence for catalog records', () => {

@@ -3107,7 +3107,7 @@ h1 {
 
 .staff-design-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 16px;
   align-items: start;
 }
@@ -3131,8 +3131,9 @@ h1 {
 }
 
 .staff-design-card-thumb {
-  min-height: 220px;
-  background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+  min-height: 0;
+  aspect-ratio: 1 / 1;
+  background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.04));
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -3140,8 +3141,9 @@ h1 {
 
 .staff-design-card-thumb img {
   width: 100%;
-  height: 220px;
-  object-fit: cover;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
   display: block;
 }
 
@@ -3180,7 +3182,7 @@ h1 {
 
 .staff-material-card-thumb-image {
   width: 100%;
-  height: 220px;
+  height: 100%;
   display: block;
   object-position: center;
   background: rgba(255,255,255,.04);
@@ -3191,7 +3193,7 @@ h1 {
 }
 
 .staff-material-card-thumb-image--cover {
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .staff-finished-hat-card-grid {
@@ -3216,15 +3218,16 @@ h1 {
 }
 
 .staff-finished-hat-card-thumb {
-  min-height: 240px;
-  background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.03));
+  min-height: 0;
+  aspect-ratio: 1 / 1;
+  background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.04));
 }
 
 .staff-finished-hat-card-thumb-image {
   width: 100%;
-  height: 240px;
+  height: 100%;
   display: block;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center;
 }
 
@@ -3440,6 +3443,45 @@ h1 {
   font-size: 12px;
 }
 
+.staff-finished-hat-editor-primary {
+  display: grid;
+  grid-template-columns: minmax(220px, .8fr) minmax(0, 1.2fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.staff-finished-hat-editor-core {
+  display: grid;
+  gap: 14px;
+}
+
+.staff-finished-hat-editor-core .staff-finished-hat-build-details {
+  width: 100%;
+}
+
+.staff-finished-hat-editor-more {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255,255,255,.12);
+}
+
+.staff-finished-hat-editor-more > summary {
+  cursor: pointer;
+  color: var(--staff-text);
+  font-weight: 800;
+}
+
+.staff-finished-hat-editor-more > .staff-design-dialog-grid {
+  margin-top: 14px;
+}
+
+.staff-catalog-inventory-summary {
+  margin: 0;
+  color: var(--staff-muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .ghost-button {
   min-height: 44px;
   padding: 10px 16px;
@@ -3489,7 +3531,7 @@ h1 {
 }
 
 .staff-finished-hat-linked-thumb--material img.staff-material-card-thumb-image--cover {
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .staff-finished-hat-linked-thumb--placeholder span {
@@ -3742,7 +3784,7 @@ h1 {
 }
 
 .staff-finished-hat-picker-image--material-cover {
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .staff-finished-hat-picker-placeholder {
@@ -4283,6 +4325,10 @@ body.forge-catalog-image-viewer-open {
 
   .staff-finished-hat-picker-filters {
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+
+  .staff-finished-hat-editor-primary {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -6001,6 +6047,7 @@ body.forge-catalog-image-viewer-open {
 .staff-finished-hat-inventory-total > span, .staff-finished-hat-inventory-total small { color: var(--staff-muted); font-size: 12px; font-weight: 700; }
 .staff-finished-hat-inventory-total > strong { color: var(--staff-text); font-size: clamp(30px, 4vw, 42px); line-height: 1; letter-spacing: -.04em; }
 .staff-finished-hat-inventory-locations { display: grid; gap: 7px; }
+.staff-finished-hat-inventory-locations:has(+ .staff-finished-hat-inventory-locations) .staff-finished-hat-inventory-empty { display: none; }
 .staff-finished-hat-inventory-row { justify-content: space-between; padding: 10px; border: 1px solid rgba(255,255,255,.09); border-radius: 12px; background: rgba(8,10,14,.28); }
 .staff-finished-hat-inventory-location-quantity { display: grid; gap: 1px; min-width: 100px; }
 .staff-finished-hat-inventory-location-quantity span { color: var(--staff-muted); font-size: 12px; font-weight: 700; }

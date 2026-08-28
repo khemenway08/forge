@@ -86,6 +86,7 @@
         material_name: '',
         placement_status: '',
         status: '',
+        inventory_status: '',
         needs_linking: ''
       },
       optionsLoaded: false,
@@ -274,7 +275,8 @@
       }
 
       const focusState = options.preserveFocus ? captureCatalogFocus() : null;
-      const filteredRecords = filterFinishedHatRecords(state.records, state.filters);
+      const filteredRecords = filterFinishedHatRecords(state.records, state.filters, state.inventories);
+      const inventorySummary = getFinishedHatInventorySummary(state.records, state.inventories);
       const reorderAvailability = getReorderAvailability();
       const sortedRecords = sortFinishedHatRecords(filteredRecords, state.sortKey);
       const hasActiveFilters = Object.values(state.filters).some(Boolean);
@@ -294,6 +296,7 @@
             </div>
             <div class="staff-catalog-designs-actions">
               <p class="staff-catalog-designs-count" data-catalog-finished-hat-results-count>${filteredRecords.length} result${filteredRecords.length === 1 ? '' : 's'}</p>
+              <p class="staff-catalog-inventory-summary">${escapeHtml(formatFinishedHatCatalogInventorySummary(inventorySummary))}</p>
               <button class="secondary-button" type="button" data-action="catalog-manage-inventory-locations">Manage Locations</button>
               <button class="primary-button" type="button" data-action="catalog-add-finished-hat">Add Finished Hat</button>
             </div>
@@ -330,6 +333,10 @@
             <label class="staff-catalog-designs-filter">
               <span>Record Status</span>
               <select data-action="catalog-filter-finished-hat-status">${renderStatusOptions(state.filters.status, 'All Statuses')}</select>
+            </label>
+            <label class="staff-catalog-designs-filter">
+              <span>Inventory Status</span>
+              <select data-action="catalog-filter-finished-hat-inventory-status">${renderInventoryStatusOptions(state.filters.inventory_status)}</select>
             </label>
             <label class="staff-catalog-designs-filter">
               <span>Needs Linking</span>
@@ -374,6 +381,7 @@
         'catalog-filter-finished-hat-material',
         'catalog-filter-finished-hat-placement-status',
         'catalog-filter-finished-hat-status',
+        'catalog-filter-finished-hat-inventory-status',
         'catalog-filter-finished-hat-needs-linking',
         'catalog-sort-finished-hats'
       ].includes(action)) {
@@ -529,6 +537,7 @@
           material_name: '',
           placement_status: '',
           status: '',
+          inventory_status: '',
           needs_linking: ''
         };
         state.notice = '';
@@ -589,6 +598,7 @@
         'catalog-filter-finished-hat-material': 'material_name',
         'catalog-filter-finished-hat-placement-status': 'placement_status',
         'catalog-filter-finished-hat-status': 'status',
+        'catalog-filter-finished-hat-inventory-status': 'inventory_status',
         'catalog-filter-finished-hat-needs-linking': 'needs_linking'
       };
       if (action === 'catalog-sort-finished-hats') {
@@ -789,10 +799,11 @@
 
     function renderFinishedHatEditor() {
       const preview = getFinishedHatPreviewDisplay(state.dialogPhotoFile, state.dialogPhotoPath, state.dialogValues.finished_hat_name);
+      const editorRecord = { ...(state.dialogRecord || {}), ...state.dialogValues };
       return `
         <div class="staff-finished-hat-detail">
-          <div class="staff-design-dialog-grid">
-            <div class="staff-design-thumbnail-panel staff-design-dialog-field staff-design-dialog-field--wide staff-finished-hat-photo-dropzone ${state.dialogPhotoDragActive ? 'staff-finished-hat-photo-dropzone--dragging' : ''}" data-catalog-finished-hat-photo-dropzone>
+          <div class="staff-finished-hat-editor-primary">
+            <div class="staff-design-thumbnail-panel staff-design-dialog-field staff-finished-hat-photo-dropzone ${state.dialogPhotoDragActive ? 'staff-finished-hat-photo-dropzone--dragging' : ''}" data-catalog-finished-hat-photo-dropzone>
               <span>Primary Photo</span>
               <div class="staff-design-thumbnail-preview">
                 ${preview.html}
@@ -803,18 +814,23 @@
               </label>
               <p class="staff-design-thumbnail-copy">${escapeHtml(state.dialogPhotoFileName || state.dialogPhotoPath || 'Drop finished hat photo here, or choose a file')}</p>
             </div>
+            <div class="staff-finished-hat-editor-core">
             ${renderDialogField('finished_hat_name', 'Finished Hat Name', `<input type="text" name="finished_hat_name" value="${escapeAttribute(state.dialogValues.finished_hat_name)}" required>`)}
+            ${renderBuildDetailsSection(editorRecord, true)}
+            </div>
+          </div>
+          <details class="staff-finished-hat-editor-more">
+            <summary>More Details</summary>
+            <div class="staff-design-dialog-grid">
             ${renderDialogField('placement_status', 'Placement Status', `<select name="placement_status">${renderPlacementStatusOptions(state.dialogValues.placement_status, null)}</select>`)}
-            ${renderEditorLinkControl('design')}
-            ${renderEditorLinkControl('hat')}
-            ${renderEditorLinkControl('material')}
             ${renderDialogField('patch_shape', 'Patch Shape', `<input type="text" name="patch_shape" value="${escapeAttribute(state.dialogValues.patch_shape)}">`)}
             ${renderDialogField('patch_size', 'Patch Size', `<input type="text" name="patch_size" value="${escapeAttribute(state.dialogValues.patch_size)}">`)}
             ${renderDialogField('location_label', 'Location Label', `<input type="text" name="location_label" value="${escapeAttribute(state.dialogValues.location_label)}">`)}
             ${renderDialogField('retail_price', 'Retail Price', `<input type="text" name="retail_price" inputmode="decimal" value="${escapeAttribute(state.dialogValues.retail_price)}">`)}
             ${renderDialogField('status', 'Record Status', `<select name="status">${renderStatusOptions(state.dialogValues.status, null)}</select>`)}
             ${renderDialogField('notes', 'Notes', `<textarea name="notes">${escapeHtml(state.dialogValues.notes)}</textarea>`, true)}
-          </div>
+            </div>
+          </details>
           ${state.optionError ? `<div class="staff-catalog-designs-state staff-catalog-designs-state--error"><p>${escapeHtml(state.optionError)}</p></div>` : ''}
         </div>
       `;
@@ -852,33 +868,35 @@
     function renderFinishedHatInventoryPanel(record, inventory, locations) {
       const assigned = inventory?.balances || [];
       const unassigned = (locations || []).filter((location) => location.status === 'active' && !assigned.some((balance) => balance.inventory_location_id === location.id));
+      const hilltop = unassigned.find((location) => location.location_code === 'hilltop_internal') || null;
       const totalLabel = inventory?.completeness === 'complete' ? 'Total On Hand' : (inventory?.completeness === 'partial' ? 'Counted On Hand' : 'Inventory');
       const totalValue = inventory?.completeness === 'not_counted' || !inventory ? 'Not Counted' : String(inventory.derived_quantity);
       return `<section class="staff-finished-hat-inventory-panel"><div class="staff-finished-hat-inventory-panel-header"><span>Finished Hat Inventory</span></div><div class="staff-finished-hat-inventory-total"><span>${escapeHtml(totalLabel)}</span><strong>${escapeHtml(totalValue)}</strong>${inventory?.completeness === 'partial' ? `<small>${escapeHtml(`${inventory.not_counted_location_count} location${inventory.not_counted_location_count === 1 ? '' : 's'} still Not Counted`)}</small>` : ''}</div>
         <div class="staff-finished-hat-inventory-locations">${assigned.map((balance) => `<div class="staff-finished-hat-inventory-row"><div class="staff-finished-hat-inventory-location-quantity"><span>${escapeHtml(balance.location_name)}</span><strong>${balance.on_hand_quantity === null ? 'Not Counted' : balance.on_hand_quantity}</strong></div>
           ${balance.on_hand_quantity === null ? `<div class="staff-finished-hat-inventory-initial-count"><input data-finished-inventory-count="${escapeAttribute(balance.inventory_location_id)}" type="number" min="0" step="1" placeholder="Physical Count"><button type="button" class="primary-button" data-action="catalog-finished-inventory-count" data-location-id="${escapeAttribute(balance.inventory_location_id)}">Save Count</button></div>` : `<div class="staff-finished-hat-inventory-actions"><button type="button" class="secondary-button" data-action="catalog-finished-inventory-adjust" data-location-id="${escapeAttribute(balance.inventory_location_id)}" data-reason="sold">− Sold</button><button type="button" class="secondary-button" data-action="catalog-finished-inventory-adjust" data-location-id="${escapeAttribute(balance.inventory_location_id)}" data-reason="received_built">+ Built</button><details class="staff-finished-hat-inventory-more"><summary>More</summary><div><button type="button" class="ghost-button" data-action="catalog-finished-inventory-adjust" data-location-id="${escapeAttribute(balance.inventory_location_id)}" data-reason="returned">+ Returned</button><input data-finished-inventory-correction="${escapeAttribute(balance.inventory_location_id)}" type="number" min="0" step="1" placeholder="Verified qty"><button type="button" class="ghost-button" data-action="catalog-finished-inventory-correct" data-location-id="${escapeAttribute(balance.inventory_location_id)}">Save Correction</button></div></details></div>`}</div>`).join('') || '<p class="staff-finished-hat-inventory-empty">No locations assigned.</p>'}</div>
+        ${!assigned.length && hilltop ? `<div class="staff-finished-hat-inventory-locations"><div class="staff-finished-hat-inventory-row"><div class="staff-finished-hat-inventory-location-quantity"><span>${escapeHtml(hilltop.location_name)}</span><strong>Not Counted</strong></div><div class="staff-finished-hat-inventory-initial-count"><input data-finished-inventory-default-count="${escapeAttribute(hilltop.id)}" type="number" min="0" step="1" placeholder="Physical Count"><button type="button" class="primary-button" data-action="catalog-finished-inventory-default-count" data-location-id="${escapeAttribute(hilltop.id)}">Save Count</button></div></div></div>` : ''}
         <div class="staff-finished-hat-inventory-utilities">${unassigned.length ? `<details><summary>+ Add Location</summary><div class="staff-finished-hat-inventory-utility-body"><select data-finished-inventory-assign>${unassigned.map((location) => `<option value="${escapeAttribute(location.id)}">${escapeHtml(location.location_name)}</option>`).join('')}</select><button type="button" class="secondary-button" data-action="catalog-finished-inventory-assign">Assign Location</button></div></details>` : ''}<button type="button" class="ghost-button" data-action="catalog-manage-inventory-locations">Manage Locations</button>
         ${(assigned.filter((balance) => balance.on_hand_quantity !== null).length >= 2) ? `<details><summary>Transfer Stock</summary><div class="staff-finished-hat-inventory-transfer"><select data-finished-inventory-transfer-source>${assigned.filter((b) => b.on_hand_quantity !== null).map((b) => `<option value="${escapeAttribute(b.inventory_location_id)}">${escapeHtml(b.location_name)}</option>`).join('')}</select><select data-finished-inventory-transfer-destination>${assigned.filter((b) => b.on_hand_quantity !== null).map((b) => `<option value="${escapeAttribute(b.inventory_location_id)}">${escapeHtml(b.location_name)}</option>`).join('')}</select><input type="number" min="1" step="1" data-finished-inventory-transfer-quantity placeholder="Qty"><button type="button" class="secondary-button" data-action="catalog-finished-inventory-transfer">Transfer</button></div></details>` : ''}</div>
         ${assigned.length ? `<details class="staff-finished-hat-inventory-history"><summary>Inventory History ›</summary>${(inventory.movements || []).map((movement) => `<p>${escapeHtml(movement.location_name || '')} · ${escapeHtml(movement.reason_code)} · ${escapeHtml(String(movement.quantity_before ?? 'Unknown'))} → ${escapeHtml(String(movement.quantity_after))}</p>`).join('') || '<p>No movements yet.</p>'}</details>` : ''}
       </section>`;
     }
 
-    function renderBuildDetailsSection(record) {
+    function renderBuildDetailsSection(record, editor = false) {
       return `
         <section class="staff-finished-hat-build-details staff-design-dialog-field staff-design-dialog-field--wide" aria-labelledby="staff-finished-hat-build-details-title">
           <div class="staff-finished-hat-build-details-header">
             <span id="staff-finished-hat-build-details-title">Build Details</span>
           </div>
           <div class="staff-finished-hat-build-details-rows">
-            ${renderBuildDetailsRow('design', record)}
-            ${renderBuildDetailsRow('hat', record)}
-            ${renderBuildDetailsRow('material', record)}
+            ${renderBuildDetailsRow('design', record, editor)}
+            ${renderBuildDetailsRow('hat', record, editor)}
+            ${renderBuildDetailsRow('material', record, editor)}
           </div>
         </section>
       `;
     }
 
-    function renderBuildDetailsRow(type, record) {
+    function renderBuildDetailsRow(type, record, editor = false) {
       const config = getLinkTypeConfig(type);
       const linkedOption = getSelectedOptionForType(type, record?.[config.fieldName] || '') || buildFallbackLinkedOption(type, record);
       const hasLink = Boolean(linkedOption);
@@ -892,6 +910,7 @@
             <button class="secondary-button" type="button" data-action="catalog-open-link-picker" data-link-type="${escapeAttribute(type)}">${escapeHtml(hasLink ? config.changeLabel : config.chooseLabel)}</button>
             ${hasLink ? `<button class="ghost-button" type="button" data-action="catalog-clear-link" data-link-type="${escapeAttribute(type)}">Clear Link</button>` : ''}
           </div>
+          ${editor && state.dialogFieldErrors[config.fieldName] ? `<small class="staff-design-dialog-error">${escapeHtml(state.dialogFieldErrors[config.fieldName])}</small>` : ''}
         </div>
       `;
     }
@@ -975,7 +994,6 @@
     function renderVisualPicker() {
       const config = getLinkTypeConfig(state.pickerType);
       const options = getPickerOptionsForType(state.pickerType);
-      const filteredOptions = filterPickerOptions(options, state.pickerType, state.pickerSearch, state.pickerFilters);
       const selectedChanged = state.pickerCurrentId !== state.pickerSelectedId;
       const finishedHatPreview = getFinishedHatPreviewDisplay(state.dialogPhotoFile, state.dialogPhotoPath, state.dialogValues.finished_hat_name);
       const hasExistingLink = Boolean(state.pickerCurrentId);
@@ -1014,13 +1032,27 @@
                   <button class="secondary-button" type="button" data-action="catalog-picker-clear-filters">Clear Filters</button>
                 </div>
               </div>
-              ${state.optionError ? `<div class="staff-catalog-designs-state staff-catalog-designs-state--error"><p>${escapeHtml(state.optionError)}</p></div>` : ''}
-              ${state.pickerError ? `<div class="staff-catalog-designs-state staff-catalog-designs-state--error"><p>${escapeHtml(state.pickerError)}</p></div>` : ''}
-              ${renderPickerBody(state.pickerType, filteredOptions)}
+              <div data-finished-hat-picker-results>${renderPickerResults()}</div>
             </section>
           </div>
         </div>
       `;
+    }
+
+    function renderPickerResults() {
+      const options = getPickerOptionsForType(state.pickerType);
+      const filteredOptions = filterPickerOptions(options, state.pickerType, state.pickerSearch, state.pickerFilters);
+      return `${state.optionError ? `<div class="staff-catalog-designs-state staff-catalog-designs-state--error"><p>${escapeHtml(state.optionError)}</p></div>` : ''}${state.pickerError ? `<div class="staff-catalog-designs-state staff-catalog-designs-state--error"><p>${escapeHtml(state.pickerError)}</p></div>` : ''}${renderPickerBody(state.pickerType, filteredOptions)}`;
+    }
+
+    function refreshPickerResults() {
+      const results = dialogBackdrop?.querySelector?.('[data-finished-hat-picker-results]');
+      if (results && !Object.prototype.hasOwnProperty.call(results, 'selector')) {
+        results.innerHTML = renderPickerResults();
+        return;
+      }
+      // Lightweight DOM harnesses and older embedded shells may not expose the results node.
+      renderDialog();
     }
 
     function renderPickerBody(type, options) {
@@ -1132,6 +1164,10 @@
         saveFinishedHatInventoryCount(actionTarget);
         return;
       }
+      if (action === 'catalog-finished-inventory-default-count') {
+        saveDefaultHilltopInventoryCount(actionTarget);
+        return;
+      }
       if (action === 'catalog-finished-inventory-adjust') {
         saveFinishedHatInventoryAdjustment(actionTarget);
         return;
@@ -1192,7 +1228,7 @@
       if (target.dataset?.locationField) state.locationValues[target.dataset.locationField] = String(target.value || '');
       if (target.dataset?.action === 'catalog-picker-search') {
         state.pickerSearch = String(target.value || '');
-        renderDialog();
+        refreshPickerResults();
       }
     }
 
@@ -1212,7 +1248,7 @@
       const pickerFilterKey = target.dataset?.pickerFilter;
       if (pickerFilterKey) {
         state.pickerFilters[pickerFilterKey] = String(target.value || '');
-        renderDialog();
+        refreshPickerResults();
       }
     }
 
@@ -1378,6 +1414,18 @@
       const inventory = state.inventories[state.dialogFinishedHatId]; const balance = inventory?.balances?.find((item) => item.inventory_location_id === locationId);
       const input = formNode?.querySelector(`[data-finished-inventory-count="${locationId}"]`);
       try { await inventoryApiClient.adjustLocationInventory({ subject_type:'catalog_finished_hat', subject_id:state.dialogFinishedHatId, location_id:locationId, expected_quantity:null, expected_version:balance?.version ?? 0, target_quantity:input?.value ?? '', reason_code:'initial_count', note:'' }); await refreshFinishedHatInventory(state.dialogFinishedHatId); } catch (error) { state.dialogError=safeErrorMessage(error,'Physical count could not be saved.'); renderDialog(); }
+    }
+
+    async function saveDefaultHilltopInventoryCount(actionTarget) {
+      const locationId = actionTarget?.dataset?.locationId || '';
+      const input = formNode?.querySelector(`[data-finished-inventory-default-count="${locationId}"]`);
+      try {
+        await inventoryApiClient.initialCountLocation({ subject_type: 'catalog_finished_hat', subject_id: state.dialogFinishedHatId, location_id: locationId, target_quantity: input?.value ?? '' });
+        await refreshFinishedHatInventory(state.dialogFinishedHatId);
+      } catch (error) {
+        state.dialogError = safeErrorMessage(error, 'Physical count could not be saved.');
+        renderDialog();
+      }
     }
 
     async function saveFinishedHatInventoryAdjustment(actionTarget) {
@@ -1648,7 +1696,7 @@
     };
   }
 
-  function filterFinishedHatRecords(records, filters) {
+  function filterFinishedHatRecords(records, filters = {}, inventories = {}) {
     const search = normalizeSearch(filters.search);
     return records.filter((record) => {
       if (search) {
@@ -1691,6 +1739,9 @@
       if (filters.status && record.status !== filters.status) {
         return false;
       }
+      if (filters.inventory_status && getFinishedHatInventoryStatus(inventories?.[record.id]) !== filters.inventory_status) {
+        return false;
+      }
       if (filters.needs_linking === 'needs_linking' && !record.needs_linking) {
         return false;
       }
@@ -1699,6 +1750,32 @@
       }
       return true;
     });
+  }
+
+  function getFinishedHatInventoryStatus(inventory) {
+    const completeness = String(inventory?.completeness || 'not_counted');
+    const quantity = Number.isSafeInteger(inventory?.derived_quantity) ? inventory.derived_quantity : null;
+    if (completeness === 'complete' && quantity === 0) return 'out_of_stock';
+    if (quantity !== null && quantity > 0) return 'in_stock';
+    return 'not_counted';
+  }
+
+  function getFinishedHatInventorySummary(records, inventories = {}) {
+    const result = { total: 0, notCountedLocations: 0, hasTrackedInventory: false };
+    (Array.isArray(records) ? records : []).forEach((record) => {
+      const inventory = inventories?.[record?.id];
+      if (!inventory || inventory.completeness === 'not_counted') return;
+      result.hasTrackedInventory = true;
+      if (Number.isSafeInteger(inventory.derived_quantity)) result.total += inventory.derived_quantity;
+      if (inventory.completeness === 'partial') result.notCountedLocations += Number(inventory.not_counted_location_count) || 0;
+    });
+    return result;
+  }
+
+  function formatFinishedHatCatalogInventorySummary(summary) {
+    if (!summary?.hasTrackedInventory) return 'Total Inventory: 0';
+    if (summary.notCountedLocations > 0) return `Counted Inventory: ${summary.total} / ${summary.notCountedLocations} location${summary.notCountedLocations === 1 ? '' : 's'} still Not Counted`;
+    return `Total Inventory: ${summary.total}`;
   }
 
   function normalizeFinishedHatRecord(record) {
@@ -1929,6 +2006,12 @@
       options.push(`<option value="${escapeAttribute(value)}" ${value === selectedValue ? 'selected' : ''}>${escapeHtml(label)}</option>`);
     });
     return options.join('');
+  }
+
+  function renderInventoryStatusOptions(selectedValue) {
+    return [
+      ['','All Inventory'], ['in_stock','In Stock'], ['out_of_stock','Out of Stock'], ['not_counted','Not Counted']
+    ].map(([value, label]) => `<option value="${value}"${value === selectedValue ? ' selected' : ''}>${label}</option>`).join('');
   }
 
   function renderPlacementStatusOptions(selectedValue, emptyLabel) {
@@ -2234,13 +2317,7 @@
   }
 
   function getMaterialSwatchFitMode(record) {
-    const width = asNullablePositiveInteger(record?.image_width);
-    const height = asNullablePositiveInteger(record?.image_height);
-    if (!width || !height) {
-      return 'contain';
-    }
-    const ratio = width / height;
-    return ratio < 0.85 ? 'cover' : 'contain';
+    return 'contain';
   }
 
   function formatRetailPrice(value) {
@@ -2379,6 +2456,9 @@
     SORT_OPTIONS,
     createStaffFinishedHatCatalogModule,
     filterFinishedHatRecords,
+    getFinishedHatInventoryStatus,
+    getFinishedHatInventorySummary,
+    formatFinishedHatCatalogInventorySummary,
     normalizeFinishedHatRecord,
     getFinishedHatPhotoDisplay,
     validateFinishedHatPhotoFiles,

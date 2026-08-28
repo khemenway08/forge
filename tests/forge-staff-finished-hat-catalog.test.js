@@ -117,8 +117,22 @@ test('finished hat compact summaries stay concise for linked and incomplete reco
   assert.equal(finishedHatCatalogModule.getFinishedHatMissingLinksSummary(incompleteRecord), 'Needs Design + Material');
 });
 
-test('finished hat card photos stay cover-cropped while dialog preview stays shared contain mode', () => {
-  assert.match(catalogCssSource, /\.staff-finished-hat-card-thumb-image\s*\{[\s\S]*object-fit:\s*cover;[\s\S]*object-position:\s*center;/);
+test('finished-hat inventory status does not classify partial zero inventory as out of stock', () => {
+  const records = [{ id: 'complete-zero' }, { id: 'partial-zero' }, { id: 'in-stock' }];
+  const inventories = {
+    'complete-zero': { completeness: 'complete', derived_quantity: 0 },
+    'partial-zero': { completeness: 'partial', derived_quantity: 0, not_counted_location_count: 1 },
+    'in-stock': { completeness: 'partial', derived_quantity: 2, not_counted_location_count: 1 }
+  };
+  assert.equal(finishedHatCatalogModule.getFinishedHatInventoryStatus(inventories['complete-zero']), 'out_of_stock');
+  assert.equal(finishedHatCatalogModule.getFinishedHatInventoryStatus(inventories['partial-zero']), 'not_counted');
+  assert.equal(finishedHatCatalogModule.getFinishedHatInventoryStatus(inventories['in-stock']), 'in_stock');
+  assert.deepEqual(finishedHatCatalogModule.filterFinishedHatRecords(records, { inventory_status: 'out_of_stock' }, inventories).map((record) => record.id), ['complete-zero']);
+  assert.equal(finishedHatCatalogModule.formatFinishedHatCatalogInventorySummary(finishedHatCatalogModule.getFinishedHatInventorySummary(records, inventories)), 'Counted Inventory: 2 / 2 locations still Not Counted');
+});
+
+test('finished hat card photos and dialog preview preserve complete image composition', () => {
+  assert.match(catalogCssSource, /\.staff-finished-hat-card-thumb-image\s*\{[\s\S]*object-fit:\s*contain;[\s\S]*object-position:\s*center;/);
   assert.match(catalogCssSource, /\.staff-design-thumbnail-preview img\s*\{[\s\S]*object-fit:\s*contain;[\s\S]*object-position:\s*center;/);
   assert.match(catalogCssSource, /\.staff-finished-hat-card:hover,\s*\.staff-finished-hat-card:focus-visible/);
   assert.match(catalogCssSource, /\.staff-finished-hat-card-title\s*\{[\s\S]*-webkit-line-clamp:\s*2;/);
@@ -140,9 +154,9 @@ test('visual picker keeps generic tiles isolated from the dedicated Hat product 
   assert.doesNotMatch(catalogCssSource, /\.staff-finished-hat-picker-body\s*\{/);
   assert.doesNotMatch(catalogCssSource, /\.staff-finished-hat-picker-title\s*\{/);
   assert.match(catalogCssSource, /\.staff-finished-hat-picker-grid--hat\s*\{[\s\S]*grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(240px,\s*1fr\)\);[\s\S]*gap:\s*16px;[\s\S]*align-items:\s*start;/);
-  assert.match(catalogCssSource, /\.staff-design-card-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(240px,\s*1fr\)\);[\s\S]*gap:\s*16px;[\s\S]*align-items:\s*start;/);
+  assert.match(catalogCssSource, /\.staff-design-card-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(240px,\s*1fr\)\);[\s\S]*gap:\s*16px;[\s\S]*align-items:\s*start;/);
   assert.match(catalogCssSource, /\.staff-design-card\s*\{[\s\S]*display:\s*grid;[\s\S]*grid-template-rows:\s*auto 1fr;[\s\S]*overflow:\s*hidden;/);
-  assert.match(catalogCssSource, /\.staff-design-card-thumb\s*\{[\s\S]*min-height:\s*220px;[\s\S]*overflow:\s*hidden;/);
+  assert.match(catalogCssSource, /\.staff-design-card-thumb\s*\{[\s\S]*aspect-ratio:\s*1\s*\/\s*1;[\s\S]*overflow:\s*hidden;/);
 });
 
 test('visual picker designs and materials retain their specialized frames while Choose Hat reuses the Hats catalog media frame', () => {
@@ -150,16 +164,16 @@ test('visual picker designs and materials retain their specialized frames while 
   assert.match(catalogCssSource, /\.staff-finished-hat-picker-media--design\s*\{[\s\S]*aspect-ratio:\s*4 \/ 3;[\s\S]*min-height:\s*110px;/);
   assert.match(catalogCssSource, /\.staff-finished-hat-picker-media--material\s*\{[\s\S]*aspect-ratio:\s*1 \/ 1;/);
   assert.match(catalogCssSource, /\.staff-finished-hat-picker-image--design\s*\{[\s\S]*object-fit:\s*contain;/);
-  assert.match(catalogCssSource, /\.staff-design-card-thumb img\s*\{[\s\S]*height:\s*220px;[\s\S]*object-fit:\s*cover;/);
+  assert.match(catalogCssSource, /\.staff-design-card-thumb img\s*\{[\s\S]*height:\s*100%;[\s\S]*object-fit:\s*contain;/);
   assert.match(catalogCssSource, /\.staff-finished-hat-picker-image--material\s*\{[\s\S]*height:\s*100%;/);
   assert.match(catalogCssSource, /\.staff-finished-hat-picker-image--material-contain\s*\{[\s\S]*object-fit:\s*contain;/);
-  assert.match(catalogCssSource, /\.staff-finished-hat-picker-image--material-cover\s*\{[\s\S]*object-fit:\s*cover;/);
+  assert.match(catalogCssSource, /\.staff-finished-hat-picker-image--material-cover\s*\{[\s\S]*object-fit:\s*contain;/);
   assert.doesNotMatch(catalogCssSource, /\.staff-finished-hat-picker-media[^}]*staff-design-card-thumb/);
 });
 
-test('material picker fit mode keeps wide stainless stripe swatches visible', () => {
+test('material picker fit mode preserves every swatch composition', () => {
   assert.equal(finishedHatCatalogModule.getMaterialSwatchFitMode({ image_width: 1800, image_height: 1200 }), 'contain');
-  assert.equal(finishedHatCatalogModule.getMaterialSwatchFitMode({ image_width: 1200, image_height: 1800 }), 'cover');
+  assert.equal(finishedHatCatalogModule.getMaterialSwatchFitMode({ image_width: 1200, image_height: 1800 }), 'contain');
 });
 
 test('finished hat catalog images and picker thumbnails add Pinterest opt-out attributes while preserving alt text', () => {
@@ -613,10 +627,10 @@ test('finished hat detail places compact inventory beside the photo with collaps
   assert.match(catalogCssSource, /@media \(max-width: 760px\) \{[\s\S]*\.staff-finished-hat-detail-top\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/);
 });
 
-test('finished hat detail groups relationship controls into compact Build Details rows', () => {
-  assert.match(finishedHatSource, /function renderBuildDetailsSection\(record\)/);
+test('finished hat editor and detail share compact Build Details rows', () => {
+  assert.match(finishedHatSource, /function renderBuildDetailsSection\(record, editor = false\)/);
   assert.match(finishedHatSource, />Build Details</);
-  assert.match(finishedHatSource, /renderBuildDetailsRow\('design', record\)[\s\S]*renderBuildDetailsRow\('hat', record\)[\s\S]*renderBuildDetailsRow\('material', record\)/);
+  assert.match(finishedHatSource, /renderBuildDetailsRow\('design', record, editor\)[\s\S]*renderBuildDetailsRow\('hat', record, editor\)[\s\S]*renderBuildDetailsRow\('material', record, editor\)/);
   assert.match(finishedHatSource, /Not linked/);
   assert.match(finishedHatSource, /data-action="catalog-open-link-picker"[\s\S]*data-action="catalog-clear-link"/);
   assert.doesNotMatch(finishedHatSource, /record\.needs_linking \? `<span class="staff-design-status-badge/);
@@ -639,7 +653,7 @@ test('finished hat cleanup keeps Build Details text-only, location forms on dema
 });
 
 test('Choose Hat reuses the working Hats catalog media frame and gallery inventory labels stay consistent', () => {
-  assert.match(catalogCssSource, /\.staff-design-card-thumb img\s*\{[\s\S]*height:\s*220px;[\s\S]*object-fit:\s*cover;/);
+  assert.match(catalogCssSource, /\.staff-design-card-thumb img\s*\{[\s\S]*height:\s*100%;[\s\S]*object-fit:\s*contain;/);
   assert.match(finishedHatSource, /return `Inventory: \$\{inventory\.derived_quantity\}`;/);
   assert.doesNotMatch(finishedHatSource, /return `Total On Hand: \$\{inventory\.derived_quantity\}`;/);
 });
