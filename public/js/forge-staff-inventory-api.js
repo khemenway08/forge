@@ -34,6 +34,20 @@
     async function listLocations(includeInactive = false) { return locationRequest('GET', `locations.php${includeInactive ? '?include_inactive=1' : ''}`); }
     async function saveLocation(input) { return locationRequest('POST', input.id ? 'location.php' : 'locations.php', input); }
     async function getLocationInventory(subjectType, subjectId) { return locationStockRequest('GET', { subject_type: subjectType, subject_id: subjectId }); }
+    async function getFinishedHatCatalogInventory(subjectIds) {
+      const ids = Array.from(new Set((Array.isArray(subjectIds) ? subjectIds : []).map(text).filter(Boolean)));
+      const query = ids.map((id) => `subject_id[]=${encodeURIComponent(id)}`).join('&');
+      const options = { method: 'GET', headers: { Accept: 'application/json' }, credentials: 'same-origin', cache: 'no-store' };
+      try {
+        const response = await withTimeout(fetchImpl(`${baseUrl}/finished-hat-catalog.php${query ? `?${query}` : ''}`, options), timeoutMs);
+        const payload = await parse(response);
+        if (response.status === 401) return { ok: false, authenticated: false, unauthenticated: true, locations: [], inventories: {} };
+        if (!response.ok) throw serverError(response.status, payload);
+        const rawInventories = payload?.data?.inventories && typeof payload.data.inventories === 'object' ? payload.data.inventories : {};
+        const inventories = Object.fromEntries(Object.entries(rawInventories).map(([id, inventory]) => [id, normalizeLocationInventory(inventory)]));
+        return { ok: true, authenticated: true, locations: Array.isArray(payload?.data?.locations) ? payload.data.locations : [], inventories };
+      } catch (error) { throw normalizeError(error); }
+    }
     async function assignLocation(input) { return locationStockRequest('POST', { subject_type: input.subject_type, subject_id: input.subject_id, assign_location_id: input.location_id }); }
     async function initialCountLocation(input) { return locationStockRequest('POST', { subject_type: input.subject_type, subject_id: input.subject_id, initial_count_location_id: input.location_id, target_quantity: input.target_quantity }); }
     async function adjustLocationInventory(input) { return locationStockRequest('POST', input); }
@@ -67,7 +81,7 @@
       try { const response = await withTimeout(fetchImpl(`${baseUrl}/location-stock.php${method === 'GET' ? `?${query}` : ''}`, options), timeoutMs); const payload = await parse(response); if (response.status === 401) return { ok:false, authenticated:false, unauthenticated:true, inventory:null }; if(!response.ok) throw serverError(response.status,payload); return { ok:true, authenticated:true, inventory:normalizeLocationInventory(payload?.data?.inventory) }; } catch(error) { throw normalizeError(error); }
     }
     async function transferRequest(input) { const options={method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},credentials:'same-origin',cache:'no-store',body:JSON.stringify(input)}; try { const response=await withTimeout(fetchImpl(`${baseUrl}/transfers.php`,options),timeoutMs);const payload=await parse(response);if(response.status===401)return {ok:false,authenticated:false,unauthenticated:true,inventory:null};if(!response.ok)throw serverError(response.status,payload);return {ok:true,authenticated:true,inventory:normalizeLocationInventory(payload?.data?.inventory)};}catch(error){throw normalizeError(error);} }
-    return { getSubjectInventory, adjustSubjectInventory, listLocations, saveLocation, getLocationInventory, assignLocation, initialCountLocation, adjustLocationInventory, transferInventory };
+    return { getSubjectInventory, adjustSubjectInventory, listLocations, saveLocation, getLocationInventory, getFinishedHatCatalogInventory, assignLocation, initialCountLocation, adjustLocationInventory, transferInventory };
   }
 
   function normalizeInventory(value) {

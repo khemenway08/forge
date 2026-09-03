@@ -239,29 +239,17 @@ test('initial unauthenticated finished-hat render does not request protected rec
   assert.match(container.innerHTML, /Add Finished Hat/);
 });
 
-test('finished hats remain available when sequential inventory enrichment is temporarily unavailable', async () => {
-  const inventoryCalls = [];
-  let activeInventoryRequests = 0;
-  let peakInventoryRequests = 0;
+test('finished hats remain available when the batched inventory summary is temporarily unavailable', async () => {
+  const batchCalls = [];
   const harness = createFinishedHatCatalogHarness({
     finishedHats: [
       { id: '1', finished_hat_name: 'First Finished Hat', status: 'active', placement_status: 'sample' },
       { id: '2', finished_hat_name: 'Second Finished Hat', status: 'active', placement_status: 'sample' }
     ],
     inventoryApiClient: {
-      async listLocations() {
-        throw new Error('temporary inventory outage');
-      },
-      async getLocationInventory(_subjectType, id) {
-        inventoryCalls.push(id);
-        activeInventoryRequests += 1;
-        peakInventoryRequests = Math.max(peakInventoryRequests, activeInventoryRequests);
-        await Promise.resolve();
-        activeInventoryRequests -= 1;
-        if (id === '1') {
-          throw new Error('temporary inventory outage');
-        }
-        return { ok: true, inventory: { completeness: 'complete', derived_quantity: 3, balances: [], movements: [] } };
+      async getFinishedHatCatalogInventory(ids) {
+        batchCalls.push(ids);
+        throw Object.assign(new Error('temporary inventory outage'), { code: 'storage_unavailable', status: 503 });
       }
     }
   });
@@ -269,14 +257,43 @@ test('finished hats remain available when sequential inventory enrichment is tem
   harness.module.render(harness.container);
   await flushAsyncWork();
 
-  assert.deepEqual(inventoryCalls, ['1', '2']);
-  assert.equal(peakInventoryRequests, 1);
+  assert.deepEqual(batchCalls, [['1', '2'], ['1', '2']]);
   assert.match(harness.container.innerHTML, /First Finished Hat/);
   assert.match(harness.container.innerHTML, /Second Finished Hat/);
   assert.match(harness.container.innerHTML, /Inventory temporarily unavailable/);
-  assert.match(harness.container.innerHTML, /Inventory: 3/);
   assert.match(harness.container.innerHTML, /Finished hat catalog records are still available/);
   assert.doesNotMatch(harness.container.innerHTML, /Finished hat catalog could not be loaded right now/);
+});
+
+test('finished hats use one batched inventory summary request for all catalog cards', async () => {
+  const batchCalls = [];
+  const harness = createFinishedHatCatalogHarness({
+    finishedHats: [
+      { id: '1', finished_hat_name: 'First Finished Hat', status: 'active', placement_status: 'sample' },
+      { id: '2', finished_hat_name: 'Second Finished Hat', status: 'active', placement_status: 'sample' }
+    ],
+    inventoryApiClient: {
+      async getFinishedHatCatalogInventory(ids) {
+        batchCalls.push(ids);
+        return {
+          ok: true,
+          locations: [{ id: 'hilltop', location_code: 'hilltop_internal', location_name: 'Hilltop', status: 'active' }],
+          inventories: {
+            1: { completeness: 'complete', derived_quantity: 3, assigned_location_count: 1, counted_location_count: 1, not_counted_location_count: 0, balances: [], movements: [] },
+            2: { completeness: 'not_counted', derived_quantity: null, assigned_location_count: 0, counted_location_count: 0, not_counted_location_count: 0, balances: [], movements: [] }
+          }
+        };
+      }
+    }
+  });
+
+  harness.module.render(harness.container);
+  await flushAsyncWork();
+
+  assert.deepEqual(batchCalls, [['1', '2']]);
+  assert.match(harness.container.innerHTML, /Inventory: 3/);
+  assert.match(harness.container.innerHTML, /Inventory: Not Counted/);
+  assert.doesNotMatch(harness.container.innerHTML, /Inventory temporarily unavailable/);
 });
 
 test('finished hat cards open the read-only detail view by click and keyboard and switch to edit without a visible card edit button', async () => {
@@ -644,7 +661,7 @@ test('finished hats expose compact staff location management and exclude inactiv
   assert.match(finishedHatSource, /catalog-save-inventory-location/);
   assert.match(finishedHatSource, /catalog-edit-inventory-location/);
   assert.match(finishedHatSource, /location\.status === 'active'/);
-  assert.match(finishedHatSource, /listLocations\(true\)/);
+  assert.match(finishedHatSource, /getFinishedHatCatalogInventory/);
   assert.match(finishedHatSource, /Legacy Placement Label/);
 });
 

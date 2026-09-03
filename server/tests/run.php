@@ -5873,19 +5873,25 @@ $runner->run('inventory location endpoints and repository support staff manageme
     $locationsEndpoint = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/inventory/locations.php');
     $locationEndpoint = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/inventory/location.php');
     $locationStockEndpoint = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/inventory/location-stock.php');
+    $finishedHatCatalogEndpoint = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/inventory/finished-hat-catalog.php');
     assertTrue(is_string($repositorySource));
     assertTrue(is_string($locationsEndpoint));
     assertTrue(is_string($locationEndpoint));
     assertTrue(is_string($locationStockEndpoint));
+    assertTrue(is_string($finishedHatCatalogEndpoint));
     assertTrue(strpos($repositorySource, "['active','inactive']") !== false);
     assertTrue(strpos($repositorySource, 'location_code') !== false);
     assertTrue(strpos($repositorySource, 'forge_catalog_finished_hats') !== false);
     assertTrue(strpos($repositorySource, 'placement_status') === false);
     assertTrue(strpos($repositorySource, 'initialCountLocation') !== false);
+    assertTrue(strpos($repositorySource, 'getFinishedHatCatalogInventory') !== false);
+    assertTrue(strpos($repositorySource, 'summarySnapshot') !== false);
     assertTrue(strpos($repositorySource, "'initial_count'") !== false);
     assertTrue(strpos($locationsEndpoint, 'requireAuthenticatedStaffSession') !== false);
     assertTrue(strpos($locationEndpoint, 'requireAuthenticatedStaffSession') !== false);
     assertTrue(strpos($locationStockEndpoint, 'initial_count_location_id') !== false);
+    assertTrue(strpos($finishedHatCatalogEndpoint, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($finishedHatCatalogEndpoint, 'getFinishedHatCatalogInventory') !== false);
 });
 
 $runner->finish();

@@ -77,6 +77,8 @@
       inventoryUnavailableIds: {},
       inventoryWarning: '',
       inventoryLoadRequestId: 0,
+      inventoryDetailLoadingIds: {},
+      inventoryDetailUnavailableIds: {},
       locationEditingId: '',
       locationFormOpen: false,
       locationValues: { location_name: '', location_type: 'boutique', status: 'active', notes: '' },
@@ -206,7 +208,7 @@
         state.error = '';
         state.requiresAuthentication = false;
         renderContent();
-        if (inventoryApiClient?.getLocationInventory) {
+        if (inventoryApiClient?.getFinishedHatCatalogInventory) {
           void loadFinishedHatInventory(state.records);
         }
       } catch (error) {
@@ -226,56 +228,58 @@
       state.inventoryUnavailableIds = {};
       renderContent();
 
-      const nextInventories = {};
+      const recordsToLoad = Array.isArray(records) ? records : [];
       const unavailableIds = {};
       let locations = [];
-      let locationsUnavailable = false;
+      let inventories = {};
+      let inventoryUnavailable = false;
 
       try {
-        if (typeof inventoryApiClient?.listLocations === 'function') {
-          try {
-            const locationResponse = await inventoryApiClient.listLocations(true);
-            if (locationResponse?.ok !== false && !locationResponse?.unauthenticated) {
-              locations = Array.isArray(locationResponse?.locations) ? locationResponse.locations : [];
-            } else {
-              locationsUnavailable = true;
-            }
-          } catch (_) {
-            locationsUnavailable = true;
-          }
+        const response = await getFinishedHatCatalogInventoryWithRetry(recordsToLoad.map((record) => record.id));
+        if (response?.ok === false || response?.unauthenticated) {
+          inventoryUnavailable = true;
+        } else {
+          locations = Array.isArray(response?.locations) ? response.locations : [];
+          inventories = response?.inventories && typeof response.inventories === 'object' ? response.inventories : {};
         }
-
-        // Do not fan out a database request for every card at once. Shared hosting
-        // can reject that burst, while sequential loading keeps the catalog usable.
-        for (const record of Array.isArray(records) ? records : []) {
-          try {
-            const response = await inventoryApiClient.getLocationInventory('catalog_finished_hat', record.id);
-            if (response?.ok === false || response?.unauthenticated) {
-              unavailableIds[record.id] = true;
-            } else {
-              nextInventories[record.id] = response?.inventory || null;
-            }
-          } catch (_) {
-            unavailableIds[record.id] = true;
-          }
-        }
+      } catch (_) {
+        inventoryUnavailable = true;
       } finally {
         if (requestId !== state.inventoryLoadRequestId) {
           return;
         }
+        if (inventoryUnavailable) recordsToLoad.forEach((record) => { unavailableIds[record.id] = true; });
         state.inventoryLocations = locations;
-        state.inventories = nextInventories;
+        state.inventories = inventories;
         state.inventoryUnavailableIds = unavailableIds;
         state.inventoryLoading = false;
         const unavailableCount = Object.keys(unavailableIds).length;
-        if (unavailableCount > 0 || locationsUnavailable) {
-          const itemCopy = unavailableCount > 0
-            ? `Inventory is temporarily unavailable for ${unavailableCount} finished hat${unavailableCount === 1 ? '' : 's'}.`
-            : 'Inventory locations are temporarily unavailable.';
+        if (unavailableCount > 0) {
+          const itemCopy = `Inventory is temporarily unavailable for ${unavailableCount} finished hat${unavailableCount === 1 ? '' : 's'}.`;
           state.inventoryWarning = `${itemCopy} Finished hat catalog records are still available.`;
         }
         renderContent();
       }
+    }
+
+    async function getFinishedHatCatalogInventoryWithRetry(subjectIds) {
+      try {
+        return await inventoryApiClient.getFinishedHatCatalogInventory(subjectIds);
+      } catch (error) {
+        if (!isRetryableInventoryReadError(error)) throw error;
+        await delay(350);
+        return inventoryApiClient.getFinishedHatCatalogInventory(subjectIds);
+      }
+    }
+
+    function isRetryableInventoryReadError(error) {
+      const code = String(error?.code || '');
+      const status = Number(error?.status || 0);
+      return code === 'network_error' || code === 'timeout' || code === 'storage_unavailable' || status >= 500;
+    }
+
+    function delay(milliseconds) {
+      return new Promise((resolve) => windowLike.setTimeout(resolve, milliseconds));
     }
 
     async function ensureLinkOptionsLoaded() {
@@ -749,6 +753,9 @@
       state.locationValues = { location_name: '', location_type: 'boutique', status: 'active', notes: '' };
       resetPickerState();
       renderDialog();
+      if (mode === 'detail' && state.dialogFinishedHatId) {
+        void refreshFinishedHatInventory(state.dialogFinishedHatId, { background: true });
+      }
       if (mode !== 'detail') {
         await ensureLinkOptionsLoaded();
       }
@@ -929,6 +936,12 @@
     }
 
     function renderFinishedHatInventoryPanel(record, inventory, locations) {
+      if (state.inventoryDetailLoadingIds[record.id]) {
+        return `<section class="staff-finished-hat-inventory-panel"><div class="staff-finished-hat-inventory-panel-header"><span>Finished Hat Inventory</span></div><p class="staff-finished-hat-inventory-empty">Loading inventory details…</p></section>`;
+      }
+      if (state.inventoryDetailUnavailableIds[record.id]) {
+        return `<section class="staff-finished-hat-inventory-panel"><div class="staff-finished-hat-inventory-panel-header"><span>Finished Hat Inventory</span></div><p class="staff-finished-hat-inventory-empty">Inventory details are temporarily unavailable. The catalog summary remains unchanged.</p></section>`;
+      }
       const assigned = inventory?.balances || [];
       const unassigned = (locations || []).filter((location) => location.status === 'active' && !assigned.some((balance) => balance.inventory_location_id === location.id));
       const hilltop = unassigned.find((location) => location.location_code === 'hilltop_internal') || null;
@@ -1443,12 +1456,23 @@
       }
     }
 
-    async function refreshFinishedHatInventory(finishedHatId) {
+    async function refreshFinishedHatInventory(finishedHatId, options = {}) {
       if (!inventoryApiClient?.getLocationInventory || !finishedHatId) return;
-      const result = await inventoryApiClient.getLocationInventory('catalog_finished_hat', finishedHatId);
-      state.inventories[finishedHatId] = result?.inventory || null;
-      renderContent();
+      state.inventoryDetailLoadingIds[finishedHatId] = true;
+      delete state.inventoryDetailUnavailableIds[finishedHatId];
       renderDialog();
+      try {
+        const result = await inventoryApiClient.getLocationInventory('catalog_finished_hat', finishedHatId);
+        state.inventories[finishedHatId] = result?.inventory || null;
+        delete state.inventoryUnavailableIds[finishedHatId];
+      } catch (error) {
+        state.inventoryDetailUnavailableIds[finishedHatId] = true;
+        if (!options.background) throw error;
+      } finally {
+        delete state.inventoryDetailLoadingIds[finishedHatId];
+        renderContent();
+        renderDialog();
+      }
     }
 
     async function saveInventoryLocation() {

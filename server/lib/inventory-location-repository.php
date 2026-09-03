@@ -59,6 +59,59 @@ final class PdoInventoryLocationRepository
         return $this->snapshot($item, $historyLimit);
     }
 
+    /**
+     * Reads the inventory information needed by the Finished Hats catalog in one
+     * database connection. Detail balances and movement history remain on the
+     * single-record endpoint so catalog loading does not multiply storage work.
+     *
+     * @param array<int,mixed> $subjectIds
+     * @return array{locations:array<int,array<string,mixed>>,inventories:array<string,array<string,mixed>>}
+     */
+    public function getFinishedHatCatalogInventory(array $subjectIds, bool $includeInactive = true): array
+    {
+        $ids = $this->normalizeSubjectIds($subjectIds);
+        $locations = $this->listLocations($includeInactive);
+        $inventories = [];
+        foreach ($ids as $id) $inventories[$id] = $this->emptySnapshot($id);
+        if ($ids === []) return ['locations' => $locations, 'inventories' => $inventories];
+
+        try {
+            [$subjectWhere, $subjectParams] = $this->inClause('subject_id', $ids);
+            $subjects = $this->pdo->prepare('SELECT id FROM forge_catalog_finished_hats WHERE id IN (' . $subjectWhere . ')');
+            $subjects->execute($subjectParams);
+            $known = [];
+            foreach ($subjects->fetchAll() ?: [] as $row) $known[(string) ($row['id'] ?? '')] = true;
+            foreach ($ids as $id) if (!isset($known[$id])) throw new InventoryNotFoundException('That inventory record could not be found.');
+
+            $itemStatement = $this->pdo->prepare('SELECT id,subject_type,subject_id,tracking_mode,created_at,updated_at FROM forge_inventory_items WHERE subject_type=:type AND subject_id IN (' . $subjectWhere . ')');
+            $itemStatement->execute([':type' => self::SUBJECT_TYPE_CATALOG_FINISHED_HAT] + $subjectParams);
+            $itemsById = [];
+            foreach ($itemStatement->fetchAll() ?: [] as $row) {
+                if (is_array($row) && isset($row['subject_id'])) $itemsById[(string) $row['subject_id']] = $row;
+            }
+            if ($itemsById === []) return ['locations' => $locations, 'inventories' => $inventories];
+
+            $itemIds = array_values(array_map(static fn(array $item): string => (string) $item['id'], $itemsById));
+            [$itemWhere, $itemParams] = $this->inClause('inventory_item_id', $itemIds);
+            $balanceStatement = $this->pdo->prepare('SELECT b.id,b.inventory_item_id,b.inventory_location_id,b.on_hand_quantity,b.version,b.created_at,b.updated_at,l.location_code,l.location_name,l.location_type,l.status FROM forge_inventory_location_balances b JOIN forge_inventory_locations l ON l.id=b.inventory_location_id WHERE b.inventory_item_id IN (' . $itemWhere . ') ORDER BY l.sort_order,l.location_name,l.id');
+            $balanceStatement->execute($itemParams);
+            $balancesByItem = [];
+            foreach ($balanceStatement->fetchAll() ?: [] as $row) {
+                if (!is_array($row)) continue;
+                $itemId = (string) ($row['inventory_item_id'] ?? '');
+                $balancesByItem[$itemId][] = normalizeInventoryLocationBalance($row);
+            }
+            foreach ($itemsById as $subjectId => $item) {
+                $inventories[$subjectId] = $this->summarySnapshot($item, $balancesByItem[(string) $item['id']] ?? []);
+            }
+        } catch (InventoryNotFoundException $e) {
+            throw $e;
+        } catch (PDOException $e) {
+            throw new StorageUnavailableException('Inventory storage is currently unavailable.', 0, $e);
+        }
+        return ['locations' => $locations, 'inventories' => $inventories];
+    }
+
     /** Explicitly assigns a location, initially Not Counted. @return array<string,mixed> */
     public function assignLocation(string $subjectId, string $locationId): array
     {
@@ -115,11 +168,14 @@ final class PdoInventoryLocationRepository
     }
 
     private function assertSubject(string $id): void { if(normalizeStaffCatalogFinishedHatId($id)===null)throw new InventoryNotFoundException('That inventory record could not be found.'); try{$s=$this->pdo->prepare('SELECT id FROM forge_catalog_finished_hats WHERE id=:id LIMIT 1');$s->execute([':id'=>$id]);if(!$s->fetch())throw new InventoryNotFoundException('That inventory record could not be found.');}catch(PDOException $e){throw new StorageUnavailableException('Inventory storage is currently unavailable.',0,$e);} }
+    /** @param array<int,mixed> $subjectIds @return array<int,string> */ private function normalizeSubjectIds(array $subjectIds): array { $ids=[];foreach($subjectIds as $subjectId){$id=is_string($subjectId)?trim($subjectId):'';if(normalizeStaffCatalogFinishedHatId($id)===null)throw new InventoryNotFoundException('That inventory record could not be found.');$ids[$id]=true;}return array_keys($ids); }
+    /** @param array<int,string> $values @return array{0:string,1:array<string,string>} */ private function inClause(string $prefix,array $values): array { $placeholders=[];$params=[];foreach(array_values($values) as $index=>$value){$key=':'.$prefix.'_'.$index;$placeholders[]=$key;$params[$key]=$value;}return [implode(',',$placeholders),$params]; }
     /** @return array<string,mixed>|null */ private function item(string $subjectId,bool $lock):?array{$s=$this->pdo->prepare('SELECT id,subject_type,subject_id,tracking_mode,created_at,updated_at FROM forge_inventory_items WHERE subject_type=:type AND subject_id=:id LIMIT 1'.($lock?' FOR UPDATE':''));$s->execute([':type'=>self::SUBJECT_TYPE_CATALOG_FINISHED_HAT,':id'=>$subjectId]);$r=$s->fetch();return is_array($r)?$r:null;}
     /** @return array<string,mixed> */ private function ensureItem(string $subjectId,string $time):array{$item=$this->item($subjectId,true);if($item!==null)return $item;$id=createInventoryUuid();$s=$this->pdo->prepare("INSERT INTO forge_inventory_items (id,subject_type,subject_id,tracking_mode,on_hand_quantity,version,created_at,updated_at) VALUES (:id,:type,:subject,'by_location',NULL,0,:created,:updated)");$s->execute([':id'=>$id,':type'=>self::SUBJECT_TYPE_CATALOG_FINISHED_HAT,':subject'=>$subjectId,':created'=>$time,':updated'=>$time]);return $this->item($subjectId,false)??throw new StorageUnavailableException('Inventory storage is currently unavailable.');}
     /** @return array<string,mixed>|null */ private function balance(string $item,string $location,bool $lock):?array{$s=$this->pdo->prepare('SELECT id,inventory_location_id,on_hand_quantity,version,created_at,updated_at FROM forge_inventory_location_balances WHERE inventory_item_id=:item AND inventory_location_id=:location LIMIT 1'.($lock?' FOR UPDATE':''));$s->execute([':item'=>$item,':location'=>$location]);$r=$s->fetch();return is_array($r)?normalizeInventoryLocationBalance($r):null;}
     private function updateBalance(array $balance,int $target,string $time):void{$s=$this->pdo->prepare('UPDATE forge_inventory_location_balances SET on_hand_quantity=:quantity,version=version+1,updated_at=:updated WHERE id=:id AND version=:version');$s->execute([':quantity'=>$target,':updated'=>$time,':id'=>$balance['id'],':version'=>$balance['version']]);if($s->rowCount()!==1)throw new InventoryConflictException('This inventory record was updated elsewhere. Reload and try again.');}
     private function movement(string $item,string $location,?int $before,int $after,string $reason,?string $note,?string $transfer,string $time):void{$s=$this->pdo->prepare('INSERT INTO forge_inventory_movements (id,inventory_item_id,inventory_location_id,movement_type,reason_code,quantity_before,quantity_after,quantity_delta,note,transfer_id,created_at) VALUES (:id,:item,:location,:type,:reason,:before,:after,:delta,:note,:transfer,:created)');$s->execute([':id'=>createInventoryUuid(),':item'=>$item,':location'=>$location,':type'=>$before===null?'count':($transfer===null?'adjustment':'transfer'),':reason'=>$reason,':before'=>$before,':after'=>$after,':delta'=>$before===null?null:$after-$before,':note'=>$note,':transfer'=>$transfer,':created'=>$time]);}
+    /** @param array<string,mixed> $item @param array<int,array<string,mixed>> $balances @return array<string,mixed> */ private function summarySnapshot(array $item,array $balances):array{$counted=array_filter($balances,static fn($b)=>$b['on_hand_quantity']!==null);$uncounted=count($balances)-count($counted);$sum=array_sum(array_map(static fn($b)=>(int)$b['on_hand_quantity'],$counted));return ['subject_type'=>self::SUBJECT_TYPE_CATALOG_FINISHED_HAT,'subject_id'=>$item['subject_id'],'tracking_mode'=>self::TRACKING_MODE,'assigned_location_count'=>count($balances),'counted_location_count'=>count($counted),'not_counted_location_count'=>$uncounted,'derived_quantity'=>$sum,'completeness'=>$balances===[]?'not_counted':($uncounted>0?'partial':'complete'),'balances'=>[],'movements'=>[]];}
     /** @return array<string,mixed> */ private function snapshot(array $item,int $limit):array{$s=$this->pdo->prepare("SELECT b.id,b.inventory_location_id,b.on_hand_quantity,b.version,b.created_at,b.updated_at,l.location_code,l.location_name,l.location_type,l.status FROM forge_inventory_location_balances b JOIN forge_inventory_locations l ON l.id=b.inventory_location_id WHERE b.inventory_item_id=:item ORDER BY l.sort_order,l.location_name,l.id");$s->execute([':item'=>$item['id']]);$balances=array_map(__NAMESPACE__.'\\normalizeInventoryLocationBalance',$s->fetchAll()?:[]);$counted=array_filter($balances,static fn($b)=>$b['on_hand_quantity']!==null);$uncounted=count($balances)-count($counted);$sum=array_sum(array_map(static fn($b)=>(int)$b['on_hand_quantity'],$counted));$m=$this->pdo->prepare('SELECT m.id,m.movement_type,m.reason_code,m.quantity_before,m.quantity_after,m.quantity_delta,m.note,m.transfer_id,m.created_at,m.inventory_location_id,l.location_name FROM forge_inventory_movements m JOIN forge_inventory_locations l ON l.id=m.inventory_location_id WHERE m.inventory_item_id=:item ORDER BY m.created_at DESC,m.id DESC LIMIT '.max(1,min(200,$limit)));$m->execute([':item'=>$item['id']]);return ['subject_type'=>self::SUBJECT_TYPE_CATALOG_FINISHED_HAT,'subject_id'=>$item['subject_id'],'tracking_mode'=>self::TRACKING_MODE,'assigned_location_count'=>count($balances),'counted_location_count'=>count($counted),'not_counted_location_count'=>$uncounted,'derived_quantity'=>$sum,'completeness'=>$balances===[]?'not_counted':($uncounted>0?'partial':'complete'),'balances'=>$balances,'movements'=>array_map(__NAMESPACE__.'\\normalizeInventoryMovement',$m->fetchAll()?:[])];}
     /** @return array<string,mixed> */ private function emptySnapshot(string $id):array{return ['subject_type'=>self::SUBJECT_TYPE_CATALOG_FINISHED_HAT,'subject_id'=>$id,'tracking_mode'=>self::TRACKING_MODE,'assigned_location_count'=>0,'counted_location_count'=>0,'not_counted_location_count'=>0,'derived_quantity'=>null,'completeness'=>'not_counted','balances'=>[],'movements'=>[]];}
     /** @return array<string,mixed>|null */ private function location(string $id):?array{try{$s=$this->pdo->prepare('SELECT id,location_code,location_name,location_type,status,notes,sort_order,created_at,updated_at FROM forge_inventory_locations WHERE id=:id LIMIT 1');$s->execute([':id'=>$id]);$r=$s->fetch();return is_array($r)?normalizeInventoryLocation($r):null;}catch(PDOException $e){throw new StorageUnavailableException('Inventory storage is currently unavailable.',0,$e);}}

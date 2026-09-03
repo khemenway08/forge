@@ -62,3 +62,28 @@ test('location inventory preserves explicit assignment, Not Counted, partial tot
   assert.equal(inventory.balances[0].on_hand_quantity, 0);
   assert.equal(inventory.balances[1].on_hand_quantity, null);
 });
+
+test('finished hat catalog inventory uses one batch request and preserves Not Counted summaries', async () => {
+  const requests = [];
+  const client = inventoryApi.createForgeStaffInventoryApiClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return jsonResponse(200, { data: {
+        locations: [{ id: 'hilltop', location_code: 'hilltop_internal', location_name: 'Hilltop', status: 'active' }],
+        inventories: {
+          'finished-1': { subject_type: 'catalog_finished_hat', subject_id: 'finished-1', completeness: 'complete', assigned_location_count: 1, counted_location_count: 1, not_counted_location_count: 0, derived_quantity: 3 },
+          'finished-2': { subject_type: 'catalog_finished_hat', subject_id: 'finished-2', completeness: 'not_counted', assigned_location_count: 0, counted_location_count: 0, not_counted_location_count: 0, derived_quantity: null }
+        }
+      } });
+    }
+  });
+
+  const result = await client.getFinishedHatCatalogInventory(['finished-1', 'finished-2', 'finished-1']);
+  assert.equal(requests.length, 1);
+  assert.match(requests[0].url, /finished-hat-catalog\.php\?subject_id\[]=finished-1&subject_id\[]=finished-2/);
+  assert.equal(requests[0].options.method, 'GET');
+  assert.equal(result.locations[0].location_name, 'Hilltop');
+  assert.equal(result.inventories['finished-1'].derived_quantity, 3);
+  assert.equal(result.inventories['finished-2'].derived_quantity, null);
+  assert.equal(result.inventories['finished-2'].completeness, 'not_counted');
+});
