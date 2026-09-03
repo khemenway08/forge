@@ -73,6 +73,10 @@
       records: [],
       inventories: {},
       inventoryLocations: [],
+      inventoryLoading: false,
+      inventoryUnavailableIds: {},
+      inventoryWarning: '',
+      inventoryLoadRequestId: 0,
       locationEditingId: '',
       locationFormOpen: false,
       locationValues: { location_name: '', location_type: 'boutique', status: 'active', notes: '' },
@@ -196,25 +200,80 @@
         state.records = Array.isArray(result.finished_hats)
           ? sortRecordsForCustomOrder(result.finished_hats.map(normalizeFinishedHatRecord))
           : [];
-        if (inventoryApiClient?.getLocationInventory) {
-          const [locations, inventories] = await Promise.all([
-            inventoryApiClient.listLocations?.(true) || { locations: [] },
-            Promise.all(state.records.map(async (record) => [record.id, await inventoryApiClient.getLocationInventory('catalog_finished_hat', record.id)]))
-          ]);
-          state.inventoryLocations = Array.isArray(locations?.locations) ? locations.locations : [];
-          state.inventories = Object.fromEntries(inventories.map(([id, response]) => [id, response?.inventory || null]));
-        }
         reorderController?.sync(state.records.map((record) => record.id));
         state.loaded = true;
         state.loading = false;
         state.error = '';
         state.requiresAuthentication = false;
         renderContent();
+        if (inventoryApiClient?.getLocationInventory) {
+          void loadFinishedHatInventory(state.records);
+        }
       } catch (error) {
         state.loading = false;
         state.loaded = false;
         state.requiresAuthentication = false;
         state.error = safeErrorMessage(error, 'Finished hat catalog could not be loaded right now.');
+        renderContent();
+      }
+    }
+
+    async function loadFinishedHatInventory(records) {
+      const requestId = state.inventoryLoadRequestId + 1;
+      state.inventoryLoadRequestId = requestId;
+      state.inventoryLoading = true;
+      state.inventoryWarning = '';
+      state.inventoryUnavailableIds = {};
+      renderContent();
+
+      const nextInventories = {};
+      const unavailableIds = {};
+      let locations = [];
+      let locationsUnavailable = false;
+
+      try {
+        if (typeof inventoryApiClient?.listLocations === 'function') {
+          try {
+            const locationResponse = await inventoryApiClient.listLocations(true);
+            if (locationResponse?.ok !== false && !locationResponse?.unauthenticated) {
+              locations = Array.isArray(locationResponse?.locations) ? locationResponse.locations : [];
+            } else {
+              locationsUnavailable = true;
+            }
+          } catch (_) {
+            locationsUnavailable = true;
+          }
+        }
+
+        // Do not fan out a database request for every card at once. Shared hosting
+        // can reject that burst, while sequential loading keeps the catalog usable.
+        for (const record of Array.isArray(records) ? records : []) {
+          try {
+            const response = await inventoryApiClient.getLocationInventory('catalog_finished_hat', record.id);
+            if (response?.ok === false || response?.unauthenticated) {
+              unavailableIds[record.id] = true;
+            } else {
+              nextInventories[record.id] = response?.inventory || null;
+            }
+          } catch (_) {
+            unavailableIds[record.id] = true;
+          }
+        }
+      } finally {
+        if (requestId !== state.inventoryLoadRequestId) {
+          return;
+        }
+        state.inventoryLocations = locations;
+        state.inventories = nextInventories;
+        state.inventoryUnavailableIds = unavailableIds;
+        state.inventoryLoading = false;
+        const unavailableCount = Object.keys(unavailableIds).length;
+        if (unavailableCount > 0 || locationsUnavailable) {
+          const itemCopy = unavailableCount > 0
+            ? `Inventory is temporarily unavailable for ${unavailableCount} finished hat${unavailableCount === 1 ? '' : 's'}.`
+            : 'Inventory locations are temporarily unavailable.';
+          state.inventoryWarning = `${itemCopy} Finished hat catalog records are still available.`;
+        }
         renderContent();
       }
     }
@@ -357,6 +416,7 @@
           <div class="staff-catalog-sort-row">
             <p class="staff-catalog-sort-help">${escapeHtml(reorderAvailability.reason || 'Drag handles appear while Custom Order is active.')}</p>
             ${state.notice ? `<div class="staff-inline-notice staff-inline-notice--${escapeAttribute(state.noticeTone)}" role="status" aria-live="polite">${escapeHtml(state.notice)}</div>` : ''}
+            ${state.inventoryWarning ? `<div class="staff-inline-notice staff-inline-notice--error" role="status" aria-live="polite">${escapeHtml(state.inventoryWarning)}</div>` : ''}
           </div>
           <p class="staff-catalog-reorder-announcer" aria-live="polite">${escapeHtml(state.announcement)}</p>
           ${renderFinishedHatBody(sortedRecords, hasActiveFilters, reorderAvailability)}
@@ -447,6 +507,9 @@
       const missingLinksSummary = getFinishedHatMissingLinksSummary(record);
       const primaryBadge = getFinishedHatPrimaryBadge(record);
       const inventory = state.inventories[record.id];
+      const inventorySummary = state.inventoryLoading
+        ? 'Inventory loading…'
+        : (state.inventoryUnavailableIds[record.id] ? 'Inventory temporarily unavailable' : formatFinishedHatInventorySummary(inventory));
       return `
         <div class="staff-catalog-card-shell${reorderController?.isDraggingId(record.id) ? ' staff-catalog-card-shell--dragging' : ''}${reorderController?.isSaving() ? ' staff-catalog-card-shell--saving' : ''}" data-catalog-order-id="${escapeAttribute(record.id)}">
           ${reorderEnabled ? `
@@ -483,7 +546,7 @@
               </div>
               <div class="staff-finished-hat-card-summary">
                 ${missingLinksSummary ? '<p class="staff-finished-hat-card-missing-links">Needs setup</p>' : ''}
-                <p class="staff-finished-hat-card-summary-line staff-finished-hat-inventory-summary">${escapeHtml(formatFinishedHatInventorySummary(inventory))}</p>
+                <p class="staff-finished-hat-card-summary-line staff-finished-hat-inventory-summary">${escapeHtml(inventorySummary)}</p>
               </div>
             </div>
           </article>

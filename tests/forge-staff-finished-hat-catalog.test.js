@@ -239,6 +239,46 @@ test('initial unauthenticated finished-hat render does not request protected rec
   assert.match(container.innerHTML, /Add Finished Hat/);
 });
 
+test('finished hats remain available when sequential inventory enrichment is temporarily unavailable', async () => {
+  const inventoryCalls = [];
+  let activeInventoryRequests = 0;
+  let peakInventoryRequests = 0;
+  const harness = createFinishedHatCatalogHarness({
+    finishedHats: [
+      { id: '1', finished_hat_name: 'First Finished Hat', status: 'active', placement_status: 'sample' },
+      { id: '2', finished_hat_name: 'Second Finished Hat', status: 'active', placement_status: 'sample' }
+    ],
+    inventoryApiClient: {
+      async listLocations() {
+        throw new Error('temporary inventory outage');
+      },
+      async getLocationInventory(_subjectType, id) {
+        inventoryCalls.push(id);
+        activeInventoryRequests += 1;
+        peakInventoryRequests = Math.max(peakInventoryRequests, activeInventoryRequests);
+        await Promise.resolve();
+        activeInventoryRequests -= 1;
+        if (id === '1') {
+          throw new Error('temporary inventory outage');
+        }
+        return { ok: true, inventory: { completeness: 'complete', derived_quantity: 3, balances: [], movements: [] } };
+      }
+    }
+  });
+
+  harness.module.render(harness.container);
+  await flushAsyncWork();
+
+  assert.deepEqual(inventoryCalls, ['1', '2']);
+  assert.equal(peakInventoryRequests, 1);
+  assert.match(harness.container.innerHTML, /First Finished Hat/);
+  assert.match(harness.container.innerHTML, /Second Finished Hat/);
+  assert.match(harness.container.innerHTML, /Inventory temporarily unavailable/);
+  assert.match(harness.container.innerHTML, /Inventory: 3/);
+  assert.match(harness.container.innerHTML, /Finished hat catalog records are still available/);
+  assert.doesNotMatch(harness.container.innerHTML, /Finished hat catalog could not be loaded right now/);
+});
+
 test('finished hat cards open the read-only detail view by click and keyboard and switch to edit without a visible card edit button', async () => {
   const harness = createFinishedHatCatalogHarness();
 
@@ -604,7 +644,7 @@ test('finished hats expose compact staff location management and exclude inactiv
   assert.match(finishedHatSource, /catalog-save-inventory-location/);
   assert.match(finishedHatSource, /catalog-edit-inventory-location/);
   assert.match(finishedHatSource, /location\.status === 'active'/);
-  assert.match(finishedHatSource, /listLocations\?\.\(true\)/);
+  assert.match(finishedHatSource, /listLocations\(true\)/);
   assert.match(finishedHatSource, /Legacy Placement Label/);
 });
 
@@ -882,29 +922,30 @@ function createFinishedHatCatalogHarness(options = {}) {
   const designRecords = options.designs || [{ id: 'design-1', design_name: 'Texas Flag', category: 'Patriotic', production_method: 'Acrylic', status: 'active' }];
   const hatRecords = options.hats || [{ id: 'hat-1', manufacturer: 'Zapped', model: 'Blackhawk R+', color: 'Black / Red', hat_name: 'Blackhawk R+ Black Red', status: 'active' }];
   const materialRecords = options.materials || [{ id: 'material-1', material_name: 'Brushed Stainless Black Laserable Acrylic Panels', material_type: 'Acrylic', color: 'Black / Stainless', status: 'active', image_width: 1200, image_height: 1200 }];
+  const finishedHatRecords = options.finishedHats || [
+    {
+      id: '1',
+      finished_hat_name: 'Texas Flag Acrylic Patch Hat Black Performance Rope',
+      design_id: 'design-1',
+      hat_id: 'hat-1',
+      material_id: 'material-1',
+      design_name: 'Texas Flag',
+      hat_manufacturer: 'Zapped',
+      hat_model: 'Blackhawk R+',
+      hat_color: 'Black / Red',
+      material_name: 'Brushed Stainless Black Laserable Acrylic Panels',
+      material_color: 'Black / Stainless',
+      placement_status: 'sample',
+      status: 'active'
+    }
+  ];
   const module = finishedHatCatalogModule.createStaffFinishedHatCatalogModule({
     apiClient: {
       async listFinishedHats() {
         return {
           ok: true,
           authenticated: true,
-          finished_hats: [
-            {
-              id: '1',
-              finished_hat_name: 'Texas Flag Acrylic Patch Hat Black Performance Rope',
-              design_id: 'design-1',
-              hat_id: 'hat-1',
-              material_id: 'material-1',
-              design_name: 'Texas Flag',
-              hat_manufacturer: 'Zapped',
-              hat_model: 'Blackhawk R+',
-              hat_color: 'Black / Red',
-              material_name: 'Brushed Stainless Black Laserable Acrylic Panels',
-              material_color: 'Black / Stainless',
-              placement_status: 'sample',
-              status: 'active'
-            }
-          ]
+          finished_hats: finishedHatRecords
         };
       },
       async updateFinishedHat(_id, payload) {
@@ -965,6 +1006,7 @@ function createFinishedHatCatalogHarness(options = {}) {
         return { ok: true, authenticated: true, materials: materialRecords };
       }
     },
+    inventoryApiClient: options.inventoryApiClient || null,
     canLoadProtectedRecords() {
       return true;
     },
@@ -1005,4 +1047,10 @@ function createActionEvent(action, finishedHatId = '') {
 async function flushMicrotasks() {
   await Promise.resolve();
   await Promise.resolve();
+}
+
+async function flushAsyncWork() {
+  for (let index = 0; index < 12; index += 1) {
+    await Promise.resolve();
+  }
 }
