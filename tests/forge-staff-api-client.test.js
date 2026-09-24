@@ -930,3 +930,44 @@ test('invalid tray numbers are rejected before sending an assignment request', a
     }
   );
 });
+
+test('submitted order editing posts corrections with staff credentials and the original hash', async () => {
+  const requests = [];
+  const uuid = '123e4567-e89b-42d3-a456-426614174599';
+  const hash = 'a'.repeat(64);
+  const changes = { customer: { full_name: 'Corrected Name' } };
+  const client = staffApiClientModule.createForgeStaffApiClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return createJsonResponse(200, { application: 'Forge', api_version: '1', status: 'ok', data: {
+        order: { forge_order_uuid: uuid, forge_order_number: 1042, payload_sha256: 'b'.repeat(64) }
+      } });
+    }
+  });
+  const result = await client.updateSubmittedOrder(uuid, hash, changes);
+  assert.equal(result.order.forge_order_number, 1042);
+  assert.equal(requests[0].url, '/api/v1/staff/edit-order.php');
+  assert.equal(requests[0].options.method, 'POST');
+  assert.equal(requests[0].options.credentials, 'same-origin');
+  assert.deepEqual(JSON.parse(requests[0].options.body), { forge_order_uuid: uuid, expected_payload_sha256: hash, changes });
+  await assert.rejects(client.updateSubmittedOrder(uuid, '', changes), /original payload hash/);
+  assert.equal(requests.length, 1);
+});
+
+test('submitted edit client handles auth expiry, production conflicts and malformed responses', async () => {
+  const uuid = '123e4567-e89b-42d3-a456-426614174599';
+  for (const status of [401, 409, 422, 200]) {
+    const client = staffApiClientModule.createForgeStaffApiClient({ fetchImpl: async () => createJsonResponse(status,
+      status === 200 ? { application: 'Forge', api_version: '1', status: 'ok', data: {} }
+        : { application: 'Forge', api_version: '1', status: 'error', error: {
+          code: status === 409 ? 'order_edit_conflict' : status === 422 ? 'invalid_request' : 'authentication_required',
+          message: status === 422 ? 'Enter a valid customer email address.' : 'Unavailable'
+        } }) });
+    if (status === 401) {
+      assert.equal((await client.updateSubmittedOrder(uuid, 'a'.repeat(64), {})).unauthenticated, true);
+    } else {
+      await assert.rejects(client.updateSubmittedOrder(uuid, 'a'.repeat(64), {}),
+        status === 409 ? /refresh Staff Orders/ : status === 422 ? /valid customer email/ : /edited order was not returned/);
+    }
+  }
+});

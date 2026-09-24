@@ -223,6 +223,18 @@
       };
     }
 
+    async function updateSubmittedOrder(forgeOrderUuid, expectedPayloadSha256, changes) {
+      if (environment.dataSource !== STAFF_DATA_SOURCES.server) {
+        throw new Error('Submitted order editing requires the shared staff server.');
+      }
+      assertStaffApiClient(staffApiClient, 'updateSubmittedOrder');
+      const result = await staffApiClient.updateSubmittedOrder(forgeOrderUuid, expectedPayloadSha256, changes);
+      if (!result?.ok || result.authenticated === false) {
+        return { ok: false, unauthenticated: Boolean(result?.unauthenticated), errorMessage: 'Sign in to staff again before saving.' };
+      }
+      return { ...result, order: adaptServerOrderForQueue(result.order) };
+    }
+
     async function cancelOrder(forgeOrderUuid) {
       if (environment.dataSource === STAFF_DATA_SOURCES.local) {
         assertLocalOrderStore(localOrderStore, 'cancelOrder');
@@ -555,6 +567,7 @@
       loadOrders,
       loadTrays,
       assignTrayToOrder,
+      updateSubmittedOrder,
       cancelOrder,
       completeOrder,
       completeItemQuantity,

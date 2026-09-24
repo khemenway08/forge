@@ -19,6 +19,7 @@
   const START_EVENT_ENDPOINT = 'start-event.php';
   const END_EVENT_ENDPOINT = 'end-event.php';
   const INTERNAL_NOTE_ENDPOINT = 'internal-note.php';
+  const EDIT_ORDER_ENDPOINT = 'edit-order.php';
   const CANCEL_ORDER_ENDPOINT = 'cancel-order.php';
   const COMPLETE_ORDER_ENDPOINT = 'complete-order.php';
   const DELETE_TEST_ORDER_ENDPOINT = 'delete-test-order.php';
@@ -41,6 +42,7 @@
     event_not_found: 'That event could not be found.',
     event_conflict: 'That event could not be updated right now.',
     internal_note_too_long: 'Internal notes are too long.',
+    order_edit_conflict: 'This order changed or production has begun. Close it, refresh Staff Orders, and reopen it before editing again.',
     order_not_cancellable: 'That order cannot be cancelled right now.',
     order_not_completable: 'That order cannot be completed right now.',
     test_order_delete_not_allowed: 'Only Test Session orders can be permanently deleted.',
@@ -342,6 +344,26 @@
       } catch (error) {
         throw normalizeClientError(error);
       }
+    }
+
+    async function updateSubmittedOrder(forgeOrderUuid, expectedPayloadSha256, changes) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      if (!orderUuid || !/^[0-9a-f]{64}$/.test(expectedPayloadSha256 || '')
+          || !changes || typeof changes !== 'object' || Array.isArray(changes)) {
+        throw new ForgeStaffApiError('invalid_request', 'A saved order, original payload hash and correction fields are required.');
+      }
+      return submitStaffMutation(
+        `${baseUrl}/${EDIT_ORDER_ENDPOINT}`,
+        { forge_order_uuid: orderUuid, expected_payload_sha256: expectedPayloadSha256, changes },
+        'Order editing could not be prepared.',
+        (payload) => {
+          const result = normalizeCancelOrderPayload(payload);
+          if (!result.order || result.order.forge_order_uuid !== orderUuid || !result.order.payload_sha256) {
+            throw new ForgeStaffApiError('invalid_response', 'The edited order was not returned. Reopen the order to check whether it saved.');
+          }
+          return result;
+        }
+      );
     }
 
     async function cancelOrder(forgeOrderUuid) {
@@ -744,6 +766,7 @@
       endEvent,
       listOrders,
       listTrays,
+      updateSubmittedOrder,
       cancelOrder,
       completeOrder,
       assignTray,

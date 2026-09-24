@@ -178,6 +178,9 @@ const staffOrdersState = {
   detailLoading: false,
   detailError: '',
   detailSavingLineId: '',
+  detailEditDraft: null,
+  detailEditSaving: false,
+  detailEditError: '',
   detailInternalNoteDraft: '',
   detailInternalNoteSaving: false,
   detailInternalNoteStatus: '',
@@ -5215,6 +5218,25 @@ function ensureStaffOrderDetailUi() {
       return;
     }
 
+    if (staffOrdersState.detailEditSaving) return;
+    if (action === 'staff-edit-order' && canStaffEditSubmittedOrder(staffOrdersState.detailRecord)) {
+      staffOrdersState.detailEditDraft = buildStaffSubmittedOrderDraft(staffOrdersState.detailRecord);
+      staffOrdersState.detailEditError = '';
+      renderStaffOrderDetail();
+      staffOrderDetailDialog.querySelector('input')?.focus();
+      return;
+    }
+    if (action === 'staff-cancel-order-edit') {
+      staffOrdersState.detailEditDraft = null;
+      staffOrdersState.detailEditError = '';
+      renderStaffOrderDetail();
+      return;
+    }
+    if (action === 'staff-save-order-edit') {
+      submitStaffSubmittedOrderEdit();
+      return;
+    }
+
     if (action === 'close-staff-order-detail') {
       closeStaffOrderDetail();
       return;
@@ -5297,6 +5319,13 @@ function ensureStaffOrderDetailUi() {
 
   staffOrderDetailDialog?.addEventListener('input', (event) => {
     const target = event.target;
+    if (target?.dataset?.staffEditPath && staffOrdersState.detailEditDraft && !staffOrdersState.detailEditSaving) {
+      const path = target.dataset.staffEditPath.split('.');
+      const key = path.pop();
+      const parent = path.reduce((value, part) => value[part], staffOrdersState.detailEditDraft);
+      parent[key] = target.value;
+      return;
+    }
     if (target && typeof target.matches === 'function' && target.matches('[data-staff-internal-note-field]')) {
       staffOrdersState.detailInternalNoteDraft = target.value.slice(0, 4000);
       staffOrdersState.detailInternalNoteStatus = '';
@@ -5312,7 +5341,10 @@ function ensureStaffOrderDetailUi() {
   });
 
   staffOrderDetailBackdrop?.addEventListener('click', (event) => {
-    if (event.target === staffOrderDetailBackdrop) {
+    // Selecting field text can start inside the dialog and release outside it,
+    // producing a click on this common ancestor. Never discard an edit draft
+    // through backdrop dismissal; staff can explicitly Save or Cancel instead.
+    if (event.target === staffOrderDetailBackdrop && !staffOrdersState.detailEditDraft) {
       closeStaffOrderDetail();
     }
   });
@@ -7719,6 +7751,8 @@ async function openStaffOrderDetail(forgeOrderUuid) {
     return;
   }
 
+  staffOrdersState.detailEditDraft = null;
+  staffOrdersState.detailEditError = '';
   staffOrdersState.detailOpen = true;
   staffOrdersState.detailLoading = true;
   staffOrdersState.detailError = '';
@@ -7765,6 +7799,9 @@ async function openStaffOrderDetail(forgeOrderUuid) {
 }
 
 function closeStaffOrderDetail() {
+  if (staffOrdersState.detailEditSaving) return;
+  staffOrdersState.detailEditDraft = null;
+  staffOrdersState.detailEditError = '';
   if (staffOrdersState.trayDialogOpen) {
     closeStaffTrayAssignment();
   }
@@ -7837,6 +7874,10 @@ function renderStaffOrderDetail() {
   }
 
   const record = staffOrdersState.detailRecord;
+  if (staffOrdersState.detailEditDraft) {
+    renderStaffSubmittedOrderEditor(record);
+    return;
+  }
   const isReadOnlyRecord = isStaffReadOnlyRecord(record);
   const packingVerification = staffOrdersState.detailPackingVerification;
   const payload = record.payload || {};
@@ -7884,6 +7925,7 @@ function renderStaffOrderDetail() {
         <p class="staff-order-progress-text">${escapeHtml(completionSummary)}</p>
       </div>
       <div class="staff-order-card-actions staff-order-detail-actions">
+        ${canStaffEditSubmittedOrder(record) ? `<button class="secondary-button" type="button" data-action="staff-edit-order">Edit Order</button>` : ''}
         ${showAssignTrayAction ? `<button class="primary-button" type="button" data-action="staff-open-tray-assignment" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Assign Tray</button>` : ''}
         ${showCompleteOrderAction ? `<button class="primary-button" type="button" data-action="staff-complete-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Complete Order</button>` : ''}
         <button class="text-button" type="button" data-action="close-staff-order-detail">Close</button>
@@ -8081,6 +8123,120 @@ async function submitStaffItemCompletion(forgeOrderUuid, lineId) {
     renderStaffOrderDetail();
   } finally {
     staffOrdersState.detailSavingLineId = '';
+    renderStaffOrderDetail();
+  }
+}
+
+function canStaffEditSubmittedOrder(record) {
+  return Boolean(record && record.staff_data_source === 'server' && !staffOrdersState.demoMode
+    && record.production_status === 'submitted' && !record.current_tray_number
+    && !record.cancelled_at && !record.completed_at && !record.ready_to_pack_at
+    && (record.payload?.items || []).every((item) => (item.completed_quantity || 0) === 0
+      && ['pending', 'not_started'].includes(item.production_status || 'pending')));
+}
+
+function buildStaffSubmittedOrderDraft(record) {
+  const payload = record.payload;
+  const customer = payload.customer || {};
+  const fulfillment = payload.fulfillment || {};
+  const aliases = {
+    family_name: ['family_name', 'familyName', 'last_name', 'lastName', 'baby_name', 'babyName', 'name'],
+    year: ['year', 'wedding_year', 'weddingYear', 'established_year', 'establishedYear'],
+    edge_text: ['edge_text', 'edgeText']
+  };
+  const draft = {
+    customer: Object.fromEntries(['full_name', 'email', 'phone', 'preferred_contact'].map((key) => [key, customer[key] || ''])),
+    fulfillment: { needed_by: fulfillment.needed_by || '' },
+    items: (payload.items || []).map((item) => {
+      const edit = { line_id: item.line_id, customer_note: item.customer_note || '' };
+      if (Array.isArray(item.personalization_order) && item.personalization_order.length) {
+        edit.personalization_names = item.personalization_order.map((entry) => entry.name || '');
+      }
+      if (item.product_category === 'ornament') {
+        const snapshot = item.configuration_snapshot || {};
+        const attributes = item.structured_attributes || {};
+        edit.personalization_fields = {};
+        Object.entries(aliases).forEach(([key, keys]) => {
+          const snapshotKey = keys.find((candidate) => Object.prototype.hasOwnProperty.call(snapshot, candidate));
+          if (snapshotKey || attributes[key]) edit.personalization_fields[key] = String(snapshotKey ? snapshot[snapshotKey] : attributes[key]);
+        });
+      }
+      return edit;
+    })
+  };
+  if (fulfillment.method === 'shipping') {
+    draft.fulfillment.shipping_address = Object.fromEntries(
+      ['address_1', 'address_2', 'city', 'state', 'postal_code', 'country'].map((key) => [key, fulfillment.shipping_address?.[key] || ''])
+    );
+  }
+  return draft;
+}
+
+function renderStaffSubmittedOrderEditor(record) {
+  const draft = staffOrdersState.detailEditDraft;
+  const saving = staffOrdersState.detailEditSaving;
+  const field = (path, label, value, type = 'text', required = false, max = 200) => `
+    <label class="field"><span>${escapeHtml(label)}</span><input class="staff-packing-note" type="${type}"
+      data-staff-edit-path="${escapeHtml(path)}" value="${escapeHtml(value)}" maxlength="${max}"
+      ${required ? 'required' : ''} ${saving ? 'disabled' : ''}></label>`;
+  staffOrderDetailDialog.innerHTML = `
+    <div class="staff-order-detail-header"><div><h2 id="staff-order-detail-title">Edit ${escapeHtml(getOrderDisplayReference(record))}</h2>
+    <p>Correct this submitted order before tray assignment. Products, quantities, prices, fulfillment method and personalization entry count stay fixed.</p></div></div>
+    ${staffOrdersState.detailEditError ? buildStaffNoticeMarkup(staffOrdersState.detailEditError, 'error') : ''}
+    <form class="staff-order-edit-form" data-staff-order-edit-form>
+      <section class="staff-order-detail-section"><h3>Customer and Contact</h3><div class="staff-order-detail-grid">
+        ${field('customer.full_name', 'Full Name', draft.customer.full_name, 'text', true)}
+        ${field('customer.email', 'Email', draft.customer.email, 'email', true, 254)}
+        ${field('customer.phone', 'Phone', draft.customer.phone, 'tel')}
+        <label class="field"><span>Preferred Contact</span><select data-staff-edit-path="customer.preferred_contact" ${saving ? 'disabled' : ''}>
+          ${['', 'Email', 'Text', 'Phone'].map((value) => `<option value="${value}" ${value.toLowerCase() === draft.customer.preferred_contact.toLowerCase() ? 'selected' : ''}>${value || 'Not specified'}</option>`).join('')}
+        </select></label>
+      </div></section>
+      <section class="staff-order-detail-section"><h3>Order and Fulfillment</h3>
+        ${field('fulfillment.needed_by', 'Needed By', draft.fulfillment.needed_by, 'date')}
+        ${draft.fulfillment.shipping_address ? `<div class="staff-order-detail-grid">${Object.entries(draft.fulfillment.shipping_address).map(([key, value]) => field(`fulfillment.shipping_address.${key}`, ({ address_1: 'Address Line 1', address_2: 'Address Line 2', postal_code: 'Postal Code' })[key] || capitalizeWords(key), value, 'text', key !== 'address_2')).join('')}</div>` : '<p>Local pickup</p>'}
+      </section>
+      ${draft.items.map((item, index) => {
+        const original = record.payload.items[index];
+        return `<section class="staff-order-detail-section"><h3>${escapeHtml(original.product_display_name || 'Item')} — Quantity ${escapeHtml(original.quantity)}</h3>
+          <div class="staff-order-detail-grid">${Object.entries(item.personalization_fields || {}).map(([key, value]) => field(`items.${index}.personalization_fields.${key}`, key === 'family_name' ? getFamilyFieldLabel(original.product_definition_id) : key === 'edge_text' ? 'Edge Text' : 'Year', value, 'text', true, key === 'year' ? 4 : 200)).join('')}
+          ${(item.personalization_names || []).map((name, entryIndex) => field(`items.${index}.personalization_names.${entryIndex}`, `${entryIndex + 1}. ${original.personalization_order[entryIndex].type === 'pet' ? 'Pet' : 'Person'} Name`, name, 'text', true)).join('')}</div>
+          <label class="field"><span>Item / Customer Note</span><textarea class="staff-packing-note" data-staff-edit-path="items.${index}.customer_note" maxlength="4000" ${saving ? 'disabled' : ''}>${escapeHtml(item.customer_note)}</textarea></label>
+        </section>`;
+      }).join('')}
+      <p>Saving updates this order only. It does not send a new confirmation email.</p>
+      <div class="staff-order-card-actions">
+        <button class="primary-button" type="button" data-action="staff-save-order-edit" ${saving ? 'disabled' : ''}>${saving ? 'Saving...' : 'Save Changes'}</button>
+        <button class="secondary-button" type="button" data-action="staff-cancel-order-edit" ${saving ? 'disabled' : ''}>Cancel</button>
+      </div>
+    </form>`;
+  staffOrderDetailDialog.querySelector('form')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    submitStaffSubmittedOrderEdit();
+  });
+}
+
+async function submitStaffSubmittedOrderEdit() {
+  if (!staffOrdersState.detailEditDraft || staffOrdersState.detailEditSaving) return;
+  if (staffOrderDetailDialog.querySelector('[data-staff-order-edit-form]')?.reportValidity() === false) return;
+  const record = staffOrdersState.detailRecord;
+  staffOrdersState.detailEditSaving = true;
+  staffOrdersState.detailEditError = '';
+  renderStaffOrderDetail();
+  try {
+    const result = await staffRuntime.updateSubmittedOrder(record.forge_order_uuid,
+      record.server_payload_sha256 || record.payload_sha256, staffOrdersState.detailEditDraft);
+    if (!result?.ok || !result.order) throw new Error(result?.errorMessage || 'Order changes could not be saved.');
+    staffOrdersState.detailRecord = result.order;
+    staffOrdersState.records = staffOrdersState.records.map((entry) => entry.forge_order_uuid === record.forge_order_uuid ? result.order : entry);
+    staffOrdersState.detailEditDraft = null;
+    staffOrdersState.notice = 'Order changes saved.';
+    staffOrdersState.noticeTone = 'success';
+    renderStaffOrdersQueue();
+  } catch (error) {
+    staffOrdersState.detailEditError = error?.message || 'Order changes could not be saved. Reopen the order before retrying.';
+  } finally {
+    staffOrdersState.detailEditSaving = false;
     renderStaffOrderDetail();
   }
 }

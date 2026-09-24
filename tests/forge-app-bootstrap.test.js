@@ -1259,6 +1259,7 @@ function loadForgeHostedStaffAppForTrayDetail() {
   return {
     context,
     detailDialog,
+    detailBackdrop,
     trayDialog,
     getAssignTrayButton() {
       return assignTrayButton;
@@ -3918,4 +3919,132 @@ test('static staff and customer logos keep the same sources while adding Pintere
   assert.match(indexSource, /<img class="brand-logo" src="assets\/brand\/hilltop-logo\.png" alt="The Hilltop Shop" nopin="nopin" data-pin-nopin="true">/);
   assert.match(indexSource, /<img class="logo" src="assets\/brand\/hilltop-logo\.png" alt="The Hilltop Shop" nopin="nopin" data-pin-nopin="true">/);
   assert.match(indexSource, /<img class="staff-orders-logo" src="assets\/brand\/forge-logo\.png" alt="Forge" nopin="nopin" data-pin-nopin="true">/);
+});
+
+test('submitted staff editor renders useful fields, retains drafts on error, cancels and saves in place', async () => {
+  const { context, detailDialog, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
+  setSharedRecord({ production_status: 'submitted', current_tray_number: null, payload_sha256: 'a'.repeat(64), payload: {
+    forge_order_uuid: 'shared-order-1', order_status: 'submitted',
+    customer: { full_name: 'Original Customer', email: 'original@example.com', preferred_contact: 'Email' },
+    fulfillment: { method: 'shipping', needed_by: '2026-12-01', shipping_address: { address_1: '123 Main', city: 'Denver', state: 'CO', postal_code: '80201', country: 'US' } },
+    items: [{ line_id: 'stable-line-1', quantity: 1, product_definition_id: 'tree_ornament', product_category: 'ornament', product_display_name: 'Tree Ornament',
+      production_status: 'pending', completed_quantity: 0, configuration_snapshot: { familyName: 'Original Family', year: '2026' },
+      personalization_order: [{ type: 'person', name: 'Alice' }, { type: 'pet', name: 'Buddy', icon: 'paw' }] }]
+  } });
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+  assert.match(detailDialog.innerHTML, /Edit Order/);
+  const click = (action) => detailDialog.dispatchEvent({ type: 'click', target: createDispatchTarget({ action }), preventDefault() {} });
+  click('staff-edit-order');
+  assert.match(detailDialog.innerHTML, /Customer and Contact/);
+  assert.match(detailDialog.innerHTML, /Address Line 1/);
+  assert.match(detailDialog.innerHTML, /Person Name/);
+  assert.match(detailDialog.innerHTML, /Pet Name/);
+  assert.match(detailDialog.innerHTML, /Save Changes/);
+  assert.doesNotMatch(detailDialog.innerHTML, /data-action="staff-open-tray-assignment"/);
+  detailDialog.dispatchEvent({ type: 'input', target: { dataset: { staffEditPath: 'customer.full_name' }, value: '<Corrected Customer>' } });
+  assert.equal(vm.runInContext('staffOrdersState.detailEditDraft.customer.full_name', context), '<Corrected Customer>');
+  assert.equal(vm.runInContext('staffOrdersState.detailRecord.payload.customer.full_name', context), 'Original Customer');
+  vm.runInContext(`staffRuntime.updateSubmittedOrder = async () => { throw new Error('This order changed. Reopen it.'); };`, context);
+  await context.submitStaffSubmittedOrderEdit();
+  assert.match(detailDialog.innerHTML, /This order changed/);
+  assert.match(detailDialog.innerHTML, /&lt;Corrected Customer&gt;/);
+  click('staff-cancel-order-edit');
+  assert.equal(vm.runInContext('staffOrdersState.detailEditDraft', context), null);
+  assert.equal(vm.runInContext('staffOrdersState.detailRecord.payload.customer.full_name', context), 'Original Customer');
+  click('staff-edit-order');
+  vm.runInContext(`
+    staffOrdersState.detailEditDraft.customer.full_name = 'Saved Customer';
+    globalThis.editRequests = [];
+    staffRuntime.updateSubmittedOrder = async (uuid, hash, changes) => {
+      editRequests.push({ uuid, hash, changes: JSON.parse(JSON.stringify(changes)) });
+      return { ok: true, order: { ...staffOrdersState.detailRecord, server_payload_sha256: 'b'.repeat(64),
+        payload: { ...staffOrdersState.detailRecord.payload, customer: { ...changes.customer } } } };
+    };
+  `, context);
+  await context.submitStaffSubmittedOrderEdit();
+  assert.equal(context.editRequests.length, 1);
+  assert.equal(context.editRequests[0].uuid, 'shared-order-1');
+  assert.equal(context.editRequests[0].hash, 'a'.repeat(64));
+  assert.equal(context.editRequests[0].changes.items[0].line_id, 'stable-line-1');
+  assert.equal(vm.runInContext('staffOrdersState.detailEditDraft', context), null);
+  assert.equal(vm.runInContext('staffOrdersState.detailRecord.server_payload_sha256', context), 'b'.repeat(64));
+  assert.equal(vm.runInContext('staffOrdersState.records[0].payload.customer.full_name', context), 'Saved Customer');
+  assert.match(detailDialog.innerHTML, /Order changes saved/);
+});
+
+test('staff submitted editor excludes production, local and demo orders and prevents duplicate saves', async () => {
+  const { context, detailDialog } = loadForgeHostedStaffAppForTrayDetail();
+  const eligible = { staff_data_source: 'server', production_status: 'submitted', payload: { items: [{ production_status: 'pending' }] } };
+  assert.equal(context.canStaffEditSubmittedOrder(eligible), true);
+  for (const override of [{ production_status: 'in_production' }, { current_tray_number: 1 }, { staff_data_source: 'local' },
+    { cancelled_at: '2026-01-01' }, { payload: { items: [{ production_status: 'blocked' }] } },
+    { payload: { items: [{ production_status: 'pending', completed_quantity: 1 }] } }]) {
+    assert.equal(context.canStaffEditSubmittedOrder({ ...eligible, ...override }), false);
+  }
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+  vm.runInContext(`
+    staffOrdersState.detailEditDraft = buildStaffSubmittedOrderDraft(staffOrdersState.detailRecord);
+    globalThis.editSaveCount = 0;
+    staffRuntime.updateSubmittedOrder = () => { editSaveCount++; return new Promise((resolve) => { globalThis.resolveEditSave = resolve; }); };
+  `, context);
+  const pending = context.submitStaffSubmittedOrderEdit();
+  await context.submitStaffSubmittedOrderEdit();
+  context.closeStaffOrderDetail();
+  assert.equal(context.editSaveCount, 1);
+  assert.equal(vm.runInContext('staffOrdersState.detailOpen', context), true);
+  assert.match(detailDialog.innerHTML, /Saving\.\.\./);
+  context.resolveEditSave({ ok: false, errorMessage: 'Sign in again.' });
+  await pending;
+  assert.equal(vm.runInContext('staffOrdersState.detailEditSaving', context), false);
+  assert.match(detailDialog.innerHTML, /Sign in again/);
+});
+
+
+test('highlighting an edit field and releasing on the backdrop preserves the submitted order editor', async () => {
+  const { context, detailDialog, detailBackdrop, getDetailRenderCount } = loadForgeHostedStaffAppForTrayDetail();
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+  detailDialog.dispatchEvent({ type: 'click', target: createDispatchTarget({ action: 'staff-edit-order' }) });
+  const draft = vm.runInContext('staffOrdersState.detailEditDraft', context);
+  assert.ok(draft);
+  const renderCount = getDetailRenderCount();
+  const field = createElement('input');
+  field.dataset.staffEditPath = 'customer.full_name';
+  const assertEditorOpen = () => {
+    assert.equal(vm.runInContext('staffOrdersState.detailOpen', context), true);
+    assert.equal(vm.runInContext('staffOrdersState.detailEditDraft', context), draft);
+    assert.equal(detailDialog.hidden, false);
+    assert.equal(detailBackdrop.hidden, false);
+    assert.match(detailDialog.innerHTML, /data-staff-order-edit-form/);
+    assert.equal(vm.runInContext('appState.currentScreen', context), 'staff-orders');
+    assert.equal(getDetailRenderCount(), renderCount, 'Field interaction must not rerender or replace the editor.');
+  };
+  // A field click bubbles through the dialog and backdrop with the original target.
+  for (const target of [detailDialog, detailBackdrop]) target.dispatchEvent({ type: 'click', target: field });
+  assertEditorOpen();
+  // Native Chrome sends the resulting click to the common ancestor (backdrop)
+  // when text selection starts in the field and the mouse is released outside.
+  detailBackdrop.dispatchEvent({ type: 'pointerdown', target: field });
+  detailBackdrop.dispatchEvent({ type: 'pointerup', target: detailBackdrop });
+  detailBackdrop.dispatchEvent({ type: 'click', target: detailBackdrop });
+  assertEditorOpen();
+  field.value = 'Corrected after highlighting';
+  detailDialog.dispatchEvent({ type: 'input', target: field });
+  detailBackdrop.dispatchEvent({ type: 'input', target: field });
+  detailDialog.dispatchEvent({ type: 'change', target: field });
+  detailBackdrop.dispatchEvent({ type: 'change', target: field });
+  assertEditorOpen();
+  assert.equal(draft.customer.full_name, field.value);
+  assert.equal(vm.runInContext('staffOrdersState.detailRecord.payload.customer.full_name', context), 'Kyle Hemenway');
+  // Even a direct outside click must not silently discard an active edit draft.
+  detailBackdrop.dispatchEvent({ type: 'click', target: detailBackdrop });
+  assertEditorOpen();
+  detailDialog.dispatchEvent({ type: 'click', target: createDispatchTarget({ action: 'staff-cancel-order-edit' }) });
+  assert.equal(vm.runInContext('staffOrdersState.detailEditDraft', context), null);
+  assert.equal(vm.runInContext('staffOrdersState.detailOpen', context), true);
+  // Preserve the existing backdrop-close behavior for ordinary order detail.
+  detailBackdrop.dispatchEvent({ type: 'click', target: detailBackdrop });
+  assert.equal(vm.runInContext('staffOrdersState.detailOpen', context), false);
 });

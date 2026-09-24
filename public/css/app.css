@@ -5516,6 +5516,37 @@ body.forge-catalog-image-viewer-open {
   resize: vertical;
 }
 
+/* Submitted order corrections use compact fields inside the existing staff dialog. */
+.staff-order-edit-form .field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 16px;
+}
+
+.staff-order-edit-form input,
+.staff-order-edit-form select,
+.staff-order-edit-form textarea {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  min-height: 44px;
+  padding: 12px 14px;
+  border: 1px solid var(--staff-line);
+  border-radius: 12px;
+  background: var(--staff-panel);
+  color: var(--staff-text);
+}
+
+.staff-order-edit-form textarea {
+  min-height: 112px;
+}
+
+.staff-order-edit-form select:focus-visible {
+  outline: 2px solid var(--staff-text);
+  outline-offset: 2px;
+}
+
 .staff-packing-note:focus-visible,
 .staff-packing-item input[type="checkbox"]:focus-visible {
   outline: 2px solid rgba(239,108,26,.55);

@@ -1258,3 +1258,21 @@ test('localhost shipping export preview and csv stay on the local order-store pa
     ['generateShippingExportCsv', 'event-live-1']
   ]);
 });
+
+test('submitted corrections use only the shared staff API and retain the returned hash', async () => {
+  const uuid = '123e4567-e89b-42d3-a456-426614174599';
+  const calls = [];
+  const client = { async updateSubmittedOrder(...args) {
+    calls.push(args);
+    return { ok: true, authenticated: true, order: { forge_order_uuid: uuid, forge_order_number: 1042, payload_sha256: 'b'.repeat(64), payload: { customer: { full_name: 'New Name' }, items: [] } } };
+  } };
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({ locationLike: { protocol: 'https:', hostname: 'forge.example.com' }, staffApiClient: client });
+  const changes = { customer: { full_name: 'New Name' } };
+  const result = await runtime.updateSubmittedOrder(uuid, 'a'.repeat(64), changes);
+  assert.deepEqual(calls, [[uuid, 'a'.repeat(64), changes]]);
+  assert.equal(result.order.server_payload_sha256, 'b'.repeat(64));
+  assert.equal(result.order.staff_data_source, 'server');
+  const local = staffOrdersRuntime.createStaffOrdersRuntime({ locationLike: { protocol: 'http:', hostname: 'localhost' }, staffApiClient: client });
+  await assert.rejects(local.updateSubmittedOrder(uuid, 'a'.repeat(64), changes), /shared staff server/);
+  assert.equal(calls.length, 1);
+});

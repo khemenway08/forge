@@ -51,6 +51,10 @@ final class CancelOrderNotAllowedException extends \RuntimeException
 {
 }
 
+final class SubmittedOrderEditConflictException extends \RuntimeException
+{
+}
+
 final class CompleteOrderNotAllowedException extends \RuntimeException
 {
 }
@@ -659,6 +663,62 @@ final class PdoStaffOrderRepository
                 $this->pdo->rollBack();
             }
             throw new StorageUnavailableException('Item completion is currently unavailable.', 0, $exception);
+        }
+    }
+
+    /** Apply an allowlisted correction while holding the same order lock as production mutations. */
+    public function updateSubmittedOrder(string $forgeOrderUuid, string $expectedPayloadSha256, array $changes): array
+    {
+        if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/', $forgeOrderUuid)
+            || !preg_match('/^[0-9a-f]{64}$/', $expectedPayloadSha256)) {
+            throw new \InvalidArgumentException('A valid order UUID and original payload hash are required.');
+        }
+        try {
+            $this->pdo->beginTransaction();
+            $row = $this->loadOrderRowForUpdate($forgeOrderUuid);
+            if ($row === null) {
+                throw new StaffOrderNotFoundException('That order could not be found.');
+            }
+            if (!hash_equals((string) $row['payload_sha256'], $expectedPayloadSha256)) {
+                throw new SubmittedOrderEditConflictException('This order changed. Close it, refresh Staff Orders, and reopen it before editing again.');
+            }
+            $stateRows = $this->loadItemProductionRowsForOrderForUpdate($forgeOrderUuid);
+            $payload = json_decode($row['payload_json'], true, 512, JSON_THROW_ON_ERROR);
+            assertSubmittedOrderEditable($row, $payload, $stateRows);
+            $payload = applySubmittedOrderCorrections($payload, $forgeOrderUuid, $changes);
+            OrderPayload::validatePayload($payload);
+            $json = OrderPayload::canonicalizeToJson($payload);
+            if (strlen($json) > OrderPayload::MAX_REQUEST_BYTES) {
+                throw new \InvalidArgumentException('The edited order is too large.');
+            }
+            $statement = $this->pdo->prepare(
+                'UPDATE forge_orders
+                 SET payload_json = :payload_json,
+                     payload_sha256 = :payload_sha256,
+                     updated_at = :updated_at
+                 WHERE forge_order_uuid = :forge_order_uuid'
+            );
+            $statement->execute([
+                ':payload_json' => $json,
+                ':payload_sha256' => hash('sha256', $json),
+                ':updated_at' => currentUtcDatabaseDateTime(),
+                ':forge_order_uuid' => $forgeOrderUuid,
+            ]);
+            $updated = normalizeStoredStaffOrderRecord(
+                $this->loadOrderRowForUpdate($forgeOrderUuid),
+                $stateRows,
+                $this->loadOrderConfirmationMetadata([$forgeOrderUuid])[$forgeOrderUuid] ?? null
+            );
+            $this->pdo->commit();
+            return ['order' => $updated];
+        } catch (\Throwable $exception) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            if ($exception instanceof PDOException || $exception instanceof JsonException) {
+                throw new StorageUnavailableException('Order editing is currently unavailable.', 0, $exception);
+            }
+            throw $exception;
         }
     }
 
@@ -2970,4 +3030,190 @@ function findStaffPayloadItemIndexByLineId(array $items, string $lineId): int
     }
 
     return -1;
+}
+
+/** Reject even inconsistent/raw production state, rather than relying on a normalized overlay. */
+function assertSubmittedOrderEditable(array $row, array $payload, array $stateRows): void
+{
+    $conflict = static function (): void {
+        throw new SubmittedOrderEditConflictException('Only submitted orders with no assigned tray or production activity can be edited.');
+    };
+    // Newly submitted rows leave this nullable column unset; staff reads treat that as submitted.
+    if (($row['production_status'] ?? 'submitted') !== 'submitted' || ($row['current_tray_number'] ?? null) !== null
+        || !empty($row['ready_to_pack_at']) || !empty($row['cancelled_at']) || !empty($row['completed_at'])
+        || ($payload['order_status'] ?? '') !== 'submitted') {
+        $conflict();
+    }
+    foreach (array_merge($payload['items'] ?? [], $stateRows) as $item) {
+        foreach ([$item, $item['structured_attributes'] ?? []] as $state) {
+            if (!in_array($state['production_status'] ?? 'pending', ['pending', 'not_started'], true)
+                || (int) ($state['completed_quantity'] ?? 0) !== 0 || !empty($state['completed_at'])) {
+                $conflict();
+            }
+        }
+    }
+}
+
+function assertSubmittedEditKeys(array $value, array $allowed): void
+{
+    if (array_diff(array_keys($value), $allowed) !== []) {
+        throw new \InvalidArgumentException('The edit contains unsupported fields. Products, quantities, prices, identity and production state cannot be changed.');
+    }
+}
+
+function submittedEditText($value, string $label, int $max = 200, bool $required = false): string
+{
+    if (!is_string($value) || preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', $value)) {
+        throw new \InvalidArgumentException($label . ' must be text.');
+    }
+    $value = trim($value);
+    $length = function_exists('mb_strlen') ? mb_strlen($value) : strlen($value);
+    if ($length > $max || ($required && $value === '')) {
+        throw new \InvalidArgumentException($label . ' is required and/or exceeds its maximum length of ' . $max . '.');
+    }
+    return $value;
+}
+
+function submittedOrnamentFieldAliases(): array
+{
+    return [
+        'family_name' => ['family_name', 'familyName', 'last_name', 'lastName', 'baby_name', 'babyName', 'name'],
+        'year' => ['year', 'wedding_year', 'weddingYear', 'established_year', 'establishedYear'],
+        'edge_text' => ['edge_text', 'edgeText'],
+    ];
+}
+
+/** Patch the stored payload, never accept a client replacement payload or production overlay. */
+function applySubmittedOrderCorrections(array $payload, string $orderUuid, array $changes): array
+{
+    assertSubmittedEditKeys($changes, ['customer', 'fulfillment', 'items']);
+    if ($changes === []) {
+        throw new \InvalidArgumentException('At least one correction is required.');
+    }
+    foreach (['customer', 'fulfillment', 'items'] as $section) {
+        if (isset($changes[$section]) && !is_array($changes[$section])) {
+            throw new \InvalidArgumentException('Invalid ' . $section . ' corrections.');
+        }
+        if (array_key_exists($section, $changes) && $changes[$section] === null) {
+            throw new \InvalidArgumentException('Invalid ' . $section . ' corrections.');
+        }
+    }
+    if (isset($changes['customer'])) {
+        assertSubmittedEditKeys($changes['customer'], ['full_name', 'email', 'phone', 'preferred_contact']);
+        foreach ($changes['customer'] as $key => $value) {
+            $value = submittedEditText($value, 'Customer ' . $key, $key === 'email' ? 254 : 200, in_array($key, ['full_name', 'email'], true));
+            if ($key === 'email' && !filter_var($value, FILTER_VALIDATE_EMAIL)) {
+                throw new \InvalidArgumentException('Enter a valid customer email address.');
+            }
+            if ($key === 'preferred_contact' && !in_array($value, ['', 'Email', 'Phone', 'Text', 'email', 'phone', 'text'], true)) {
+                throw new \InvalidArgumentException('Choose Email, Phone or Text for preferred contact.');
+            }
+            $payload['customer'][$key] = $value;
+            if ($key === 'full_name') {
+                $parts = preg_split('/\s+/', $value, 2);
+                $payload['customer']['first_name'] = $parts[0];
+                $payload['customer']['last_name'] = $parts[1] ?? '';
+            }
+        }
+    }
+    if (isset($changes['fulfillment'])) {
+        assertSubmittedEditKeys($changes['fulfillment'], ['needed_by', 'shipping_address']);
+        if (array_key_exists('needed_by', $changes['fulfillment'])) {
+            $date = submittedEditText($changes['fulfillment']['needed_by'], 'Needed by', 10);
+            $parsed = \DateTimeImmutable::createFromFormat('!Y-m-d', $date);
+            if ($date !== '' && (!$parsed || $parsed->format('Y-m-d') !== $date)) {
+                throw new \InvalidArgumentException('Needed by must be a valid date.');
+            }
+            $payload['fulfillment']['needed_by'] = $date === '' ? null : $date;
+        }
+        if (array_key_exists('shipping_address', $changes['fulfillment'])) {
+            $address = $changes['fulfillment']['shipping_address'];
+            if (($payload['fulfillment']['method'] ?? '') !== 'shipping' || !is_array($address)) {
+                throw new \InvalidArgumentException('Only shipping orders can have shipping address corrections.');
+            }
+            assertSubmittedEditKeys($address, ['address_1', 'address_2', 'city', 'state', 'postal_code', 'country']);
+            foreach ($address as $key => $value) {
+                $payload['fulfillment']['shipping_address'][$key] = submittedEditText($value, 'Shipping ' . $key, 200, $key !== 'address_2');
+            }
+        }
+    }
+    if (isset($changes['items'])) {
+        if (!array_is_list($changes['items'])) {
+            throw new \InvalidArgumentException('Item corrections must be a list.');
+        }
+        $indices = [];
+        foreach ($payload['items'] as $index => &$item) {
+            // Persist the exact same fallback ID exposed by staff reads for legacy items.
+            $id = normalizeStaffLineId($item['line_id'] ?? null, $orderUuid, normalizeStaffLineNumber($item['line_number'] ?? null, $index + 1));
+            if (isset($indices[$id])) {
+                throw new \InvalidArgumentException('The stored order has duplicate line IDs and cannot be edited safely.');
+            }
+            $item['line_id'] = $id;
+            $indices[$id] = $index;
+        }
+        unset($item);
+        $seen = [];
+        foreach ($changes['items'] as $edit) {
+            if (!is_array($edit)) {
+                throw new \InvalidArgumentException('Invalid item correction.');
+            }
+            assertSubmittedEditKeys($edit, ['line_id', 'customer_note', 'personalization_names', 'personalization_fields']);
+            $id = submittedEditText($edit['line_id'] ?? null, 'Line ID', 200, true);
+            if (!isset($indices[$id]) || isset($seen[$id])) {
+                throw new \InvalidArgumentException('Every corrected item must identify a unique existing line ID.');
+            }
+            $seen[$id] = true;
+            $item =& $payload['items'][$indices[$id]];
+            if (array_key_exists('customer_note', $edit)) {
+                $item['customer_note'] = submittedEditText($edit['customer_note'], 'Item note', 4000) ?: null;
+            }
+            if (array_key_exists('personalization_names', $edit)) {
+                $names = $edit['personalization_names'];
+                $entries = $item['personalization_order'] ?? [];
+                if (!is_array($names) || !array_is_list($names) || count($names) !== count($entries)) {
+                    throw new \InvalidArgumentException('Keep the existing number and order of personalization entries.');
+                }
+                foreach ($names as $i => $name) {
+                    $name = submittedEditText($name, 'Personalization name', 200, true);
+                    $item['personalization_order'][$i]['name'] = $name;
+                    foreach (['entries', 'orderedEntries'] as $snapshotKey) {
+                        if (isset($item['configuration_snapshot'][$snapshotKey])) {
+                            $snapshotEntries = $item['configuration_snapshot'][$snapshotKey];
+                            if (!is_array($snapshotEntries) || count($snapshotEntries) !== count($entries) || !is_array($snapshotEntries[$i] ?? null)) {
+                                throw new \InvalidArgumentException('The stored personalization snapshot cannot be updated safely.');
+                            }
+                            $item['configuration_snapshot'][$snapshotKey][$i]['name'] = $name;
+                        }
+                    }
+                }
+            }
+            if (array_key_exists('personalization_fields', $edit)) {
+                $fields = $edit['personalization_fields'];
+                if (!is_array($fields) || ($item['product_category'] ?? '') !== 'ornament') {
+                    throw new \InvalidArgumentException('Invalid ornament personalization correction.');
+                }
+                $aliases = submittedOrnamentFieldAliases();
+                assertSubmittedEditKeys($fields, array_keys($aliases));
+                foreach ($fields as $key => $value) {
+                    $value = submittedEditText($value, 'Ornament ' . $key, $key === 'year' ? 4 : 200, true);
+                    if ($key === 'year' && !preg_match('/^\d{4}$/', $value)) {
+                        throw new \InvalidArgumentException('Year must contain four digits.');
+                    }
+                    $matched = false;
+                    foreach ($aliases[$key] as $alias) {
+                        if (array_key_exists($alias, $item['configuration_snapshot'] ?? [])) {
+                            $item['configuration_snapshot'][$alias] = $value;
+                            $matched = true;
+                        }
+                    }
+                    if (!$matched && empty($item['structured_attributes'][$key])) {
+                        throw new \InvalidArgumentException('Only existing ornament personalization fields can be corrected.');
+                    }
+                    $item['structured_attributes'][$key] = $key === 'year' ? (int) $value : $value;
+                }
+            }
+            unset($item);
+        }
+    }
+    return $payload;
 }

@@ -5208,6 +5208,220 @@ $runner->run('order cancellation and Test Session deletion stay staff-only and u
     assertTrue(strpos($orderRepositorySource, 'forge_order_cleanup_tombstones') !== false);
 });
 
+$runner->run('submitted order editing stays staff-only and preserves order identity', static function (): void {
+    $endpointSource = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/edit-order.php');
+    $repositorySource = file_get_contents(dirname(__DIR__) . '/lib/staff-order-repository.php');
+
+    assertTrue(is_string($endpointSource));
+    assertTrue(is_string($repositorySource));
+    assertTrue(strpos($endpointSource, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($endpointSource, 'updateSubmittedOrder') !== false);
+    assertTrue(strpos($repositorySource, 'function updateSubmittedOrder') !== false);
+    assertTrue(strpos($repositorySource, 'payload_json = :payload_json') !== false);
+    assertTrue(strpos($repositorySource, 'payload_sha256 = :payload_sha256') !== false);
+    assertTrue(strpos($repositorySource, 'forge_order_uuid = :forge_order_uuid') !== false);
+});
+
+
+$runner->run('submitted edit endpoint enforces method, JSON and staff authentication before storage', static function (): void {
+    $endpoint = dirname(__DIR__, 2) . '/public/api/v1/staff/edit-order.php';
+    $bootstrap = dirname(__DIR__) . '/bootstrap.php';
+    foreach ([['GET', 'application/json', false, 405, 'method_not_allowed'],
+        ['POST', 'text/plain', false, 415, 'unsupported_media_type'],
+        ['POST', 'application/json', false, 401, 'authentication_required'],
+        ['POST', 'application/json', true, 422, 'invalid_json']] as [$method, $contentType, $authenticated, $status, $code]) {
+        $script = 'ini_set("session.save_path", sys_get_temp_dir());'
+            . 'require ' . var_export($bootstrap, true) . ';'
+            . '\Forge\Server\startStaffSession([]);'
+            . '$_SESSION = [\Forge\Server\StaffAuth::SESSION_AUTHENTICATED_KEY => ' . ($authenticated ? 'true' : 'false') . '];'
+            . '$_SERVER["REQUEST_METHOD"] = ' . var_export($method, true) . ';'
+            . '$_SERVER["CONTENT_TYPE"] = ' . var_export($contentType, true) . ';'
+            . 'register_shutdown_function(static function () { echo "\nSTATUS:" . http_response_code(); session_destroy(); });'
+            . 'require ' . var_export($endpoint, true) . ';';
+        $process = proc_open([PHP_BINARY, '-r', $script], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        assertTrue(is_resource($process));
+        fclose($pipes[0]);
+        $output = stream_get_contents($pipes[1]);
+        $errors = stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        assertSame(0, proc_close($process), $errors);
+        [$json, $actualStatus] = explode("\nSTATUS:", $output);
+        assertSame($status, (int) $actualStatus);
+        assertSame($code, json_decode($json, true, 512, JSON_THROW_ON_ERROR)['error']['code']);
+    }
+});
+
+$runner->run('submitted corrections preserve identity, line IDs, pricing and production rows atomically', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    $uuid = '123e4567-e89b-42d3-a456-426614174599';
+    $payload = createValidPayload(['forge_order_uuid' => $uuid, 'forge_order_number' => 1042]);
+    $payload['items'][0]['configuration_snapshot']['entries'] = [
+        ['kind' => 'person', 'name' => 'Kyle'], ['kind' => 'pet', 'name' => 'Scout', 'icon' => 'Paw'],
+    ];
+    seedStaffOrderRepositoryTestOrder($pdo, ['payload' => $payload]);
+    $before = $pdo->query('SELECT * FROM forge_orders')->fetch();
+    $states = $pdo->query('SELECT * FROM forge_order_item_production')->fetchAll();
+    $repo = new \Forge\Server\PdoStaffOrderRepository($pdo);
+    $result = $repo->updateSubmittedOrder($uuid, $before['payload_sha256'], [
+        'customer' => ['full_name' => 'Mary Ann Smith', 'email' => 'mary@example.com', 'phone' => '555-123-4567', 'preferred_contact' => 'Text'],
+        'fulfillment' => ['needed_by' => '2026-12-01', 'shipping_address' => ['address_1' => '123 Main St', 'address_2' => '', 'city' => 'Denver', 'state' => 'CO', 'postal_code' => '80201', 'country' => 'US']],
+        'items' => [[
+            'line_id' => $payload['items'][0]['line_id'],
+            'customer_note' => 'Please use the corrected spelling.',
+            'personalization_names' => ['Mary Ann', 'Buddy'],
+            'personalization_fields' => ['family_name' => 'Smith', 'year' => '2027'],
+        ]],
+    ]);
+    $after = $pdo->query('SELECT * FROM forge_orders')->fetch();
+    foreach (['forge_order_uuid', 'forge_order_number', 'submitted_at', 'received_at', 'source', 'device_id', 'event_id', 'production_status', 'current_tray_number'] as $key) {
+        assertSame($before[$key], $after[$key], $key . ' must be unchanged.');
+    }
+    assertSame(1, (int) $pdo->query('SELECT COUNT(*) FROM forge_orders')->fetchColumn());
+    assertSame(hash('sha256', $after['payload_json']), $after['payload_sha256']);
+    assertTrue($before['payload_sha256'] !== $after['payload_sha256']);
+    assertSame($states, $pdo->query('SELECT * FROM forge_order_item_production')->fetchAll());
+    $edited = json_decode($after['payload_json'], true, 512, JSON_THROW_ON_ERROR);
+    assertSame($payload['submitted_at'], $edited['submitted_at']);
+    assertSame($payload['forge_order_uuid'], $edited['forge_order_uuid']);
+    assertSame($payload['forge_order_number'], $edited['forge_order_number']);
+    assertSame($payload['pricing'], $edited['pricing']);
+    assertSame($payload['items'][0]['line_id'], $edited['items'][0]['line_id']);
+    assertSame(\Forge\Server\OrderPayload::canonicalizeToJson($payload['items'][0]['pricing']), \Forge\Server\OrderPayload::canonicalizeToJson($edited['items'][0]['pricing']));
+    assertSame('Mary', $edited['customer']['first_name']);
+    assertSame('Ann Smith', $edited['customer']['last_name']);
+    assertSame('Smith', $edited['items'][0]['configuration_snapshot']['familyName']);
+    assertSame('Smith', $edited['items'][0]['structured_attributes']['family_name']);
+    assertSame('2027', $edited['items'][0]['configuration_snapshot']['year']);
+    assertSame(2027, $edited['items'][0]['structured_attributes']['year']);
+    assertSame('Buddy', $edited['items'][0]['personalization_order'][1]['name']);
+    assertSame('Buddy', $edited['items'][0]['configuration_snapshot']['entries'][1]['name']);
+    assertSame('paw', $edited['items'][0]['personalization_order'][1]['icon']);
+    assertSame($after['payload_sha256'], $result['order']['payload_sha256']);
+    assertThrows(static function () use ($repo, $uuid, $before): void {
+        $repo->updateSubmittedOrder($uuid, $before['payload_sha256'], ['customer' => ['full_name' => 'Stale edit']]);
+    }, static function ($error): void {
+        assertTrue($error instanceof \Forge\Server\SubmittedOrderEditConflictException);
+    });
+    assertSame($after, $pdo->query('SELECT * FROM forge_orders')->fetch());
+    assertSame(false, $pdo->inTransaction());
+});
+
+$runner->run('submitted corrections accept the null production status used by real submissions', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    seedStaffOrderRepositoryTestOrder($pdo);
+    $pdo->exec('UPDATE forge_orders SET production_status = NULL');
+    $before = $pdo->query('SELECT * FROM forge_orders')->fetch();
+    $repository = new \Forge\Server\PdoStaffOrderRepository($pdo);
+    $result = $repository->updateSubmittedOrder($before['forge_order_uuid'], $before['payload_sha256'], [
+        'customer' => ['full_name' => 'Corrected Local Customer'],
+    ]);
+    assertSame('submitted', $result['order']['production_status']);
+    assertSame('Corrected Local Customer', $result['order']['payload']['customer']['full_name']);
+    assertSame(null, $pdo->query('SELECT production_status FROM forge_orders')->fetchColumn());
+});
+
+$runner->run('submitted corrections reject production activity including raw payload and orphan state', static function (): void {
+    $cases = [
+        ['production_status' => 'tray_assigned', 'current_tray_number' => 3],
+        ['production_status' => 'in_production'],
+        ['production_status' => 'ready_to_pack'],
+        ['production_status' => 'completed'],
+        ['production_status' => 'cancelled'],
+        ['current_tray_number' => 3],
+        ['ready_to_pack_at' => '2026-07-25 12:00:00.000000'],
+        ['cancelled_at' => '2026-07-25 12:00:00.000000'],
+        ['completed_at' => '2026-07-25 12:00:00.000000'],
+        ['state_status' => 'blocked'], ['state_status' => 'in_production'], ['state_quantity' => 1],
+        ['payload_status' => 'in_production'], ['payload_quantity' => 1], ['orphan' => true],
+    ];
+    foreach ($cases as $options) {
+        $pdo = createStaffOrderRepositoryTestPdo();
+        $uuid = '123e4567-e89b-42d3-a456-426614174599';
+        $payload = createValidPayload(['forge_order_uuid' => $uuid]);
+        if (isset($options['payload_status'])) $payload['items'][0]['structured_attributes']['production_status'] = $options['payload_status'];
+        if (isset($options['payload_quantity'])) $payload['items'][0]['completed_quantity'] = $options['payload_quantity'];
+        seedStaffOrderRepositoryTestOrder($pdo, array_merge($options, ['payload' => $payload]));
+        if (isset($options['state_status'])) $pdo->exec("UPDATE forge_order_item_production SET production_status = '" . $options['state_status'] . "'");
+        if (isset($options['state_quantity'])) $pdo->exec('UPDATE forge_order_item_production SET completed_quantity = 1');
+        if (isset($options['orphan'])) $pdo->exec("UPDATE forge_order_item_production SET line_id = 'orphan', completed_quantity = 1");
+        $before = $pdo->query('SELECT * FROM forge_orders')->fetch();
+        $states = $pdo->query('SELECT * FROM forge_order_item_production')->fetchAll();
+        $repo = new \Forge\Server\PdoStaffOrderRepository($pdo);
+        assertThrows(static function () use ($repo, $uuid, $before): void {
+            $repo->updateSubmittedOrder($uuid, $before['payload_sha256'], ['customer' => ['full_name' => 'Changed']]);
+        }, static function ($error): void {
+            assertTrue($error instanceof \Forge\Server\SubmittedOrderEditConflictException);
+        });
+        assertSame($before, $pdo->query('SELECT * FROM forge_orders')->fetch());
+        assertSame($states, $pdo->query('SELECT * FROM forge_order_item_production')->fetchAll());
+        assertSame(false, $pdo->inTransaction());
+    }
+});
+
+$runner->run('submitted corrections validate malformed and unsupported changes without partial writes', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    seedStaffOrderRepositoryTestOrder($pdo);
+    $before = $pdo->query('SELECT * FROM forge_orders')->fetch();
+    $lineId = json_decode($before['payload_json'], true)['items'][0]['line_id'];
+    $repo = new \Forge\Server\PdoStaffOrderRepository($pdo);
+    $invalid = [
+        [], ['forge_order_number' => 9999], ['submitted_at' => '2027-01-01'], ['production_status' => 'pending'],
+        ['customer' => null], ['customer' => 'bad'], ['customer' => ['email' => 'invalid']],
+        ['customer' => ['full_name' => '']], ['customer' => ['phone' => []]], ['customer' => ['full_name' => str_repeat('a', 201)]],
+        ['customer' => ['preferred_contact' => 'carrier pigeon']], ['customer' => ['first_name' => 'bypass']],
+        ['fulfillment' => ['method' => 'pickup']], ['fulfillment' => ['needed_by' => '2026-02-30']],
+        ['fulfillment' => ['shipping_address' => 'bad']], ['fulfillment' => ['shipping_address' => ['city' => '']]],
+        ['items' => ['bad']], ['items' => [['line_id' => 'unknown']]], ['items' => [['line_id' => $lineId], ['line_id' => $lineId]]],
+        ['items' => [['line_id' => $lineId, 'quantity' => 2]]], ['items' => [['line_id' => $lineId, 'production_status' => 'pending']]],
+        ['items' => [['line_id' => $lineId, 'personalization_names' => ['Only one']]]],
+        ['items' => [['line_id' => $lineId, 'personalization_names' => ['', 'Scout']]]],
+        ['items' => [['line_id' => $lineId, 'personalization_fields' => ['year' => '']]]],
+        ['items' => [['line_id' => $lineId, 'personalization_fields' => ['year' => 'abcd']]]],
+        ['items' => [['line_id' => $lineId, 'personalization_fields' => ['edge_text' => 'Not present']]]],
+        ['items' => [['line_id' => $lineId, 'personalization_fields' => ['size' => 'Large']]]],
+        ['items' => [['line_id' => $lineId, 'customer_note' => str_repeat('a', 4001)]]],
+    ];
+    foreach ($invalid as $changes) {
+        assertThrows(static function () use ($repo, $before, $changes): void {
+            $repo->updateSubmittedOrder($before['forge_order_uuid'], $before['payload_sha256'], $changes);
+        }, static function ($error): void {
+            assertTrue($error instanceof \InvalidArgumentException);
+        });
+        assertSame($before, $pdo->query('SELECT * FROM forge_orders')->fetch());
+        assertSame(false, $pdo->inTransaction());
+    }
+    foreach ([['bad', $before['payload_sha256']], [$before['forge_order_uuid'], 'bad']] as [$uuid, $hash]) {
+        assertThrows(static function () use ($repo, $uuid, $hash): void {
+            $repo->updateSubmittedOrder($uuid, $hash, ['customer' => ['full_name' => 'New']]);
+        }, static function ($error): void { assertTrue($error instanceof \InvalidArgumentException); });
+    }
+    assertThrows(static function () use ($repo, $before): void {
+        $repo->updateSubmittedOrder('123e4567-e89b-42d3-a456-426614174555', $before['payload_sha256'], ['customer' => ['full_name' => 'New']]);
+    }, static function ($error): void { assertTrue($error instanceof \Forge\Server\StaffOrderNotFoundException); });
+});
+
+$runner->run('submitted corrections preserve legacy fallback line identity and rollback storage failures', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    $uuid = '123e4567-e89b-42d3-a456-426614174599';
+    $payload = createValidPayload(['forge_order_uuid' => $uuid]);
+    unset($payload['items'][0]['line_id']);
+    seedStaffOrderRepositoryTestOrder($pdo, ['payload' => $payload]);
+    $repo = new \Forge\Server\PdoStaffOrderRepository($pdo);
+    $before = $pdo->query('SELECT * FROM forge_orders')->fetch();
+    $normalized = \Forge\Server\normalizeStoredStaffOrderRecord($before);
+    $lineId = $normalized['payload']['items'][0]['line_id'];
+    $result = $repo->updateSubmittedOrder($uuid, $before['payload_sha256'], ['items' => [['line_id' => $lineId, 'customer_note' => 'Corrected']]]);
+    assertSame($lineId, $result['order']['payload']['items'][0]['line_id']);
+    $before = $pdo->query('SELECT * FROM forge_orders')->fetch();
+    $pdo->exec("CREATE TRIGGER fail_edit BEFORE UPDATE ON forge_orders BEGIN SELECT RAISE(ABORT, 'test failure'); END");
+    assertThrows(static function () use ($repo, $uuid, $before): void {
+        $repo->updateSubmittedOrder($uuid, $before['payload_sha256'], ['customer' => ['full_name' => 'Fail']]);
+    }, static function ($error): void { assertTrue($error instanceof \Forge\Server\StorageUnavailableException); });
+    assertSame($before, $pdo->query('SELECT * FROM forge_orders')->fetch());
+    assertSame(false, $pdo->inTransaction());
+});
+
 $runner->run('invalid stored staff order payload fails safely', static function (): void {
     assertThrows(
         static function (): void {
@@ -5522,7 +5736,7 @@ function createStaffOrderRepositoryTestPdo(bool $includeCleanupTombstones = true
             internal_note TEXT DEFAULT NULL,
             payload_json TEXT NOT NULL,
             payload_sha256 TEXT NOT NULL,
-            production_status TEXT NOT NULL,
+            production_status TEXT DEFAULT NULL,
             current_tray_number INTEGER DEFAULT NULL,
             ready_to_pack_at TEXT DEFAULT NULL,
             cancelled_at TEXT DEFAULT NULL,
