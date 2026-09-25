@@ -64,6 +64,7 @@ function createItem(overrides = {}) {
     familyName: 'Hemenway',
     personalizationMode: '',
     edgeText: '',
+    yearMode: 'Include Year',
     year: '2026',
     orderedEntries: [
       { position: 1, kind: 'person', name: 'Kyle', icon: '', customIconDescription: '' },
@@ -77,6 +78,7 @@ function createItem(overrides = {}) {
       treeColor: 'Green',
       bowColor: 'Red',
       familyName: 'Hemenway',
+      yearMode: 'Include Year',
       year: '2026',
       entries: [
         { position: 1, kind: 'person', name: 'Kyle' },
@@ -149,7 +151,42 @@ test('successful submission saves one immutable local record with a normalized p
   assert.equal(savedRecord.payload.forge_order_uuid, 'submission-uuid-1');
   assert.equal(savedRecord.payload.order_status, 'submitted');
   assert.equal(savedRecord.payload.fulfillment.shipping_address.address_1, '123 Main Street');
+  assert.equal(savedRecord.payload.items[0].structured_attributes.year_mode, 'Include Year');
   assert.deepEqual(savedRecord.payload.items[0].personalization_order.map((entry) => entry.name), ['Kyle', 'Scout']);
+});
+
+test('Tree Ornament submission carries the explicit No Year production instruction', async () => {
+  const { service, orderStore } = createService();
+  const item = createItem({
+    yearMode: 'No Year',
+    year: '',
+    configurationSnapshot: {
+      size: 'Large',
+      treeColor: 'Green',
+      bowColor: 'Red',
+      familyName: 'Hemenway',
+      yearMode: 'No Year',
+      entries: [
+        { position: 1, kind: 'person', name: 'Kyle' },
+        { position: 2, kind: 'pet', name: 'Scout', icon: 'Paw', customIconDescription: '' }
+      ]
+    }
+  });
+
+  const result = await service.submitOrder({
+    activeOrderSessionId: 'order-session-123',
+    orderState: createOrderState([item])
+  });
+  const saved = await orderStore.getOrder('submission-uuid-1');
+  const line = saved.payload.items[0];
+
+  assert.equal(result.ok, true);
+  assert.equal(line.product_definition_id, 'tree_ornament');
+  assert.equal(line.configuration_snapshot.yearMode, 'No Year');
+  assert.equal(Object.hasOwn(line.configuration_snapshot, 'year'), false);
+  assert.equal(line.structured_attributes.year_mode, 'No Year');
+  assert.equal(line.structured_attributes.year, null);
+  assert.deepEqual(line.personalization_order.map((entry) => entry.name), ['Kyle', 'Scout']);
 });
 
 test('Large Tree Frame submission preserves ordered names, bottom text, bow color, and No Year production instruction', async () => {

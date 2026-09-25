@@ -435,7 +435,9 @@
       family_name: asNullableTrimmedString(familyName),
       ...(definitionId === 'large_tree_frame' ? {
         bottom_text_line_1: asNullableTrimmedString(bottomTextLine1),
-        bottom_text_line_2: asNullableTrimmedString(bottomTextLine2),
+        bottom_text_line_2: asNullableTrimmedString(bottomTextLine2)
+      } : {}),
+      ...(['tree_ornament', 'large_tree_frame'].includes(definitionId) ? {
         year_mode: asNullableTrimmedString(yearMode)
       } : {}),
       year: normalizeStructuredYear(yearValue),

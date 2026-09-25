@@ -137,6 +137,7 @@ test('Large Tree Frame is normalized as a production ornament with its fixed pro
           size: null,
           tree_color: null,
           bow_color: 'White',
+          year_mode: 'No Year',
           year: null
         }
       })]
@@ -149,7 +150,41 @@ test('Large Tree Frame is normalized as a production ornament with its fixed pro
   assert.equal(attributes.productDisplayName, 'Large Tree Frame');
   assert.equal(attributes.ornamentTypeLabel, 'Large Tree Frame');
   assert.equal(attributes.bowColor, 'white');
-  assert.equal(attributes.year, '');
+  assert.equal(attributes.yearMode, 'no year');
+  assert.equal(attributes.year, 'no year');
+  assert.equal(attributes.yearLabel, 'No Year');
+});
+
+test('Tree Ornament No Year remains explicit in normalized production attributes', () => {
+  const record = createRecord({
+    payload: {
+      items: [createItem({
+        product_definition_id: 'tree_ornament',
+        configuration_snapshot: {
+          size: 'Small',
+          treeColor: 'Green',
+          bowColor: 'Red',
+          yearMode: 'No Year'
+        },
+        structured_attributes: {
+          product_definition_id: 'tree_ornament',
+          category: 'ornament',
+          ornament_type: 'tree_ornament',
+          size: 'Small',
+          tree_color: 'Green',
+          bow_color: 'Red',
+          year_mode: 'No Year',
+          year: null
+        }
+      })]
+    }
+  });
+
+  const attributes = queueHelpers.normalizeProductionItemAttributes(record, record.payload.items[0]);
+
+  assert.equal(attributes.yearMode, 'no year');
+  assert.equal(attributes.year, 'no year');
+  assert.equal(attributes.yearLabel, 'No Year');
 });
 
 function createReadyRecord(overrides = {}) {

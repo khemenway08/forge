@@ -9,7 +9,7 @@
   <meta name="pinterest" content="nopin">
   <title>The Hilltop Shop Custom Orders</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="css/app.css?v=20260925-55">
+  <link rel="stylesheet" href="css/app.css?v=20260925-58">
 </head>
 <body>
   <div class="app-shell">
@@ -555,6 +555,13 @@
               </div>
 
               <div class="entry-controls">
+                <div class="entry-reuse-control" data-entry-reuse-control hidden>
+                  <div>
+                    <strong>Reuse names from this order</strong>
+                    <span data-entry-reuse-copy></span>
+                  </div>
+                  <button class="secondary-button" type="button" data-action="reuse-previous-names">Use Names From Previous Item</button>
+                </div>
                 <div class="entry-composer">
                   <div class="form-group entry-composer-input">
                     <label for="entry-person-name">Name</label>
@@ -604,7 +611,7 @@
 
             <div class="form-group" data-product-field-group="year">
               <label for="ornament-year">Year</label>
-              <input id="ornament-year" name="year" type="number" inputmode="numeric" value="2026" min="1900" max="2100" required>
+              <input id="ornament-year" name="year" type="number" inputmode="numeric" value="" min="1900" max="2100" required>
               <p class="field-error" data-error-for="year" aria-live="polite"></p>
             </div>
 
@@ -841,29 +848,29 @@
     </div>
   </div>
 
-  <script src="js/forge-staff-inventory-api.js?v=20260925-55"></script>
-  <script src="js/forge-product-catalog.js?v=20260925-55"></script>
-  <script src="js/forge-order-payload-builder.js?v=20260925-55"></script>
-  <script src="js/forge-order-payload-preview.js?v=20260925-55"></script>
-  <script src="js/forge-api-client.js?v=20260925-55"></script>
-  <script src="js/forge-order-store.js?v=20260925-55"></script>
-  <script src="js/forge-order-server-sync.js?v=20260925-55"></script>
-  <script src="js/forge-sync-status.js?v=20260925-55"></script>
-  <script src="js/forge-order-submission.js?v=20260925-55"></script>
-  <script src="js/forge-event-state.js?v=20260925-55"></script>
-  <script src="js/forge-staff-api-client.js?v=20260925-55"></script>
-  <script src="js/forge-staff-catalog-ordering.js?v=20260925-55"></script>
-  <script src="js/forge-catalog-image-viewer.js?v=20260925-55"></script>
-  <script src="js/forge-staff-design-catalog-api.js?v=20260925-55"></script>
-  <script src="js/forge-staff-design-catalog.js?v=20260925-55"></script>
-  <script src="js/forge-staff-hat-catalog-api.js?v=20260925-55"></script>
-  <script src="js/forge-staff-hat-catalog.js?v=20260925-55"></script>
-  <script src="js/forge-staff-material-catalog-api.js?v=20260925-55"></script>
-  <script src="js/forge-staff-material-catalog.js?v=20260925-55"></script>
-  <script src="js/forge-staff-finished-hat-catalog-api.js?v=20260925-55"></script>
-  <script src="js/forge-staff-finished-hat-catalog.js?v=20260925-55"></script>
-  <script src="js/forge-staff-orders-runtime.js?v=20260925-55"></script>
-  <script src="js/forge-local-orders-queue.js?v=20260925-55"></script>
-  <script src="js/app.js?v=20260925-55"></script>
+  <script src="js/forge-staff-inventory-api.js?v=20260925-58"></script>
+  <script src="js/forge-product-catalog.js?v=20260925-58"></script>
+  <script src="js/forge-order-payload-builder.js?v=20260925-58"></script>
+  <script src="js/forge-order-payload-preview.js?v=20260925-58"></script>
+  <script src="js/forge-api-client.js?v=20260925-58"></script>
+  <script src="js/forge-order-store.js?v=20260925-58"></script>
+  <script src="js/forge-order-server-sync.js?v=20260925-58"></script>
+  <script src="js/forge-sync-status.js?v=20260925-58"></script>
+  <script src="js/forge-order-submission.js?v=20260925-58"></script>
+  <script src="js/forge-event-state.js?v=20260925-58"></script>
+  <script src="js/forge-staff-api-client.js?v=20260925-58"></script>
+  <script src="js/forge-staff-catalog-ordering.js?v=20260925-58"></script>
+  <script src="js/forge-catalog-image-viewer.js?v=20260925-58"></script>
+  <script src="js/forge-staff-design-catalog-api.js?v=20260925-58"></script>
+  <script src="js/forge-staff-design-catalog.js?v=20260925-58"></script>
+  <script src="js/forge-staff-hat-catalog-api.js?v=20260925-58"></script>
+  <script src="js/forge-staff-hat-catalog.js?v=20260925-58"></script>
+  <script src="js/forge-staff-material-catalog-api.js?v=20260925-58"></script>
+  <script src="js/forge-staff-material-catalog.js?v=20260925-58"></script>
+  <script src="js/forge-staff-finished-hat-catalog-api.js?v=20260925-58"></script>
+  <script src="js/forge-staff-finished-hat-catalog.js?v=20260925-58"></script>
+  <script src="js/forge-staff-orders-runtime.js?v=20260925-58"></script>
+  <script src="js/forge-local-orders-queue.js?v=20260925-58"></script>
+  <script src="js/app.js?v=20260925-58"></script>
 </body>
 </html>

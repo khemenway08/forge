@@ -410,8 +410,14 @@
       configurationSnapshot.bow_and_stocking_color
     ]))
       : '';
+    const yearMode = normalizeStableValue(firstNonEmpty([
+      structured.year_mode,
+      configurationSnapshot.yearMode,
+      configurationSnapshot.year_mode,
+      item?.yearMode
+    ]));
     const year = isApplicableDimension(productDefinitionId, 'year')
-      ? normalizeYearFilterValue(firstNonEmpty([
+      ? (yearMode === 'no year' ? 'no year' : normalizeYearFilterValue(firstNonEmpty([
       structured.year,
       configurationSnapshot.year,
       configurationSnapshot.wedding_year,
@@ -419,7 +425,7 @@
       configurationSnapshot.established_year,
       configurationSnapshot.establishedYear,
       item?.year
-    ]))
+    ])))
       : '';
     const productionStatus = normalizeItemProductionStatus(item);
     const fulfillment = getRecordFulfillmentMethod(record);
@@ -448,8 +454,9 @@
       treeColorLabel: getDisplayLabel(treeColor),
       bowColor,
       bowColorLabel: getDisplayLabel(bowColor),
+      yearMode,
       year,
-      yearLabel: year,
+      yearLabel: year === 'no year' ? 'No Year' : year,
       productionStatus,
       productionStatusLabel: getProductionStatusLabel(productionStatus),
       fulfillment,

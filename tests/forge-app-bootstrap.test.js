@@ -7,7 +7,7 @@ const vm = require('vm');
 const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'), 'utf8');
 const cssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
-const BUILD_VERSION = '20260925-55';
+const BUILD_VERSION = '20260925-58';
 
 function extractScreenMarkup(screenId) {
   const match = indexSource.match(new RegExp(`<section class="screen[\\s\\S]*?data-screen="${screenId}"[\\s\\S]*?<\\/section>`));
@@ -229,6 +229,10 @@ function loadForgeAppWithoutStaffModules({
   const capacityMessage = createElement('p');
   const addPersonButton = attachActionDataset(createElement('button'), 'add-person');
   const addPetButton = attachActionDataset(createElement('button'), 'add-pet');
+  const reuseNamesControl = createElement('div');
+  reuseNamesControl.hidden = true;
+  const reuseNamesCopy = createElement('span');
+  const reuseNamesButton = attachActionDataset(createElement('button'), 'reuse-previous-names');
   const addPersonInput = createElement('input');
   const addPersonError = createElement('p');
   const pendingPetControls = createElement('div');
@@ -316,6 +320,9 @@ function loadForgeAppWithoutStaffModules({
   env.registerSelector('[data-capacity-message]', capacityMessage);
   env.registerSelector('[data-action="add-person"]', addPersonButton);
   env.registerSelector('[data-action="add-pet"]', addPetButton);
+  env.registerSelector('[data-entry-reuse-control]', reuseNamesControl);
+  env.registerSelector('[data-entry-reuse-copy]', reuseNamesCopy);
+  env.registerSelector('[data-action="reuse-previous-names"]', reuseNamesButton);
   env.registerSelector('[data-add-person-input]', addPersonInput);
   env.registerSelector('[data-entry-add-error]', addPersonError);
   env.registerSelector('[data-pending-pet-controls]', pendingPetControls);
@@ -711,6 +718,9 @@ function loadForgeAppWithoutStaffModules({
     addPersonInput,
     addPersonButton,
     addPetButton,
+    reuseNamesControl,
+    reuseNamesCopy,
+    reuseNamesButton,
     addPersonError,
     pendingPetControls,
     pendingPetIconSelect,
@@ -1724,9 +1734,11 @@ test('no customer screen renders a staff PIN field', () => {
   assert.doesNotMatch(indexSource, /data-screen="payment-handoff"/);
 });
 
-test('tree customization shows a shared name field with adjacent Add and Add Pet controls plus pending pet icon controls', () => {
+test('tree customization offers previous-item name reuse alongside the shared manual name controls', () => {
   const treeMarkup = extractScreenMarkup('tree-customization');
 
+  assert.match(treeMarkup, /data-entry-reuse-control/);
+  assert.match(treeMarkup, /data-action="reuse-previous-names">Use Names From Previous Item<\/button>/);
   assert.match(treeMarkup, /data-add-person-input/);
   assert.match(treeMarkup, /<label for="entry-person-name">Name<\/label>/);
   assert.match(treeMarkup, /id="entry-person-name"[^>]*autocapitalize="words"/);
@@ -1789,6 +1801,108 @@ test('Large Tree Frame accepts either bottom text line but rejects both blank', 
   assert.match(appSource, /setFieldError\('bottomTextLine1', 'Enter text for at least one bottom line\.'\)/);
 });
 
+test('year-on-star products default to the runtime year and restore it after No Year', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+  assert.deepEqual(
+    JSON.parse(vm.runInContext(`JSON.stringify(Object.keys(ornamentProductConfigs).filter((key) => ornamentProductConfigs[key].optionalYear))`, context)),
+    ['tree_ornament', 'large_tree_frame']
+  );
+  vm.runInContext(`getCurrentCalendarYear = () => '2031';`, context);
+
+  vm.runInContext(`resetDraftState('tree_ornament'); hydrateFormFromDraft();`, context);
+  assert.equal(vm.runInContext('draft.yearMode', context), 'Include Year');
+  assert.equal(vm.runInContext('draft.year', context), '2031');
+  assert.equal(vm.runInContext('treeFields.year.value', context), '2031');
+  assert.equal(vm.runInContext('isTreeDraftBlank()', context), true);
+
+  vm.runInContext(`treeFields.year.value = '2034'; saveDraft();`, context);
+  assert.equal(vm.runInContext('draft.year', context), '2034');
+
+  vm.runInContext(`setOptionChoiceValue('yearMode', 'No Year');`, context);
+  assert.equal(vm.runInContext('draft.yearMode', context), 'No Year');
+  assert.equal(vm.runInContext('draft.year', context), '');
+  assert.equal(vm.runInContext('treeFields.year.value', context), '');
+
+  vm.runInContext(`setOptionChoiceValue('yearMode', 'Include Year');`, context);
+  assert.equal(vm.runInContext('draft.yearMode', context), 'Include Year');
+  assert.equal(vm.runInContext('draft.year', context), '2031');
+  assert.equal(vm.runInContext('treeFields.year.value', context), '2031');
+
+  vm.runInContext(`resetDraftState('large_tree_frame'); hydrateFormFromDraft();`, context);
+  assert.equal(vm.runInContext('draft.yearMode', context), 'Include Year');
+  assert.equal(vm.runInContext('draft.year', context), '2031');
+
+  vm.runInContext(`resetDraftState('antler_ornament'); hydrateFormFromDraft();`, context);
+  assert.equal(vm.runInContext('draft.yearMode', context), '');
+  assert.equal(vm.runInContext('draft.year', context), '2026');
+
+  assert.match(appSource, /function getCurrentCalendarYear\(\)\s*\{\s*return String\(new Date\(\)\.getFullYear\(\)\);/);
+  assert.doesNotMatch(indexSource, /name="year"[^>]*value="2026"/);
+});
+
+test('tree ornament review shows alternate years and an explicit No Year instruction', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+  vm.runInContext(`
+    resetDraftState('tree_ornament');
+    draft.size = 'Small';
+    draft.treeColor = 'Green';
+    draft.bowColor = 'Red';
+    draft.familyName = 'Smith Family';
+    draft.entries = [{ id: 'entry-1', kind: 'person', name: 'Avery', icon: '', iconOther: '' }];
+    draft.yearMode = 'Include Year';
+    draft.year = '2034';
+  `, context);
+  const alternateYearReview = vm.runInContext('createTreeReviewMarkup()', context);
+  assert.match(alternateYearReview, /Year on Star/);
+  assert.match(alternateYearReview, /2034/);
+
+  vm.runInContext(`draft.yearMode = 'No Year'; draft.year = '';`, context);
+  const noYearReview = vm.runInContext('createTreeReviewMarkup()', context);
+  assert.match(noYearReview, /Year on Star/);
+  assert.match(noYearReview, /No Year/);
+  assert.doesNotMatch(noYearReview, /2034/);
+});
+
+test('cart year normalization leaves non-target product identity and year fields unchanged', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+  const normalized = JSON.parse(vm.runInContext(`JSON.stringify(normalizeOrderItemRecord({
+    itemId: 'custom-item',
+    productDefinitionId: 'custom_request',
+    displayName: 'Custom Request',
+    category: 'custom',
+    quantity: 1,
+    unitPrice: 0,
+    yearMode: 'Legacy Instruction',
+    year: '1999',
+    orderedEntries: []
+  }))`, context));
+
+  assert.equal(normalized.productDefinitionId, 'custom_request');
+  assert.equal(normalized.yearMode, 'Legacy Instruction');
+  assert.equal(normalized.year, '1999');
+});
+
+test('staff production detail renders the Tree Ornament No Year instruction', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+  const rows = JSON.parse(vm.runInContext(`JSON.stringify(buildStaffItemDetailRows({
+    product_definition_id: 'tree_ornament',
+    structured_attributes: {
+      product_definition_id: 'tree_ornament',
+      year_mode: 'No Year',
+      year: null
+    },
+    configuration_snapshot: {
+      yearMode: 'No Year'
+    }
+  }))`, context));
+
+  assert.deepEqual(rows.find((row) => row.label === 'Year on Star'), {
+    label: 'Year on Star',
+    value: 'No Year'
+  });
+  assert.equal(rows.some((row) => row.label === 'Year'), false);
+});
+
 test('persistent shared name entry does not introduce JavaScript capitalization rewriting', () => {
   assert.match(appSource, /const normalizedName = trimText\(addPersonInput\?\.value \|\| ''\);/);
   assert.doesNotMatch(appSource, /capitalizeWords\(addPersonInput\?\.value/);
@@ -1829,6 +1943,175 @@ test('persistent name add appends ordered person entries, clears the field, and 
     JSON.stringify(['Kyle', 'Meagan', 'Scout'])
   );
   assert.doesNotMatch(entryList.innerHTML, /No people or pets added yet\./, 'empty state should be replaced after adding entries');
+});
+
+test('name reuse copies the most recent eligible current-order list in order without linking the items', () => {
+  const {
+    context,
+    reuseNamesControl,
+    reuseNamesCopy,
+    reuseNamesButton
+  } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    saveOrderItems([
+      {
+        itemId: 'first-item',
+        productDefinitionId: 'tree_ornament',
+        displayName: 'First Tree Ornament',
+        category: 'ornament',
+        quantity: 1,
+        unitPrice: 3000,
+        orderedEntries: [{ position: 1, kind: 'person', name: 'Older Name' }]
+      },
+      {
+        itemId: 'latest-item',
+        productDefinitionId: 'tree_ornament',
+        displayName: 'Latest Tree Ornament',
+        category: 'ornament',
+        quantity: 1,
+        unitPrice: 3000,
+        orderedEntries: [
+          { position: 1, kind: 'person', name: 'Avery' },
+          { position: 2, kind: 'pet', name: 'Scout', icon: 'Paw Print', customIconDescription: '' },
+          { position: 3, kind: 'person', name: 'Morgan' }
+        ]
+      }
+    ]);
+    resetDraftState('tree_ornament');
+    renderEntries();
+  `, context);
+
+  assert.equal(reuseNamesControl.hidden, false);
+  assert.equal(reuseNamesCopy.textContent, 'Copy the ordered names from Latest Tree Ornament.');
+  reuseNamesButton.click();
+
+  assert.deepEqual(
+    JSON.parse(vm.runInContext(`JSON.stringify(draft.entries.map((entry) => ({
+      kind: entry.kind,
+      name: entry.name,
+      icon: entry.icon || '',
+      iconOther: entry.iconOther || ''
+    })))`, context)),
+    [
+      { kind: 'person', name: 'Avery', icon: '', iconOther: '' },
+      { kind: 'pet', name: 'Scout', icon: 'Paw Print', iconOther: '' },
+      { kind: 'person', name: 'Morgan', icon: '', iconOther: '' }
+    ]
+  );
+  assert.equal(vm.runInContext(`draft.entries[0].id !== getOrderItems()[1].orderedEntries[0].id`, context), true);
+  assert.equal(reuseNamesControl.hidden, true);
+
+  vm.runInContext(`draft.entries[0].name = 'Changed Copy'; saveDraft();`, context);
+  assert.equal(vm.runInContext(`getOrderItems()[1].orderedEntries[0].name`, context), 'Avery');
+});
+
+test('adding a named first item then opening a second name-based item shows reuse and copies the shared Family Name only', () => {
+  const { context, reuseNamesControl, reuseNamesCopy, reuseNamesButton } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    resetDraftState('tree_ornament');
+    draft.size = 'Large';
+    draft.treeColor = 'Green';
+    draft.bowColor = 'Red';
+    draft.familyName = 'Hemenway Family';
+    draft.yearMode = 'Include Year';
+    draft.year = getCurrentCalendarYear();
+    draft.entries = [
+      { id: 'first-name', kind: 'person', name: 'Kyle' },
+      { id: 'second-name', kind: 'person', name: 'Meagan' }
+    ];
+    addTreeItemToOrder();
+    resetTreeDraftForNewItem();
+    resetDraftForProduct('antler_ornament');
+    const destinationYearBeforeReuse = draft.year;
+    showScreen('tree-customization');
+  `, context);
+
+  assert.equal(vm.runInContext('getOrderItems().length', context), 1);
+  assert.deepEqual(
+    JSON.parse(vm.runInContext('JSON.stringify(getOrderItems()[0].orderedEntries.map((entry) => entry.name))', context)),
+    ['Kyle', 'Meagan']
+  );
+  assert.equal(vm.runInContext('draft.entries.length', context), 0);
+  assert.equal(reuseNamesControl.hidden, false);
+  assert.equal(reuseNamesCopy.textContent, 'Copy the ordered names from Tree Ornament.');
+  reuseNamesButton.click();
+  assert.equal(vm.runInContext('draft.familyName', context), 'Hemenway Family');
+  assert.equal(vm.runInContext('treeFields.familyName.value', context), 'Hemenway Family');
+  assert.equal(vm.runInContext('draft.size', context), '');
+  assert.equal(vm.runInContext('draft.bowColor', context), '');
+  assert.equal(vm.runInContext('draft.year === destinationYearBeforeReuse', context), true);
+});
+
+test('Large Tree Frame reuses all ordered names as editable people without pet personalization', () => {
+  const { context, reuseNamesButton } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    saveOrderItems([{
+      itemId: 'source-item',
+      productDefinitionId: 'tree_ornament',
+      displayName: 'Tree Ornament',
+      category: 'ornament',
+      quantity: 1,
+      unitPrice: 3000,
+      familyName: 'Hemenway Family',
+      orderedEntries: [
+        { position: 1, kind: 'person', name: 'Avery' },
+        { position: 2, kind: 'pet', name: 'Scout', icon: 'Dog Bone', customIconDescription: '' },
+        { position: 3, kind: 'person', name: 'Morgan' }
+      ]
+    }]);
+    resetDraftState('large_tree_frame');
+    renderEntries();
+  `, context);
+
+  reuseNamesButton.click();
+
+  assert.deepEqual(
+    JSON.parse(vm.runInContext(`JSON.stringify(draft.entries.map((entry) => ({
+      kind: entry.kind,
+      name: entry.name,
+      hasIcon: Object.prototype.hasOwnProperty.call(entry, 'icon')
+    })))`, context)),
+    [
+      { kind: 'person', name: 'Avery', hasIcon: false },
+      { kind: 'person', name: 'Scout', hasIcon: false },
+      { kind: 'person', name: 'Morgan', hasIcon: false }
+    ]
+  );
+  assert.equal(vm.runInContext(`normalizeTreeOrderItem().orderedEntries.length`, context), 3);
+  assert.equal(vm.runInContext(`normalizeTreeOrderItem().petCount`, context), 0);
+  assert.equal(vm.runInContext(`draft.familyName`, context), '');
+});
+
+test('editing an item can reuse names only from items earlier in the current order', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    saveOrderItems([
+      {
+        itemId: 'before-item', productDefinitionId: 'tree_ornament', displayName: 'Before',
+        category: 'ornament', quantity: 1, unitPrice: 3000,
+        orderedEntries: [{ position: 1, kind: 'person', name: 'Before Name' }]
+      },
+      {
+        itemId: 'editing-item', productDefinitionId: 'tree_ornament', displayName: 'Editing',
+        category: 'ornament', quantity: 1, unitPrice: 3000, orderedEntries: []
+      },
+      {
+        itemId: 'after-item', productDefinitionId: 'tree_ornament', displayName: 'After',
+        category: 'ornament', quantity: 1, unitPrice: 3000,
+        orderedEntries: [{ position: 1, kind: 'person', name: 'After Name' }]
+      }
+    ]);
+    resetDraftState('tree_ornament');
+    appState.editingItemId = 'editing-item';
+  `, context);
+
+  assert.equal(vm.runInContext(`getPreviousNamesSourceItem().itemId`, context), 'before-item');
+  vm.runInContext(`reuseNamesFromPreviousItem();`, context);
+  assert.equal(vm.runInContext(`draft.entries[0].name`, context), 'Before Name');
 });
 
 test('persistent name add trims outer whitespace, preserves internal spaces and punctuation, and rejects empty attempts', () => {

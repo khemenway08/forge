@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260925-55';
+const FORGE_BUILD_VERSION = '20260925-58';
 const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
@@ -13,6 +13,9 @@ const addPersonInput = document.querySelector('[data-add-person-input]');
 const addPersonError = document.querySelector('[data-entry-add-error]');
 const addPersonButton = document.querySelector('[data-action="add-person"]');
 const addPetButton = document.querySelector('[data-action="add-pet"]');
+const reuseNamesControl = document.querySelector('[data-entry-reuse-control]');
+const reuseNamesCopy = document.querySelector('[data-entry-reuse-copy]');
+const reuseNamesButton = document.querySelector('[data-action="reuse-previous-names"]');
 const pendingPetControls = document.querySelector('[data-pending-pet-controls]');
 const pendingPetIconSelect = document.querySelector('[data-pending-pet-icon]');
 const pendingPetCustomGroup = document.querySelector('[data-pending-pet-custom-group]');
@@ -294,6 +297,9 @@ const ornamentProductConfigs = {
     requiresBowColor: true,
     requiresEntries: true,
     minimumEntryCount: 1,
+    optionalYear: true,
+    yearModeDefault: 'Include Year',
+    yearDefaultMode: 'current',
     customizationCopy: 'Choose colors and personalization details before continuing.',
     updateNote: 'Tree Ornament updated.'
   },
@@ -350,6 +356,8 @@ const ornamentProductConfigs = {
     allowsPets: false,
     requiresBottomTextLines: true,
     optionalYear: true,
+    yearModeDefault: 'Include Year',
+    yearDefaultMode: 'current',
     customizationTitle: 'Customize your frame',
     itemTypeLabel: 'frame',
     customizationCopy: 'Choose a bow color and year option, enter at least one bottom text line, then add names in engraving order.',
@@ -501,7 +509,8 @@ const productReviewConfig = {
       treeColor: 'Tree Color',
       bowColor: 'Bow Color',
       familyName: 'Engraved Text',
-      year: 'Year'
+      yearMode: 'Year on Star',
+      year: 'Year on Star'
     }
   },
   antler_ornament: {
@@ -672,8 +681,8 @@ const draft = {
   edgeText: '',
   bottomTextLine1: '',
   bottomTextLine2: '',
-  yearMode: '',
-  year: '2026',
+  yearMode: getDefaultYearMode('tree_ornament'),
+  year: getDefaultYearValue('tree_ornament'),
   entries: []
 };
 
@@ -681,18 +690,39 @@ function getCurrentCalendarYear() {
   return String(new Date().getFullYear());
 }
 
+function getDefaultYearMode(productDefinitionId = draft.productDefinitionId) {
+  const config = getProductConfig(productDefinitionId);
+  return config.optionalYear && allowedValues.yearMode.includes(config.yearModeDefault)
+    ? config.yearModeDefault
+    : '';
+}
+
 function getDefaultYearValue(productDefinitionId = draft.productDefinitionId) {
   const config = getProductConfig(productDefinitionId);
   if (config.requiresYear === false) {
     return '';
   }
-  if (config.optionalYear) {
+  if (config.optionalYear && getDefaultYearMode(productDefinitionId) !== 'Include Year') {
     return '';
   }
   if (config.yearDefaultMode === 'current') {
     return getCurrentCalendarYear();
   }
   return '2026';
+}
+
+function normalizeDraftYearMode(productDefinitionId, yearMode, year) {
+  const config = getProductConfig(productDefinitionId);
+  if (!config.optionalYear) {
+    return '';
+  }
+  if (allowedValues.yearMode.includes(yearMode)) {
+    return yearMode;
+  }
+  if (sanitizeText(year || '')) {
+    return 'Include Year';
+  }
+  return getDefaultYearMode(productDefinitionId);
 }
 
 function isDefaultYearValue(value, productDefinitionId = draft.productDefinitionId) {
@@ -2009,7 +2039,7 @@ function resetDraftState(productDefinitionId = 'tree_ornament') {
   draft.edgeText = '';
   draft.bottomTextLine1 = '';
   draft.bottomTextLine2 = '';
-  draft.yearMode = '';
+  draft.yearMode = getDefaultYearMode(draft.productDefinitionId);
   draft.year = getDefaultYearValue(draft.productDefinitionId);
   draft.entries = [];
   appState.editingItemId = '';
@@ -2145,7 +2175,7 @@ function setOptionChoiceValue(fieldName, value, focusButton = false) {
     }
   } else if (fieldName === 'yearMode') {
     if (value === 'Include Year' && !treeFields.year.value) {
-      treeFields.year.value = getCurrentCalendarYear();
+      treeFields.year.value = getDefaultYearValue();
       draft.year = treeFields.year.value;
     } else if (value === 'No Year') {
       treeFields.year.value = '';
@@ -2292,7 +2322,7 @@ function hydrateFormFromDraft() {
   treeFields.bottomTextLine1.value = draft.bottomTextLine1;
   treeFields.bottomTextLine2.value = draft.bottomTextLine2;
   treeFields.yearMode.value = draft.yearMode;
-  treeFields.year.value = draft.year || getDefaultYearValue();
+  treeFields.year.value = draft.yearMode === 'No Year' ? '' : (draft.year || getDefaultYearValue());
   renderOptionChoiceButtons();
   renderCustomizationScreenContent();
   renderTreeCustomizationImage();
@@ -2392,8 +2422,9 @@ function loadDraft() {
     draft.edgeText = typeof parsed.edgeText === 'string' ? parsed.edgeText : '';
     draft.bottomTextLine1 = typeof parsed.bottomTextLine1 === 'string' ? parsed.bottomTextLine1 : '';
     draft.bottomTextLine2 = typeof parsed.bottomTextLine2 === 'string' ? parsed.bottomTextLine2 : '';
-    draft.yearMode = allowedValues.yearMode.includes(parsed.yearMode) ? parsed.yearMode : '';
-    draft.year = typeof parsed.year === 'string' && parsed.year ? parsed.year : getDefaultYearValue(draft.productDefinitionId);
+    const parsedYear = typeof parsed.year === 'string' ? parsed.year : '';
+    draft.yearMode = normalizeDraftYearMode(draft.productDefinitionId, parsed.yearMode, parsedYear);
+    draft.year = draft.yearMode === 'No Year' ? '' : (parsedYear || getDefaultYearValue(draft.productDefinitionId));
     draft.entries = Array.isArray(parsed.entries) ? parsed.entries.map(normalizeEntry).filter(Boolean) : [];
   } catch {
     draft.productDefinitionId = 'tree_ornament';
@@ -2401,7 +2432,7 @@ function loadDraft() {
     draft.edgeText = '';
     draft.bottomTextLine1 = '';
     draft.bottomTextLine2 = '';
-    draft.yearMode = '';
+    draft.yearMode = getDefaultYearMode('tree_ornament');
     draft.year = getDefaultYearValue('tree_ornament');
     draft.entries = [];
   }
@@ -3288,7 +3319,7 @@ function resetActiveOrderSession({ clearCart = true, goToWelcome = true } = {}) 
   draft.edgeText = '';
   draft.bottomTextLine1 = '';
   draft.bottomTextLine2 = '';
-  draft.yearMode = '';
+  draft.yearMode = getDefaultYearMode('tree_ornament');
   draft.year = getDefaultYearValue('tree_ornament');
   draft.entries = [];
   localStorage.removeItem(storageKey);
@@ -3560,12 +3591,90 @@ function cancelPendingPetEntry({ preserveName = true, restoreFocus = true } = {}
   }
 }
 
+function getPreviousNamesSourceItem() {
+  const items = getOrderItems();
+  const editingIndex = appState.editingItemId
+    ? items.findIndex((item) => item.itemId === appState.editingItemId)
+    : -1;
+  const previousItems = editingIndex >= 0 ? items.slice(0, editingIndex) : items;
+
+  for (let index = previousItems.length - 1; index >= 0; index -= 1) {
+    const item = previousItems[index];
+    if (Array.isArray(item.orderedEntries) && item.orderedEntries.some((entry) => trimText(entry?.name || ''))) {
+      return item;
+    }
+  }
+
+  return null;
+}
+
+function renderReuseNamesControl() {
+  if (!reuseNamesControl) {
+    return;
+  }
+
+  const config = getProductConfig();
+  const supportsEntries = Boolean(config.requiresEntries || config.minimumEntryCount > 0 || config.preSizeLimit > 0);
+  const sourceItem = draft.entries.length === 0 && supportsEntries
+    ? getPreviousNamesSourceItem()
+    : null;
+  reuseNamesControl.hidden = !sourceItem;
+  if (reuseNamesCopy) {
+    reuseNamesCopy.textContent = sourceItem
+      ? `Copy the ordered names from ${sourceItem.displayName}.`
+      : '';
+  }
+}
+
+function reuseNamesFromPreviousItem() {
+  if (draft.entries.length > 0) {
+    return false;
+  }
+
+  const sourceItem = getPreviousNamesSourceItem();
+  if (!sourceItem) {
+    renderReuseNamesControl();
+    return false;
+  }
+
+  const config = getProductConfig();
+  const allowsPets = config.allowsPets !== false;
+  const sourceFamilyName = sanitizeText(sourceItem.familyName || '');
+  if (config.requiresFamilyName !== false && sourceFamilyName) {
+    draft.familyName = sourceFamilyName;
+    treeFields.familyName.value = sourceFamilyName;
+  }
+  draft.entries = sourceItem.orderedEntries
+    .filter((entry) => trimText(entry?.name || ''))
+    .map((entry) => {
+      const name = trimText(entry.name);
+      if (!allowsPets || entry.kind !== 'pet') {
+        return { id: createId(), kind: 'person', name };
+      }
+      return {
+        id: createId(),
+        kind: 'pet',
+        name,
+        icon: normalizePetIconLabel(entry.icon, draft.productDefinitionId),
+        iconOther: sanitizeText(entry.customIconDescription || entry.iconOther || '')
+      };
+    });
+
+  clearAddPersonError();
+  setFieldError('entries', '');
+  treeStatus.textContent = '';
+  saveDraft();
+  renderEntries();
+  return draft.entries.length > 0;
+}
+
 function renderEntries(focusId) {
   if (!entryList) {
     return;
   }
 
   const { count } = getCapacityDetails();
+  renderReuseNamesControl();
 
   if (draft.entries.length === 0) {
     entryList.innerHTML = `
@@ -4606,6 +4715,16 @@ function normalizeOrderItemRecord(record) {
   const category = typeof record.category === 'string' ? record.category : '';
   const quantity = Number.isFinite(record.quantity) ? record.quantity : 1;
   const unitPrice = Number.isFinite(record.unitPrice) ? record.unitPrice : 0;
+  const productDefinitionId = typeof record.productDefinitionId === 'string' ? record.productDefinitionId : '';
+  const configuredProductDefinitionId = forgeProductCatalog.getUiProductDefinitionId(productDefinitionId);
+  const usesOptionalYear = Boolean(ornamentProductConfigs[configuredProductDefinitionId]?.optionalYear);
+  const year = typeof record.year === 'string' ? record.year : '';
+  const storedYearMode = typeof record.yearMode === 'string'
+    ? record.yearMode
+    : (typeof record.configurationSnapshot?.yearMode === 'string' ? record.configurationSnapshot.yearMode : '');
+  const yearMode = usesOptionalYear
+    ? normalizeDraftYearMode(configuredProductDefinitionId, storedYearMode, year)
+    : storedYearMode;
   const orderedEntries = Array.isArray(record.orderedEntries)
     ? record.orderedEntries.map((entry, index) => {
         if (!entry || (entry.kind !== 'person' && entry.kind !== 'pet')) {
@@ -4629,7 +4748,7 @@ function normalizeOrderItemRecord(record) {
 
   return {
     itemId,
-    productDefinitionId: typeof record.productDefinitionId === 'string' ? record.productDefinitionId : '',
+    productDefinitionId,
     imagePath: typeof record.imagePath === 'string'
       ? sanitizeText(record.imagePath)
       : (typeof record.image === 'string' ? sanitizeText(record.image) : ''),
@@ -4649,10 +4768,8 @@ function normalizeOrderItemRecord(record) {
     bottomTextLine2: typeof record.bottomTextLine2 === 'string'
       ? record.bottomTextLine2
       : (typeof record.configurationSnapshot?.bottomTextLine2 === 'string' ? record.configurationSnapshot.bottomTextLine2 : ''),
-    yearMode: typeof record.yearMode === 'string'
-      ? record.yearMode
-      : (typeof record.configurationSnapshot?.yearMode === 'string' ? record.configurationSnapshot.yearMode : ''),
-    year: typeof record.year === 'string' ? record.year : '',
+    yearMode,
+    year: usesOptionalYear && yearMode === 'No Year' ? '' : year,
     orderedEntries,
     peopleCount: Number.isFinite(record.peopleCount) ? record.peopleCount : orderedEntries.filter((entry) => entry.kind === 'person').length,
     petCount: Number.isFinite(record.petCount) ? record.petCount : orderedEntries.filter((entry) => entry.kind === 'pet').length,
@@ -4690,7 +4807,7 @@ function isTreeDraftBlank() {
     && (!config.requiresPersonalizationMode || !sanitizeText(draft.personalizationMode))
     && !sanitizeText(draft.edgeText)
     && (!config.requiresBottomTextLines || (!sanitizeText(draft.bottomTextLine1) && !sanitizeText(draft.bottomTextLine2)))
-    && (!config.optionalYear || !sanitizeText(draft.yearMode))
+    && (!config.optionalYear || !sanitizeText(draft.yearMode) || draft.yearMode === getDefaultYearMode(draft.productDefinitionId))
     && draft.entries.length === 0
     && (config.requiresYear === false || !draft.year || isDefaultYearValue(draft.year, draft.productDefinitionId));
 }
@@ -4939,8 +5056,15 @@ function closeAddConfirmation(restoreFocus = true) {
 }
 
 function buildDraftFromOrderItem(item) {
+  const productDefinitionId = resolveConfiguredProductDefinitionId(item.productDefinitionId);
+  const storedYear = typeof item.year === 'string' ? item.year : '';
+  const yearMode = normalizeDraftYearMode(
+    productDefinitionId,
+    item.yearMode || item.configurationSnapshot?.yearMode || '',
+    storedYear
+  );
   return {
-    productDefinitionId: resolveConfiguredProductDefinitionId(item.productDefinitionId),
+    productDefinitionId,
     size: item.size,
     treeColor: item.treeColor,
     bowColor: item.bowColor,
@@ -4949,8 +5073,8 @@ function buildDraftFromOrderItem(item) {
     edgeText: item.edgeText || '',
     bottomTextLine1: item.bottomTextLine1 || item.configurationSnapshot?.bottomTextLine1 || '',
     bottomTextLine2: item.bottomTextLine2 || item.configurationSnapshot?.bottomTextLine2 || '',
-    yearMode: item.yearMode || item.configurationSnapshot?.yearMode || '',
-    year: item.year,
+    yearMode,
+    year: yearMode === 'No Year' ? '' : (storedYear || getDefaultYearValue(productDefinitionId)),
     entries: item.orderedEntries.map((entry) => ({
       id: createId(),
       kind: entry.kind,
@@ -9680,7 +9804,7 @@ function clearEditableOrderStateAfterSubmit() {
   draft.edgeText = '';
   draft.bottomTextLine1 = '';
   draft.bottomTextLine2 = '';
-  draft.yearMode = '';
+  draft.yearMode = getDefaultYearMode('tree_ornament');
   draft.year = getDefaultYearValue('tree_ornament');
   draft.entries = [];
   localStorage.removeItem(storageKey);
@@ -10631,6 +10755,7 @@ if (treeForm) {
 
   addPersonButton.addEventListener('click', () => addPersonFromField());
   addPetButton.addEventListener('click', () => openPendingPetEntry());
+  reuseNamesButton?.addEventListener('click', () => reuseNamesFromPreviousItem());
 
   addPersonInput?.addEventListener('input', () => {
     clearAddPersonError();

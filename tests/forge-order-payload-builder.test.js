@@ -9,7 +9,7 @@ const { buildForgeOrderPayload } = require('../public/js/forge-order-payload-bui
 const appSource = fs.readFileSync(path.join(__dirname, '../public/js/app.js'), 'utf8');
 const builderSource = fs.readFileSync(path.join(__dirname, '../public/js/forge-order-payload-builder.js'), 'utf8');
 const indexSource = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
-const BUILD_VERSION = '20260925-55';
+const BUILD_VERSION = '20260925-58';
 
 function createContext(overrides = {}) {
   return {
@@ -72,6 +72,7 @@ function createItem(overrides = {}) {
     treeColor: 'Green',
     bowColor: 'Red',
     familyName: 'Hemenway',
+    yearMode: 'Include Year',
     year: '2026',
     orderedEntries: [],
     configurationSnapshot: {
@@ -79,6 +80,7 @@ function createItem(overrides = {}) {
       treeColor: 'Green',
       bowColor: 'Red',
       familyName: 'Hemenway',
+      yearMode: 'Include Year',
       year: '2026'
     },
     ...overrides
@@ -217,6 +219,7 @@ test('normalizes a Tree Ornament shipping order with size-based pricing and exac
       treeColor: 'Green',
       bowColor: 'Red',
       familyName: 'Hemenway',
+      yearMode: 'Include Year',
       year: '2026'
     },
     size: 'Large',
@@ -240,12 +243,50 @@ test('normalizes a Tree Ornament shipping order with size-based pricing and exac
   assert.equal(line.structured_attributes.bow_color, 'Red');
   assert.equal(Object.hasOwn(line.structured_attributes, 'bottom_text_line_1'), false);
   assert.equal(Object.hasOwn(line.structured_attributes, 'bottom_text_line_2'), false);
-  assert.equal(Object.hasOwn(line.structured_attributes, 'year_mode'), false);
+  assert.equal(line.structured_attributes.year_mode, 'Include Year');
   assert.equal(line.personalization_order[0].name, 'Kyle');
   assert.equal(line.personalization_order[1].type, 'pet');
   assert.equal(line.personalization_order[1].pet_type, 'dog');
   assert.equal(line.personalization_order[1].icon, 'paw');
   assert.equal(line.personalization_order[2].position, 3);
+});
+
+test('Tree Ornament No Year persists explicitly without changing its other personalization', () => {
+  const item = createItem({
+    yearMode: 'No Year',
+    year: '',
+    configurationSnapshot: {
+      size: 'Large',
+      treeColor: 'Brown',
+      bowColor: 'White',
+      familyName: 'Smith Family',
+      yearMode: 'No Year',
+      entries: [
+        { position: 1, kind: 'person', name: 'Kyle' },
+        { position: 2, kind: 'pet', name: 'Scout', icon: 'Paw Print' }
+      ]
+    },
+    orderedEntries: [
+      { position: 1, kind: 'person', name: 'Kyle' },
+      { position: 2, kind: 'pet', name: 'Scout', icon: 'Paw Print' }
+    ],
+    size: 'Large',
+    treeColor: 'Brown',
+    bowColor: 'White',
+    unitPrice: 30
+  });
+
+  const line = buildForgeOrderPayload(createOrderState([item]), createContext()).items[0];
+
+  assert.equal(line.product_definition_id, 'tree_ornament');
+  assert.equal(line.configuration_snapshot.yearMode, 'No Year');
+  assert.equal(Object.hasOwn(line.configuration_snapshot, 'year'), false);
+  assert.equal(line.structured_attributes.year_mode, 'No Year');
+  assert.equal(line.structured_attributes.year, null);
+  assert.equal(line.structured_attributes.size, 'Large');
+  assert.equal(line.structured_attributes.tree_color, 'Brown');
+  assert.equal(line.structured_attributes.bow_color, 'White');
+  assert.deepEqual(line.personalization_order.map((entry) => entry.name), ['Kyle', 'Scout']);
 });
 
 test('normalizes Large Tree Frame names, bottom text, fixed pricing, and Include Year selection', () => {
