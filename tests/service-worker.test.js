@@ -4,8 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const BUILD_VERSION = '20260903-54';
-const CACHE_NAME = 'forge-starter-v54';
+const BUILD_VERSION = '20260925-55';
+const CACHE_NAME = 'forge-starter-v55';
 
 function normalizeRequestUrl(input) {
   if (typeof input === 'string') {
@@ -199,6 +199,7 @@ test('service worker install fetches current precache assets with cache reload a
   assert.ok(fetchCalls.length > 0);
   assert.ok(fetchCalls.every((request) => request.cache === 'reload'));
   assert.ok(fetchCalls.some((request) => request.url.endsWith(`/js/app.js?v=${BUILD_VERSION}`)));
+  assert.ok(fetchCalls.some((request) => request.url.endsWith('/assets/products/large-tree-frame.jpg')));
 
   const cacheKeys = await caches.keys();
   assert.ok(cacheKeys.includes(CACHE_NAME));

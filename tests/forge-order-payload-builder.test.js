@@ -2,7 +2,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const childProcess = require('node:child_process');
 
 const productCatalog = require('../public/js/forge-product-catalog.js');
 const { buildForgeOrderPayload } = require('../public/js/forge-order-payload-builder.js');
@@ -10,7 +9,7 @@ const { buildForgeOrderPayload } = require('../public/js/forge-order-payload-bui
 const appSource = fs.readFileSync(path.join(__dirname, '../public/js/app.js'), 'utf8');
 const builderSource = fs.readFileSync(path.join(__dirname, '../public/js/forge-order-payload-builder.js'), 'utf8');
 const indexSource = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
-const BUILD_VERSION = '20260903-54';
+const BUILD_VERSION = '20260925-55';
 
 function createContext(overrides = {}) {
   return {
@@ -121,23 +120,28 @@ test('customer category screen is limited to the working ornament hero for the p
   assert.doesNotMatch(indexSource, /welcome-category-custom\.png/);
 });
 
-test('ornament-selection screen markup remains unchanged from commit 43b5ef4', () => {
-  const committedIndexSource = childProcess.execSync('git show 43b5ef4:public/index.html', {
-    cwd: path.join(__dirname, '..'),
-    encoding: 'utf8'
-  });
+test('ornament-selection screen offers the Large Tree Frame through the shared product flow', () => {
+  assert.match(indexSource, /data-product="large-tree-frame"/);
+  assert.match(indexSource, /assets\/products\/large-tree-frame\.jpg/);
+  assert.match(indexSource, /<h3>Large Tree Frame<\/h3>[\s\S]*?<div class="price">\$45\.00<\/div>/);
+  assert.match(appSource, /'large-tree-frame': 'large_tree_frame'/);
+});
 
-  const sectionPattern = /<section class="screen" data-screen="ornaments">[\s\S]*?<\/section>/;
-  const currentSection = indexSource.match(sectionPattern)?.[0] || '';
-  const committedSection = committedIndexSource.match(sectionPattern)?.[0] || '';
+test('Large Tree Frame UI reuses ordered name entry with explicit bow and reusable optional-year controls', () => {
+  assert.match(indexSource, /name="bottomTextLine1"[\s\S]*?name="bottomTextLine2"/);
+  assert.match(indexSource, /data-choice-field="yearMode" data-choice-value="Include Year"/);
+  assert.match(indexSource, /data-choice-field="yearMode" data-choice-value="No Year"/);
+  assert.match(indexSource, /data-choice-field="bowColor" data-choice-value="Red"/);
+  assert.match(indexSource, /data-choice-field="bowColor" data-choice-value="White"/);
+  assert.match(appSource, /large_tree_frame:\s*\{[\s\S]*?preSizeLimit:\s*250[\s\S]*?allowsPets:\s*false[\s\S]*?requiresBottomTextLines:\s*true[\s\S]*?optionalYear:\s*true/);
+  assert.match(appSource, /draft\.entries\.push\(\{[\s\S]*?kind:\s*'person',[\s\S]*?name:\s*normalizedName/);
+  assert.doesNotMatch(appSource, /large_tree_frame:\s*\{[\s\S]*?preSizeLimit:\s*20\b/);
+});
 
-  assert.ok(currentSection);
-  assert.ok(committedSection);
-  const normalizePinterestOptOut = (markup) => markup
-    .replace(/\s+nopin="nopin"/g, '')
-    .replace(/\s+data-pin-nopin="true"/g, '');
-
-  assert.equal(normalizePinterestOptOut(currentSection), normalizePinterestOptOut(committedSection));
+test('staff and production detail plumbing labels both Large Tree Frame bottom lines and year choice', () => {
+  assert.match(appSource, /label:\s*'Bottom Text Line 1',\s*value:\s*bottomTextLine1/);
+  assert.match(appSource, /label:\s*'Bottom Text Line 2',\s*value:\s*bottomTextLine2/);
+  assert.match(appSource, /label:\s*'Year on Star',\s*value:\s*yearMode/);
 });
 
 test('submitted payloads preserve approved external payment metadata and reject unsupported values', () => {
@@ -234,11 +238,100 @@ test('normalizes a Tree Ornament shipping order with size-based pricing and exac
   assert.equal(line.structured_attributes.size, 'Large');
   assert.equal(line.structured_attributes.tree_color, 'Green');
   assert.equal(line.structured_attributes.bow_color, 'Red');
+  assert.equal(Object.hasOwn(line.structured_attributes, 'bottom_text_line_1'), false);
+  assert.equal(Object.hasOwn(line.structured_attributes, 'bottom_text_line_2'), false);
+  assert.equal(Object.hasOwn(line.structured_attributes, 'year_mode'), false);
   assert.equal(line.personalization_order[0].name, 'Kyle');
   assert.equal(line.personalization_order[1].type, 'pet');
   assert.equal(line.personalization_order[1].pet_type, 'dog');
   assert.equal(line.personalization_order[1].icon, 'paw');
   assert.equal(line.personalization_order[2].position, 3);
+});
+
+test('normalizes Large Tree Frame names, bottom text, fixed pricing, and Include Year selection', () => {
+  const orderedEntries = Array.from({ length: 25 }, (_, index) => ({
+    position: index + 1,
+    kind: 'person',
+    name: `Name ${index + 1}`
+  }));
+  const item = createItem({
+    itemId: 'large-tree-frame-1',
+    productDefinitionId: 'large_tree_frame',
+    displayName: 'Large Tree Frame',
+    unitPrice: 45,
+    size: '',
+    treeColor: '',
+    bowColor: 'Red',
+    familyName: '',
+    bottomTextLine1: 'Nana',
+    bottomTextLine2: '',
+    yearMode: 'Include Year',
+    year: '2026',
+    orderedEntries,
+    configurationSnapshot: {
+      bowColor: 'Red',
+      bottomTextLine1: 'Nana',
+      bottomTextLine2: '',
+      yearMode: 'Include Year',
+      year: '2026',
+      entries: orderedEntries
+    }
+  });
+
+  const line = buildForgeOrderPayload(createOrderState([item]), createContext()).items[0];
+
+  assert.equal(line.product_definition_id, 'large_tree_frame');
+  assert.equal(line.pricing.regular_unit_price_cents, 4500);
+  assert.equal(line.pricing.final_unit_price_cents, 4500);
+  assert.equal(line.personalization_order.length, 25);
+  assert.deepEqual(line.personalization_order.map((entry) => entry.name), orderedEntries.map((entry) => entry.name));
+  assert.equal(line.personalization_order.every((entry) => entry.type === 'person'), true);
+  assert.equal(line.configuration_snapshot.bottomTextLine1, 'Nana');
+  assert.equal(line.configuration_snapshot.bottomTextLine2, '');
+  assert.equal(line.configuration_snapshot.yearMode, 'Include Year');
+  assert.equal(line.structured_attributes.bottom_text_line_1, 'Nana');
+  assert.equal(line.structured_attributes.bottom_text_line_2, null);
+  assert.equal(line.structured_attributes.year_mode, 'Include Year');
+  assert.equal(line.structured_attributes.year, 2026);
+  assert.equal(line.structured_attributes.people_count, 25);
+  assert.equal(line.structured_attributes.pet_count, 0);
+});
+
+test('Large Tree Frame No Year selection persists explicitly without a structured year', () => {
+  const item = createItem({
+    itemId: 'large-tree-frame-no-year',
+    productDefinitionId: 'large_tree_frame',
+    displayName: 'Large Tree Frame',
+    unitPrice: 45,
+    size: '',
+    treeColor: '',
+    bowColor: 'White',
+    familyName: '',
+    bottomTextLine1: '',
+    bottomTextLine2: 'Our Family',
+    yearMode: 'No Year',
+    year: '',
+    orderedEntries: [{ position: 1, kind: 'person', name: 'Avery' }],
+    configurationSnapshot: {
+      bowColor: 'White',
+      bottomTextLine1: '',
+      bottomTextLine2: 'Our Family',
+      yearMode: 'No Year',
+      entries: [{ position: 1, kind: 'person', name: 'Avery' }]
+    }
+  });
+
+  const line = buildForgeOrderPayload(createOrderState([item]), createContext()).items[0];
+
+  assert.equal(line.configuration_snapshot.yearMode, 'No Year');
+  assert.equal(line.configuration_snapshot.bottomTextLine1, '');
+  assert.equal(line.configuration_snapshot.bottomTextLine2, 'Our Family');
+  assert.equal(line.structured_attributes.bottom_text_line_1, null);
+  assert.equal(line.structured_attributes.bottom_text_line_2, 'Our Family');
+  assert.equal(Object.hasOwn(line.configuration_snapshot, 'year'), false);
+  assert.equal(line.structured_attributes.year_mode, 'No Year');
+  assert.equal(line.structured_attributes.year, null);
+  assert.equal(line.structured_attributes.bow_color, 'White');
 });
 
 test('creates custom_icon flag and preserves custom icon description', () => {

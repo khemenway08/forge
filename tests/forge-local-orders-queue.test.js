@@ -117,6 +117,41 @@ function createRecord(overrides = {}) {
   };
 }
 
+test('Large Tree Frame is normalized as a production ornament with its fixed product identity and bow dimension', () => {
+  const record = createRecord({
+    payload: {
+      items: [createItem({
+        product_definition_id: 'large_tree_frame',
+        product_display_name: '',
+        configuration_snapshot: {
+          size: '',
+          treeColor: '',
+          bowColor: 'White',
+          yearMode: 'No Year',
+          year: ''
+        },
+        structured_attributes: {
+          product_definition_id: 'large_tree_frame',
+          category: 'ornament',
+          ornament_type: 'large_tree_frame',
+          size: null,
+          tree_color: null,
+          bow_color: 'White',
+          year: null
+        }
+      })]
+    }
+  });
+
+  const attributes = queueHelpers.normalizeProductionItemAttributes(record, record.payload.items[0]);
+
+  assert.equal(attributes.productDefinitionId, 'large_tree_frame');
+  assert.equal(attributes.productDisplayName, 'Large Tree Frame');
+  assert.equal(attributes.ornamentTypeLabel, 'Large Tree Frame');
+  assert.equal(attributes.bowColor, 'white');
+  assert.equal(attributes.year, '');
+});
+
 function createReadyRecord(overrides = {}) {
   return createRecord({
     forge_order_uuid: 'order-ready-1',

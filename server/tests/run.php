@@ -5259,6 +5259,10 @@ $runner->run('submitted corrections preserve identity, line IDs, pricing and pro
     $payload['items'][0]['configuration_snapshot']['entries'] = [
         ['kind' => 'person', 'name' => 'Kyle'], ['kind' => 'pet', 'name' => 'Scout', 'icon' => 'Paw'],
     ];
+    $payload['items'][0]['configuration_snapshot']['bottomTextLine1'] = 'Original Line One';
+    $payload['items'][0]['configuration_snapshot']['bottomTextLine2'] = 'Original Line Two';
+    $payload['items'][0]['structured_attributes']['bottom_text_line_1'] = 'Original Line One';
+    $payload['items'][0]['structured_attributes']['bottom_text_line_2'] = 'Original Line Two';
     seedStaffOrderRepositoryTestOrder($pdo, ['payload' => $payload]);
     $before = $pdo->query('SELECT * FROM forge_orders')->fetch();
     $states = $pdo->query('SELECT * FROM forge_order_item_production')->fetchAll();
@@ -5270,7 +5274,12 @@ $runner->run('submitted corrections preserve identity, line IDs, pricing and pro
             'line_id' => $payload['items'][0]['line_id'],
             'customer_note' => 'Please use the corrected spelling.',
             'personalization_names' => ['Mary Ann', 'Buddy'],
-            'personalization_fields' => ['family_name' => 'Smith', 'year' => '2027'],
+            'personalization_fields' => [
+                'family_name' => 'Smith',
+                'year' => '2027',
+                'bottom_text_line_1' => 'Nana',
+                'bottom_text_line_2' => 'Grandkids and More',
+            ],
         ]],
     ]);
     $after = $pdo->query('SELECT * FROM forge_orders')->fetch();
@@ -5294,6 +5303,10 @@ $runner->run('submitted corrections preserve identity, line IDs, pricing and pro
     assertSame('Smith', $edited['items'][0]['structured_attributes']['family_name']);
     assertSame('2027', $edited['items'][0]['configuration_snapshot']['year']);
     assertSame(2027, $edited['items'][0]['structured_attributes']['year']);
+    assertSame('Nana', $edited['items'][0]['configuration_snapshot']['bottomTextLine1']);
+    assertSame('Grandkids and More', $edited['items'][0]['configuration_snapshot']['bottomTextLine2']);
+    assertSame('Nana', $edited['items'][0]['structured_attributes']['bottom_text_line_1']);
+    assertSame('Grandkids and More', $edited['items'][0]['structured_attributes']['bottom_text_line_2']);
     assertSame('Buddy', $edited['items'][0]['personalization_order'][1]['name']);
     assertSame('Buddy', $edited['items'][0]['configuration_snapshot']['entries'][1]['name']);
     assertSame('paw', $edited['items'][0]['personalization_order'][1]['icon']);
@@ -5305,6 +5318,52 @@ $runner->run('submitted corrections preserve identity, line IDs, pricing and pro
     });
     assertSame($after, $pdo->query('SELECT * FROM forge_orders')->fetch());
     assertSame(false, $pdo->inTransaction());
+});
+
+$runner->run('Large Tree Frame submitted corrections preserve one blank bottom line and reject both blank', static function (): void {
+    $uuid = '123e4567-e89b-42d3-a456-426614174590';
+    $payload = createValidPayload(['forge_order_uuid' => $uuid]);
+    $lineId = $payload['items'][0]['line_id'];
+    $payload['items'][0]['product_definition_id'] = 'large_tree_frame';
+    $payload['items'][0]['configuration_snapshot']['bottomTextLine1'] = 'Grandma & Grandpa';
+    $payload['items'][0]['configuration_snapshot']['bottomTextLine2'] = 'Our Family';
+    $payload['items'][0]['structured_attributes']['bottom_text_line_1'] = 'Grandma & Grandpa';
+    $payload['items'][0]['structured_attributes']['bottom_text_line_2'] = 'Our Family';
+
+    $lineOneBlank = \Forge\Server\applySubmittedOrderCorrections($payload, $uuid, ['items' => [[
+        'line_id' => $lineId,
+        'personalization_fields' => [
+            'bottom_text_line_1' => '',
+            'bottom_text_line_2' => 'Our Family',
+        ],
+    ]]]);
+    assertSame('', $lineOneBlank['items'][0]['configuration_snapshot']['bottomTextLine1']);
+    assertSame('', $lineOneBlank['items'][0]['structured_attributes']['bottom_text_line_1']);
+    assertSame('Our Family', $lineOneBlank['items'][0]['configuration_snapshot']['bottomTextLine2']);
+
+    $lineTwoBlank = \Forge\Server\applySubmittedOrderCorrections($payload, $uuid, ['items' => [[
+        'line_id' => $lineId,
+        'personalization_fields' => [
+            'bottom_text_line_1' => 'Grandma & Grandpa',
+            'bottom_text_line_2' => '',
+        ],
+    ]]]);
+    assertSame('', $lineTwoBlank['items'][0]['configuration_snapshot']['bottomTextLine2']);
+    assertSame('', $lineTwoBlank['items'][0]['structured_attributes']['bottom_text_line_2']);
+    assertSame('Grandma & Grandpa', $lineTwoBlank['items'][0]['configuration_snapshot']['bottomTextLine1']);
+
+    assertThrows(static function () use ($lineOneBlank, $uuid, $lineId): void {
+        \Forge\Server\applySubmittedOrderCorrections($lineOneBlank, $uuid, ['items' => [[
+            'line_id' => $lineId,
+            'personalization_fields' => [
+                'bottom_text_line_1' => '',
+                'bottom_text_line_2' => '',
+            ],
+        ]]]);
+    }, static function ($error): void {
+        assertTrue($error instanceof \InvalidArgumentException);
+        assertSame('Enter text for at least one bottom line.', $error->getMessage());
+    });
 });
 
 $runner->run('submitted corrections accept the null production status used by real submissions', static function (): void {

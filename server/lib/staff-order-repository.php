@@ -3080,6 +3080,8 @@ function submittedOrnamentFieldAliases(): array
         'family_name' => ['family_name', 'familyName', 'last_name', 'lastName', 'baby_name', 'babyName', 'name'],
         'year' => ['year', 'wedding_year', 'weddingYear', 'established_year', 'establishedYear'],
         'edge_text' => ['edge_text', 'edgeText'],
+        'bottom_text_line_1' => ['bottom_text_line_1', 'bottomTextLine1'],
+        'bottom_text_line_2' => ['bottom_text_line_2', 'bottomTextLine2'],
     ];
 }
 
@@ -3195,7 +3197,9 @@ function applySubmittedOrderCorrections(array $payload, string $orderUuid, array
                 $aliases = submittedOrnamentFieldAliases();
                 assertSubmittedEditKeys($fields, array_keys($aliases));
                 foreach ($fields as $key => $value) {
-                    $value = submittedEditText($value, 'Ornament ' . $key, $key === 'year' ? 4 : 200, true);
+                    $bottomTextField = ($item['product_definition_id'] ?? '') === 'large_tree_frame'
+                        && in_array($key, ['bottom_text_line_1', 'bottom_text_line_2'], true);
+                    $value = submittedEditText($value, 'Ornament ' . $key, $key === 'year' ? 4 : 200, !$bottomTextField);
                     if ($key === 'year' && !preg_match('/^\d{4}$/', $value)) {
                         throw new \InvalidArgumentException('Year must contain four digits.');
                     }
@@ -3210,6 +3214,20 @@ function applySubmittedOrderCorrections(array $payload, string $orderUuid, array
                         throw new \InvalidArgumentException('Only existing ornament personalization fields can be corrected.');
                     }
                     $item['structured_attributes'][$key] = $key === 'year' ? (int) $value : $value;
+                }
+                if (($item['product_definition_id'] ?? '') === 'large_tree_frame'
+                    && (array_key_exists('bottom_text_line_1', $fields) || array_key_exists('bottom_text_line_2', $fields))) {
+                    $line1 = $item['structured_attributes']['bottom_text_line_1']
+                        ?? $item['configuration_snapshot']['bottomTextLine1']
+                        ?? $item['configuration_snapshot']['bottom_text_line_1']
+                        ?? '';
+                    $line2 = $item['structured_attributes']['bottom_text_line_2']
+                        ?? $item['configuration_snapshot']['bottomTextLine2']
+                        ?? $item['configuration_snapshot']['bottom_text_line_2']
+                        ?? '';
+                    if (trim((string) $line1) === '' && trim((string) $line2) === '') {
+                        throw new \InvalidArgumentException('Enter text for at least one bottom line.');
+                    }
                 }
             }
             unset($item);

@@ -1,5 +1,5 @@
-const BUILD_VERSION = '20260903-54';
-const CACHE_NAME = 'forge-starter-v54';
+const BUILD_VERSION = '20260925-55';
+const CACHE_NAME = 'forge-starter-v55';
 const FORGE_CACHE_PREFIX = 'forge-starter-v';
 const PRECACHE_ASSETS = [
   './',
@@ -42,6 +42,7 @@ const PRECACHE_ASSETS = [
   '/assets/products/reindeer-initial-ornament.jpeg',
   '/assets/products/present-stack-ornament.jpeg',
   '/assets/products/grinch-family-tree.jpg',
+  '/assets/products/large-tree-frame.jpg',
   '/assets/products/veteran-flag-ornament.jpg'
 ];
 

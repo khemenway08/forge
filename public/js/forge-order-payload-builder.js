@@ -178,7 +178,18 @@
 
   function buildDerivedConfigurationSnapshot(item) {
     const derived = {};
-    const scalarFields = ['size', 'treeColor', 'bowColor', 'familyName', 'year', 'personalizationMode', 'edgeText'];
+    const scalarFields = [
+      'size',
+      'treeColor',
+      'bowColor',
+      'familyName',
+      'bottomTextLine1',
+      'bottomTextLine2',
+      'yearMode',
+      'year',
+      'personalizationMode',
+      'edgeText'
+    ];
     scalarFields.forEach((key) => {
       if (item[key] !== undefined && item[key] !== null && item[key] !== '') {
         derived[key] = item[key];
@@ -398,6 +409,21 @@
     ]);
     const peopleCount = personalizationOrder.filter((entry) => entry.type === 'person').length;
     const petCount = personalizationOrder.filter((entry) => entry.type === 'pet').length;
+    const bottomTextLine1 = firstNonEmpty([
+      configurationSnapshot.bottom_text_line_1,
+      configurationSnapshot.bottomTextLine1,
+      item.bottomTextLine1
+    ]);
+    const bottomTextLine2 = firstNonEmpty([
+      configurationSnapshot.bottom_text_line_2,
+      configurationSnapshot.bottomTextLine2,
+      item.bottomTextLine2
+    ]);
+    const yearMode = firstNonEmpty([
+      configurationSnapshot.year_mode,
+      configurationSnapshot.yearMode,
+      item.yearMode
+    ]);
 
     return {
       product_definition_id: definitionId,
@@ -407,6 +433,11 @@
       tree_color: asNullableTrimmedString(firstNonEmpty([configurationSnapshot.tree_color, configurationSnapshot.treeColor, item.treeColor])),
       bow_color: asNullableTrimmedString(bowColor),
       family_name: asNullableTrimmedString(familyName),
+      ...(definitionId === 'large_tree_frame' ? {
+        bottom_text_line_1: asNullableTrimmedString(bottomTextLine1),
+        bottom_text_line_2: asNullableTrimmedString(bottomTextLine2),
+        year_mode: asNullableTrimmedString(yearMode)
+      } : {}),
       year: normalizeStructuredYear(yearValue),
       icon: asNullableTrimmedString(icon),
       pet_count: petCount,

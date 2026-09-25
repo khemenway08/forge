@@ -54,6 +54,13 @@ const activeProducts = [
     fixedPrice: 30
   },
   {
+    label: 'Large Tree Frame',
+    uiId: 'large_tree_frame',
+    canonicalId: 'large_tree_frame',
+    pricingMode: 'fixed',
+    fixedPrice: 45
+  },
+  {
     label: 'Veteran Flag Ornament',
     uiId: 'veteran_flag',
     canonicalId: 'veteran_flag',

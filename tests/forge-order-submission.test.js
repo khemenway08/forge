@@ -152,6 +152,60 @@ test('successful submission saves one immutable local record with a normalized p
   assert.deepEqual(savedRecord.payload.items[0].personalization_order.map((entry) => entry.name), ['Kyle', 'Scout']);
 });
 
+test('Large Tree Frame submission preserves ordered names, bottom text, bow color, and No Year production instruction', async () => {
+  const { service, orderStore } = createService();
+  const orderedEntries = Array.from({ length: 24 }, (_, index) => ({
+    position: index + 1,
+    kind: 'person',
+    name: `Family ${index + 1}`
+  }));
+  const frame = createItem({
+    itemId: 'large-tree-frame-line',
+    productDefinitionId: 'large_tree_frame',
+    imagePath: '/assets/products/large-tree-frame.jpg',
+    displayName: 'Large Tree Frame',
+    unitPrice: 45,
+    size: '',
+    treeColor: '',
+    bowColor: 'White',
+    familyName: '',
+    bottomTextLine1: 'Nana',
+    bottomTextLine2: '',
+    yearMode: 'No Year',
+    year: '',
+    orderedEntries,
+    peopleCount: orderedEntries.length,
+    petCount: 0,
+    configurationSnapshot: {
+      bowColor: 'White',
+      bottomTextLine1: 'Nana',
+      bottomTextLine2: '',
+      yearMode: 'No Year',
+      entries: orderedEntries
+    }
+  });
+
+  const result = await service.submitOrder({
+    activeOrderSessionId: 'order-session-123',
+    orderState: createOrderState([frame])
+  });
+  const saved = await orderStore.getOrder('submission-uuid-1');
+  const line = saved.payload.items[0];
+
+  assert.equal(result.ok, true);
+  assert.equal(line.product_definition_id, 'large_tree_frame');
+  assert.equal(line.pricing.line_total_cents, 4500);
+  assert.equal(line.personalization_order.length, 24);
+  assert.deepEqual(line.personalization_order.map((entry) => entry.name), orderedEntries.map((entry) => entry.name));
+  assert.equal(line.configuration_snapshot.bottomTextLine1, 'Nana');
+  assert.equal(line.configuration_snapshot.bottomTextLine2, '');
+  assert.equal(line.structured_attributes.bottom_text_line_2, null);
+  assert.equal(line.configuration_snapshot.yearMode, 'No Year');
+  assert.equal(line.structured_attributes.year_mode, 'No Year');
+  assert.equal(line.structured_attributes.year, null);
+  assert.equal(line.structured_attributes.bow_color, 'White');
+});
+
 test('successful submission preserves external payment metadata only after staff confirmation', async () => {
   const { service, orderStore } = createService();
   const result = await service.submitOrder({

@@ -7,7 +7,7 @@ const vm = require('vm');
 const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'), 'utf8');
 const cssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
-const BUILD_VERSION = '20260903-54';
+const BUILD_VERSION = '20260925-55';
 
 function extractScreenMarkup(screenId) {
   const match = indexSource.match(new RegExp(`<section class="screen[\\s\\S]*?data-screen="${screenId}"[\\s\\S]*?<\\/section>`));
@@ -1742,6 +1742,51 @@ test('tree customization shows a shared name field with adjacent Add and Add Pet
   assert.doesNotMatch(treeMarkup, /Enter pet name/);
   assert.doesNotMatch(treeMarkup, /Done Adding Names/);
   assert.doesNotMatch(treeMarkup, />Save<\/button>/);
+});
+
+test('Large Tree Frame puts names last in its personalization field order without changing the shared default order', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+  const largeTreeFrameOrder = JSON.parse(vm.runInContext(
+    `JSON.stringify(getCustomizationFieldOrder('large_tree_frame'))`,
+    context
+  ));
+  const defaultOrder = JSON.parse(vm.runInContext(
+    `JSON.stringify(getCustomizationFieldOrder('tree_ornament'))`,
+    context
+  ));
+
+  assert.deepEqual(largeTreeFrameOrder.slice(-6), [
+    'bowColor',
+    'yearMode',
+    'year',
+    'bottomTextLine1',
+    'bottomTextLine2',
+    'entries'
+  ]);
+  assert.deepEqual(defaultOrder.slice(-3), ['entries', 'yearMode', 'year']);
+  assert.match(vm.runInContext(`getReviewOrderedEntriesMarkup([{ kind: 'person', name: 'Avery' }], 'large_tree_frame')`, context), />Names</);
+  assert.match(vm.runInContext(`getReviewOrderedEntriesMarkup([{ kind: 'person', name: 'Avery' }], 'tree_ornament')`, context), />People &amp; Pets</);
+});
+
+test('Large Tree Frame accepts either bottom text line but rejects both blank', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+  const issuesFor = (line1, line2) => JSON.parse(vm.runInContext(`JSON.stringify(getOrnamentOrderItemValidationIssues({
+    productDefinitionId: 'large_tree_frame',
+    unitPrice: 45,
+    bowColor: 'Red',
+    bottomTextLine1: ${JSON.stringify(line1)},
+    bottomTextLine2: ${JSON.stringify(line2)},
+    yearMode: 'No Year',
+    year: '',
+    orderedEntries: [{ kind: 'person', name: 'Avery' }],
+    configurationSnapshot: {}
+  }))`, context));
+
+  assert.equal(issuesFor('Grandma & Grandpa', '').includes('Enter text for at least one bottom line.'), false);
+  assert.equal(issuesFor('', 'Our Family').includes('Enter text for at least one bottom line.'), false);
+  assert.equal(issuesFor('Grandma & Grandpa', 'Our Family').includes('Enter text for at least one bottom line.'), false);
+  assert.equal(issuesFor('', '').filter((issue) => issue === 'Enter text for at least one bottom line.').length, 1);
+  assert.match(appSource, /setFieldError\('bottomTextLine1', 'Enter text for at least one bottom line\.'\)/);
 });
 
 test('persistent shared name entry does not introduce JavaScript capitalization rewriting', () => {

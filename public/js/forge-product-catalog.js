@@ -106,6 +106,13 @@
       pricingMode: 'fixed',
       regularUnitPriceCents: 3000
     },
+    large_tree_frame: {
+      definitionId: 'large_tree_frame',
+      displayName: 'Large Tree Frame',
+      category: 'ornament',
+      pricingMode: 'fixed',
+      regularUnitPriceCents: 4500
+    },
     veteran_flag: {
       definitionId: 'veteran_flag',
       displayName: 'Veteran Flag Ornament',

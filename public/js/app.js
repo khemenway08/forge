@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260903-54';
+const FORGE_BUILD_VERSION = '20260925-55';
 const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
@@ -32,8 +32,12 @@ const bowColorGroup = document.querySelector('[data-product-field-group="bowColo
 const personalizationModeGroup = document.querySelector('[data-product-field-group="personalizationMode"]');
 const edgeTextGroup = document.querySelector('[data-product-field-group="edgeText"]');
 const familyNameGroup = document.querySelector('[data-product-field-group="familyName"]');
+const bottomTextLine1Group = document.querySelector('[data-product-field-group="bottomTextLine1"]');
+const bottomTextLine2Group = document.querySelector('[data-product-field-group="bottomTextLine2"]');
 const entriesGroup = document.querySelector('[data-product-field-group="entries"]');
 const yearGroup = document.querySelector('[data-product-field-group="year"]');
+const yearModeGroup = document.querySelector('[data-product-field-group="yearMode"]');
+const customizationDiscardPanel = document.querySelector('[data-discard-panel="tree-customization"]');
 const familyNameLabel = document.querySelector('[data-field-label="familyName"]');
 const familyNameInput = document.querySelector('[name="familyName"]');
 const yearLabel = document.querySelector('label[for="ornament-year"]');
@@ -332,6 +336,25 @@ const ornamentProductConfigs = {
     customizationCopy: 'Choose personalization details before continuing.',
     updateNote: 'Grinch Tree Ornament updated.'
   },
+  large_tree_frame: {
+    displayName: 'Large Tree Frame',
+    galleryProductKey: 'large-tree-frame',
+    requiresSize: false,
+    sizeLimits: {},
+    preSizeLimit: 250,
+    requiresTreeColor: false,
+    requiresBowColor: true,
+    requiresFamilyName: false,
+    requiresEntries: true,
+    minimumEntryCount: 1,
+    allowsPets: false,
+    requiresBottomTextLines: true,
+    optionalYear: true,
+    customizationTitle: 'Customize your frame',
+    itemTypeLabel: 'frame',
+    customizationCopy: 'Choose a bow color and year option, enter at least one bottom text line, then add names in engraving order.',
+    updateNote: 'Large Tree Frame updated.'
+  },
   babys_first_christmas: {
     displayName: "Baby's First Christmas",
     galleryProductKey: 'baby',
@@ -405,6 +428,7 @@ const galleryProductDefinitionMap = {
   antler: 'antler_ornament',
   'present-stack': 'present_stack',
   grinch: 'grinch_tree',
+  'large-tree-frame': 'large_tree_frame',
   baby: 'babys_first_christmas',
   'mr-and-mrs': 'mr_and_mrs_first_christmas',
   reindeer: 'reindeer',
@@ -418,6 +442,9 @@ const treeFields = {
   familyName: document.querySelector('[name="familyName"]'),
   personalizationMode: document.querySelector('[name="personalizationMode"]'),
   edgeText: document.querySelector('[name="edgeText"]'),
+  bottomTextLine1: document.querySelector('[name="bottomTextLine1"]'),
+  bottomTextLine2: document.querySelector('[name="bottomTextLine2"]'),
+  yearMode: document.querySelector('[name="yearMode"]'),
   year: document.querySelector('[name="year"]')
 };
 
@@ -441,6 +468,7 @@ const allowedValues = {
   treeColor: ['Green', 'Brown'],
   bowColor: ['Red', 'White'],
   personalizationMode: ['As Shown', 'Change Edge Text'],
+  yearMode: ['Include Year', 'No Year'],
   preferredContact: ['Text', 'Email'],
   fulfillmentMethod: ['Shipping', 'Local Pickup']
 };
@@ -536,6 +564,25 @@ const productReviewConfig = {
       year: 'Year'
     }
   },
+  large_tree_frame: {
+    galleryImage: {
+      src: '/assets/products/large-tree-frame.jpg',
+      alt: 'Large Tree Frame',
+      width: 1536,
+      height: 2048
+    },
+    image: '/assets/products/large-tree-frame.jpg',
+    imageAlt: 'Large Tree Frame',
+    imageWidth: 1536,
+    imageHeight: 2048,
+    fieldLabels: {
+      bowColor: 'Bow Color',
+      bottomTextLine1: 'Bottom Text Line 1',
+      bottomTextLine2: 'Bottom Text Line 2',
+      yearMode: 'Year on Star',
+      year: 'Year on Star'
+    }
+  },
   babys_first_christmas: {
     galleryImage: {
       src: '/assets/products/babys-first-christmas-pink.jpeg',
@@ -623,6 +670,9 @@ const draft = {
   familyName: '',
   personalizationMode: '',
   edgeText: '',
+  bottomTextLine1: '',
+  bottomTextLine2: '',
+  yearMode: '',
   year: '2026',
   entries: []
 };
@@ -634,6 +684,9 @@ function getCurrentCalendarYear() {
 function getDefaultYearValue(productDefinitionId = draft.productDefinitionId) {
   const config = getProductConfig(productDefinitionId);
   if (config.requiresYear === false) {
+    return '';
+  }
+  if (config.optionalYear) {
     return '';
   }
   if (config.yearDefaultMode === 'current') {
@@ -1788,6 +1841,7 @@ async function handleCustomerStartOrder() {
 
 function renderCustomizationScreenContent() {
   const config = getProductConfig();
+  arrangeCustomizationFieldGroups(draft.productDefinitionId);
   const showSize = config.requiresSize;
   const showTreeColor = config.requiresTreeColor;
   const showBowColor = config.requiresBowColor;
@@ -1796,13 +1850,16 @@ function renderCustomizationScreenContent() {
   const showEdgeText = showPersonalizationMode && currentPersonalizationMode === 'Change Edge Text';
   const showFamilyName = config.requiresFamilyName !== false;
   const showEntries = Boolean(config.requiresEntries || config.minimumEntryCount > 0 || config.preSizeLimit > 0);
-  const showYear = config.requiresYear !== false;
+  const showBottomTextLines = Boolean(config.requiresBottomTextLines);
+  const showYearMode = Boolean(config.optionalYear);
+  const currentYearMode = treeFields.yearMode?.value || draft.yearMode;
+  const showYear = config.requiresYear !== false && (!showYearMode || currentYearMode === 'Include Year');
 
   if (customizationEyebrow) {
     customizationEyebrow.textContent = config.displayName;
   }
   if (customizationTitle) {
-    customizationTitle.textContent = 'Customize your ornament';
+    customizationTitle.textContent = config.customizationTitle || 'Customize your ornament';
   }
   if (customizationCopy) {
     customizationCopy.textContent = config.customizationCopy;
@@ -1814,7 +1871,7 @@ function renderCustomizationScreenContent() {
     reviewTitle.textContent = 'Review this item';
   }
   if (reviewCopy) {
-    reviewCopy.textContent = 'Double-check the ornament details before adding it to the order.';
+    reviewCopy.textContent = `Double-check the ${config.itemTypeLabel || 'ornament'} details before adding it to the order.`;
   }
 
   if (sizeGroup) {
@@ -1838,6 +1895,12 @@ function renderCustomizationScreenContent() {
   if (familyNameGroup) {
     familyNameGroup.hidden = !showFamilyName;
   }
+  if (bottomTextLine1Group) {
+    bottomTextLine1Group.hidden = !showBottomTextLines;
+  }
+  if (bottomTextLine2Group) {
+    bottomTextLine2Group.hidden = !showBottomTextLines;
+  }
   if (familyNameLabel) {
     familyNameLabel.textContent = config.familyFieldLabel || 'Family Name or Message';
   }
@@ -1855,10 +1918,85 @@ function renderCustomizationScreenContent() {
     });
   if (entriesGroup) {
     entriesGroup.hidden = !showEntries;
+    const sectionLabel = entriesGroup.querySelector('.section-label');
+    const sectionCopy = entriesGroup.querySelector('.section-copy');
+    const addPetControl = entriesGroup.querySelector('[data-action="add-pet"]');
+    if (sectionLabel) {
+      sectionLabel.textContent = config.allowsPets === false ? 'Names' : 'People and Pets';
+    }
+    if (sectionCopy) {
+      sectionCopy.textContent = config.allowsPets === false
+        ? 'Add each name in the exact engraving order.'
+        : 'Add each person or pet in the exact engraving order.';
+    }
+    if (addPetControl) {
+      addPetControl.hidden = config.allowsPets === false;
+    }
+  }
+  if (yearModeGroup) {
+    yearModeGroup.hidden = !showYearMode;
   }
   if (yearGroup) {
     yearGroup.hidden = !showYear;
   }
+}
+
+function getCustomizationFieldOrder(productDefinitionId) {
+  if (resolveConfiguredProductDefinitionId(productDefinitionId) === 'large_tree_frame') {
+    return [
+      'size',
+      'treeColor',
+      'personalizationMode',
+      'edgeText',
+      'familyName',
+      'bowColor',
+      'yearMode',
+      'year',
+      'bottomTextLine1',
+      'bottomTextLine2',
+      'entries'
+    ];
+  }
+
+  return [
+    'size',
+    'treeColor',
+    'bowColor',
+    'personalizationMode',
+    'edgeText',
+    'familyName',
+    'bottomTextLine1',
+    'bottomTextLine2',
+    'entries',
+    'yearMode',
+    'year'
+  ];
+}
+
+function arrangeCustomizationFieldGroups(productDefinitionId) {
+  if (!treeForm || !customizationDiscardPanel || typeof treeForm.insertBefore !== 'function') {
+    return;
+  }
+
+  const groups = {
+    size: sizeGroup,
+    treeColor: treeColorGroup,
+    bowColor: bowColorGroup,
+    personalizationMode: personalizationModeGroup,
+    edgeText: edgeTextGroup,
+    familyName: familyNameGroup,
+    bottomTextLine1: bottomTextLine1Group,
+    bottomTextLine2: bottomTextLine2Group,
+    entries: entriesGroup,
+    yearMode: yearModeGroup,
+    year: yearGroup
+  };
+
+  getCustomizationFieldOrder(productDefinitionId).forEach((field) => {
+    if (groups[field]) {
+      treeForm.insertBefore(groups[field], customizationDiscardPanel);
+    }
+  });
 }
 
 function resetDraftState(productDefinitionId = 'tree_ornament') {
@@ -1869,6 +2007,9 @@ function resetDraftState(productDefinitionId = 'tree_ornament') {
   draft.familyName = '';
   draft.personalizationMode = '';
   draft.edgeText = '';
+  draft.bottomTextLine1 = '';
+  draft.bottomTextLine2 = '';
+  draft.yearMode = '';
   draft.year = getDefaultYearValue(draft.productDefinitionId);
   draft.entries = [];
   appState.editingItemId = '';
@@ -1972,7 +2113,7 @@ function setFieldError(name, message) {
 }
 
 function renderOptionChoiceButtons() {
-  ['size', 'treeColor', 'bowColor', 'personalizationMode'].forEach((fieldName) => {
+  ['size', 'treeColor', 'bowColor', 'personalizationMode', 'yearMode'].forEach((fieldName) => {
     const selectedValue = treeFields[fieldName]?.value || '';
     const buttons = optionChoiceButtons.filter((button) => button.dataset.choiceField === fieldName);
     const activeButton = buttons.find((button) => button.dataset.choiceValue === selectedValue);
@@ -2002,6 +2143,14 @@ function setOptionChoiceValue(fieldName, value, focusButton = false) {
       treeFields.edgeText.value = '';
       draft.edgeText = '';
     }
+  } else if (fieldName === 'yearMode') {
+    if (value === 'Include Year' && !treeFields.year.value) {
+      treeFields.year.value = getCurrentCalendarYear();
+      draft.year = treeFields.year.value;
+    } else if (value === 'No Year') {
+      treeFields.year.value = '';
+      draft.year = '';
+    }
   }
   treeStatus.textContent = '';
   saveDraft();
@@ -2010,7 +2159,7 @@ function setOptionChoiceValue(fieldName, value, focusButton = false) {
     renderCapacityMessage();
     renderTreeCustomizationImage();
   }
-  if (fieldName === 'personalizationMode') {
+  if (fieldName === 'personalizationMode' || fieldName === 'yearMode') {
     renderCustomizationScreenContent();
   }
 
@@ -2124,7 +2273,12 @@ function syncDraftFromFields() {
   draft.edgeText = config.requiresPersonalizationMode && draft.personalizationMode === 'Change Edge Text'
     ? treeFields.edgeText.value
     : '';
-  draft.year = config.requiresYear === false ? '' : treeFields.year.value.trim();
+  draft.bottomTextLine1 = config.requiresBottomTextLines ? treeFields.bottomTextLine1.value : '';
+  draft.bottomTextLine2 = config.requiresBottomTextLines ? treeFields.bottomTextLine2.value : '';
+  draft.yearMode = config.optionalYear ? treeFields.yearMode.value : '';
+  draft.year = config.requiresYear === false || (config.optionalYear && draft.yearMode !== 'Include Year')
+    ? ''
+    : treeFields.year.value.trim();
 }
 
 function hydrateFormFromDraft() {
@@ -2135,6 +2289,9 @@ function hydrateFormFromDraft() {
   treeFields.familyName.value = draft.familyName;
   treeFields.personalizationMode.value = draft.personalizationMode;
   treeFields.edgeText.value = draft.edgeText;
+  treeFields.bottomTextLine1.value = draft.bottomTextLine1;
+  treeFields.bottomTextLine2.value = draft.bottomTextLine2;
+  treeFields.yearMode.value = draft.yearMode;
   treeFields.year.value = draft.year || getDefaultYearValue();
   renderOptionChoiceButtons();
   renderCustomizationScreenContent();
@@ -2233,12 +2390,18 @@ function loadDraft() {
     draft.familyName = typeof parsed.familyName === 'string' ? parsed.familyName : '';
     draft.personalizationMode = allowedValues.personalizationMode.includes(parsed.personalizationMode) ? parsed.personalizationMode : '';
     draft.edgeText = typeof parsed.edgeText === 'string' ? parsed.edgeText : '';
+    draft.bottomTextLine1 = typeof parsed.bottomTextLine1 === 'string' ? parsed.bottomTextLine1 : '';
+    draft.bottomTextLine2 = typeof parsed.bottomTextLine2 === 'string' ? parsed.bottomTextLine2 : '';
+    draft.yearMode = allowedValues.yearMode.includes(parsed.yearMode) ? parsed.yearMode : '';
     draft.year = typeof parsed.year === 'string' && parsed.year ? parsed.year : getDefaultYearValue(draft.productDefinitionId);
     draft.entries = Array.isArray(parsed.entries) ? parsed.entries.map(normalizeEntry).filter(Boolean) : [];
   } catch {
     draft.productDefinitionId = 'tree_ornament';
     draft.personalizationMode = '';
     draft.edgeText = '';
+    draft.bottomTextLine1 = '';
+    draft.bottomTextLine2 = '';
+    draft.yearMode = '';
     draft.year = getDefaultYearValue('tree_ornament');
     draft.entries = [];
   }
@@ -3123,6 +3286,9 @@ function resetActiveOrderSession({ clearCart = true, goToWelcome = true } = {}) 
   draft.familyName = '';
   draft.personalizationMode = '';
   draft.edgeText = '';
+  draft.bottomTextLine1 = '';
+  draft.bottomTextLine2 = '';
+  draft.yearMode = '';
   draft.year = getDefaultYearValue('tree_ornament');
   draft.entries = [];
   localStorage.removeItem(storageKey);
@@ -3300,14 +3466,15 @@ function normalizeEntry(entry) {
 function renderCapacityMessage() {
   const config = getProductConfig();
   const { size, limit, count, reachedLimit, overLimit } = getCapacityDetails();
+  const entryNoun = config.allowsPets === false ? 'names' : 'combined people and pets';
 
   if (!config.requiresSize) {
     if (overLimit) {
-      capacityMessage.textContent = `${config.displayName} supports up to ${limit} combined people and pets. Remove ${count - limit} entr${count - limit === 1 ? 'y' : 'ies'} before continuing.`;
+      capacityMessage.textContent = `${config.displayName} supports up to ${limit} ${entryNoun}. Remove ${count - limit} entr${count - limit === 1 ? 'y' : 'ies'} before continuing.`;
     } else if (reachedLimit) {
-      capacityMessage.textContent = `${config.displayName} is full at ${limit} combined people and pets. Remove one to add another.`;
+      capacityMessage.textContent = `${config.displayName} is full at ${limit} ${entryNoun}. Remove one to add another.`;
     } else {
-      capacityMessage.textContent = `${config.displayName} allows up to ${limit} combined people and pets. ${limit - count} slot${limit - count === 1 ? '' : 's'} remaining.`;
+      capacityMessage.textContent = `${config.displayName} allows up to ${limit} ${entryNoun}. ${limit - count} slot${limit - count === 1 ? '' : 's'} remaining.`;
     }
   } else if (!size) {
     capacityMessage.textContent = `Choose a size to lock the limit. Up to ${config.preSizeLimit} combined people and pets can be drafted before size is selected.`;
@@ -3530,6 +3697,9 @@ function formatFieldLabel(key, item) {
     establishedYear: 'Established Year',
     treeColor: 'Tree Color',
     bowColor: 'Bow Color',
+    bottomTextLine1: 'Bottom Text Line 1',
+    bottomTextLine2: 'Bottom Text Line 2',
+    yearMode: 'Year on Star',
     edgeText: 'Edge Text',
     personalizationMode: 'Personalization',
     neededBy: 'Needed By',
@@ -3915,15 +4085,16 @@ function getOrderedItemFields(item) {
     });
 }
 
-function getReviewOrderedEntriesMarkup(entries) {
+function getReviewOrderedEntriesMarkup(entries, productDefinitionId = '') {
   if (!Array.isArray(entries) || entries.length === 0) {
     return '';
   }
 
+  const entriesLabel = productDefinitionId === 'large_tree_frame' ? 'Names' : 'People &amp; Pets';
   return `
     <div class="review-list-card">
       <h4>Engraving Order</h4>
-      <p class="review-list-subtitle">People &amp; Pets</p>
+      <p class="review-list-subtitle">${entriesLabel}</p>
       <ol class="review-entry-list">
         ${entries.map((entry, index) => {
           const detailParts = [];
@@ -4045,7 +4216,7 @@ function getDetailedItemMarkup(item, options = {}) {
               </div>
             ` : ''}
 
-            ${getReviewOrderedEntriesMarkup(item.orderedEntries)}
+            ${getReviewOrderedEntriesMarkup(item.orderedEntries, item.productDefinitionId)}
           </div>
 
           ${statusMarkup}
@@ -4150,11 +4321,25 @@ function getOrnamentOrderItemValidationIssues(item) {
   if (config.requiresPersonalizationMode && item.personalizationMode === 'Change Edge Text' && !sanitizeText(item.edgeText || '')) {
     issues.push('Enter the edge text.');
   }
-  if (config.requiresYear !== false && !sanitizeText(item.year || '')) {
+  const bottomTextLine1 = sanitizeText(item.bottomTextLine1 || item.configurationSnapshot?.bottomTextLine1 || '');
+  const bottomTextLine2 = sanitizeText(item.bottomTextLine2 || item.configurationSnapshot?.bottomTextLine2 || '');
+  if (config.requiresBottomTextLines) {
+    if (item.productDefinitionId === 'large_tree_frame' && !bottomTextLine1 && !bottomTextLine2) {
+      issues.push('Enter text for at least one bottom line.');
+    } else if (item.productDefinitionId !== 'large_tree_frame') {
+      if (!bottomTextLine1) issues.push('Enter bottom text line 1.');
+      if (!bottomTextLine2) issues.push('Enter bottom text line 2.');
+    }
+  }
+  if (config.optionalYear && !allowedValues.yearMode.includes(item.yearMode || item.configurationSnapshot?.yearMode)) {
+    issues.push('Choose whether to include a year.');
+  }
+  const itemIncludesYear = !config.optionalYear || (item.yearMode || item.configurationSnapshot?.yearMode) === 'Include Year';
+  if (config.requiresYear !== false && itemIncludesYear && !sanitizeText(item.year || '')) {
     issues.push(item.productDefinitionId === 'mr_and_mrs_first_christmas'
       ? 'Enter the year.'
       : 'Enter a valid year.');
-  } else if (config.requiresYear !== false && !/^\d{4}$/.test(item.year || '')) {
+  } else if (config.requiresYear !== false && itemIncludesYear && !/^\d{4}$/.test(item.year || '')) {
     issues.push('Enter a valid year.');
   }
   if (minimumEntryCount > 0 && entries.length < minimumEntryCount) {
@@ -4166,7 +4351,7 @@ function getOrnamentOrderItemValidationIssues(item) {
   if (limit && entries.length > limit) {
     issues.push(config.requiresSize
       ? `${size} ornaments support up to ${limit} combined people and pets.`
-      : `This ornament supports up to ${limit} combined people and pets.`);
+      : `${config.displayName} supports up to ${limit} ${config.allowsPets === false ? 'names' : 'combined people and pets'}.`);
   }
 
   entries.forEach((entry) => {
@@ -4176,6 +4361,9 @@ function getOrnamentOrderItemValidationIssues(item) {
     }
     if (!trimText(entry.name || '')) {
       issues.push(`${entry.kind === 'pet' ? 'Pet' : 'Person'} names are required.`);
+    }
+    if (config.allowsPets === false && entry.kind === 'pet') {
+      issues.push('This product accepts names only.');
     }
     if (entry.kind === 'pet') {
       if (!getAllowedPetIconLabels(item.productDefinitionId).includes(normalizePetIconLabel(entry.icon, item.productDefinitionId))) {
@@ -4311,7 +4499,12 @@ function createTreeReviewMarkup() {
       ...(config.requiresFamilyName === false ? {} : { familyName: draft.familyName }),
       ...(config.requiresPersonalizationMode ? { personalizationMode: draft.personalizationMode } : {}),
       ...(config.requiresPersonalizationMode && draft.personalizationMode === 'Change Edge Text' && draft.edgeText ? { edgeText: draft.edgeText } : {}),
-      ...(config.requiresYear === false ? {} : { year: draft.year }),
+      ...(config.requiresBottomTextLines ? {
+        bottomTextLine1: draft.bottomTextLine1,
+        bottomTextLine2: draft.bottomTextLine2
+      } : {}),
+      ...(config.optionalYear ? { yearMode: draft.yearMode } : {}),
+      ...(config.requiresYear === false || (config.optionalYear && draft.yearMode !== 'Include Year') ? {} : { year: draft.year }),
       ...(config.requiresTreeColor ? { treeColor: draft.treeColor } : {}),
       ...(config.requiresBowColor ? { bowColor: draft.bowColor } : {})
     },
@@ -4328,7 +4521,7 @@ function createTreeReviewMarkup() {
   const actionLabel = 'Add to Order';
 
   return getDetailedItemMarkup(item, {
-    subtitle: 'Item-level review before adding this ornament to the order.',
+    subtitle: `Item-level review before adding this ${config.itemTypeLabel || 'ornament'} to the order.`,
     imageMarkup: getItemImageMarkup(item, 'review-product-photo'),
     statusMarkup: `<p class="${statusClass}" data-review-confirmation aria-live="polite">${statusMessage}</p>`,
     actionsMarkup: `
@@ -4366,7 +4559,12 @@ function normalizeTreeOrderItem() {
     ...(config.requiresFamilyName === false ? {} : { familyName: draft.familyName }),
     ...(config.requiresPersonalizationMode ? { personalizationMode: draft.personalizationMode } : {}),
     ...(config.requiresPersonalizationMode && draft.personalizationMode === 'Change Edge Text' && draft.edgeText ? { edgeText: draft.edgeText } : {}),
-    ...(config.requiresYear === false ? {} : { year: draft.year }),
+    ...(config.requiresBottomTextLines ? {
+      bottomTextLine1: draft.bottomTextLine1,
+      bottomTextLine2: draft.bottomTextLine2
+    } : {}),
+    ...(config.optionalYear ? { yearMode: draft.yearMode } : {}),
+    ...(config.requiresYear === false || (config.optionalYear && draft.yearMode !== 'Include Year') ? {} : { year: draft.year }),
     ...(config.requiresEntries || entries.length > 0 ? { entries } : {}),
     ...(config.requiresTreeColor ? { treeColor: draft.treeColor } : {}),
     ...(config.requiresBowColor ? { bowColor: draft.bowColor } : {})
@@ -4386,7 +4584,10 @@ function normalizeTreeOrderItem() {
     familyName: config.requiresFamilyName === false ? '' : draft.familyName,
     personalizationMode: config.requiresPersonalizationMode ? draft.personalizationMode : '',
     edgeText: config.requiresPersonalizationMode && draft.personalizationMode === 'Change Edge Text' ? draft.edgeText : '',
-    year: config.requiresYear === false ? '' : draft.year,
+    bottomTextLine1: config.requiresBottomTextLines ? draft.bottomTextLine1 : '',
+    bottomTextLine2: config.requiresBottomTextLines ? draft.bottomTextLine2 : '',
+    yearMode: config.optionalYear ? draft.yearMode : '',
+    year: config.requiresYear === false || (config.optionalYear && draft.yearMode !== 'Include Year') ? '' : draft.year,
     orderedEntries: entries,
     peopleCount,
     petCount,
@@ -4442,6 +4643,15 @@ function normalizeOrderItemRecord(record) {
     familyName: typeof record.familyName === 'string' ? record.familyName : '',
     personalizationMode: typeof record.personalizationMode === 'string' ? record.personalizationMode : '',
     edgeText: typeof record.edgeText === 'string' ? record.edgeText : '',
+    bottomTextLine1: typeof record.bottomTextLine1 === 'string'
+      ? record.bottomTextLine1
+      : (typeof record.configurationSnapshot?.bottomTextLine1 === 'string' ? record.configurationSnapshot.bottomTextLine1 : ''),
+    bottomTextLine2: typeof record.bottomTextLine2 === 'string'
+      ? record.bottomTextLine2
+      : (typeof record.configurationSnapshot?.bottomTextLine2 === 'string' ? record.configurationSnapshot.bottomTextLine2 : ''),
+    yearMode: typeof record.yearMode === 'string'
+      ? record.yearMode
+      : (typeof record.configurationSnapshot?.yearMode === 'string' ? record.configurationSnapshot.yearMode : ''),
     year: typeof record.year === 'string' ? record.year : '',
     orderedEntries,
     peopleCount: Number.isFinite(record.peopleCount) ? record.peopleCount : orderedEntries.filter((entry) => entry.kind === 'person').length,
@@ -4479,6 +4689,8 @@ function isTreeDraftBlank() {
     && (config.requiresFamilyName === false || !sanitizeText(draft.familyName))
     && (!config.requiresPersonalizationMode || !sanitizeText(draft.personalizationMode))
     && !sanitizeText(draft.edgeText)
+    && (!config.requiresBottomTextLines || (!sanitizeText(draft.bottomTextLine1) && !sanitizeText(draft.bottomTextLine2)))
+    && (!config.optionalYear || !sanitizeText(draft.yearMode))
     && draft.entries.length === 0
     && (config.requiresYear === false || !draft.year || isDefaultYearValue(draft.year, draft.productDefinitionId));
 }
@@ -4735,6 +4947,9 @@ function buildDraftFromOrderItem(item) {
     familyName: item.familyName,
     personalizationMode: item.personalizationMode || '',
     edgeText: item.edgeText || '',
+    bottomTextLine1: item.bottomTextLine1 || item.configurationSnapshot?.bottomTextLine1 || '',
+    bottomTextLine2: item.bottomTextLine2 || item.configurationSnapshot?.bottomTextLine2 || '',
+    yearMode: item.yearMode || item.configurationSnapshot?.yearMode || '',
     year: item.year,
     entries: item.orderedEntries.map((entry) => ({
       id: createId(),
@@ -8142,7 +8357,9 @@ function buildStaffSubmittedOrderDraft(record) {
   const aliases = {
     family_name: ['family_name', 'familyName', 'last_name', 'lastName', 'baby_name', 'babyName', 'name'],
     year: ['year', 'wedding_year', 'weddingYear', 'established_year', 'establishedYear'],
-    edge_text: ['edge_text', 'edgeText']
+    edge_text: ['edge_text', 'edgeText'],
+    bottom_text_line_1: ['bottom_text_line_1', 'bottomTextLine1'],
+    bottom_text_line_2: ['bottom_text_line_2', 'bottomTextLine2']
   };
   const draft = {
     customer: Object.fromEntries(['full_name', 'email', 'phone', 'preferred_contact'].map((key) => [key, customer[key] || ''])),
@@ -8199,7 +8416,7 @@ function renderStaffSubmittedOrderEditor(record) {
       ${draft.items.map((item, index) => {
         const original = record.payload.items[index];
         return `<section class="staff-order-detail-section"><h3>${escapeHtml(original.product_display_name || 'Item')} — Quantity ${escapeHtml(original.quantity)}</h3>
-          <div class="staff-order-detail-grid">${Object.entries(item.personalization_fields || {}).map(([key, value]) => field(`items.${index}.personalization_fields.${key}`, key === 'family_name' ? getFamilyFieldLabel(original.product_definition_id) : key === 'edge_text' ? 'Edge Text' : 'Year', value, 'text', true, key === 'year' ? 4 : 200)).join('')}
+          <div class="staff-order-detail-grid">${Object.entries(item.personalization_fields || {}).map(([key, value]) => field(`items.${index}.personalization_fields.${key}`, ({ family_name: getFamilyFieldLabel(original.product_definition_id), edge_text: 'Edge Text', bottom_text_line_1: 'Bottom Text Line 1', bottom_text_line_2: 'Bottom Text Line 2', year: 'Year' })[key] || capitalizeWords(key), value, 'text', !(original.product_definition_id === 'large_tree_frame' && ['bottom_text_line_1', 'bottom_text_line_2'].includes(key)), key === 'year' ? 4 : 200)).join('')}
           ${(item.personalization_names || []).map((name, entryIndex) => field(`items.${index}.personalization_names.${entryIndex}`, `${entryIndex + 1}. ${original.personalization_order[entryIndex].type === 'pet' ? 'Pet' : 'Person'} Name`, name, 'text', true)).join('')}</div>
           <label class="field"><span>Item / Customer Note</span><textarea class="staff-packing-note" data-staff-edit-path="items.${index}.customer_note" maxlength="4000" ${saving ? 'disabled' : ''}>${escapeHtml(item.customer_note)}</textarea></label>
         </section>`;
@@ -8986,13 +9203,19 @@ function buildStaffItemDetailRows(item) {
   const familyFieldLabel = getStaffItemFamilyDetailLabel(productDefinitionId);
   const treeColorValue = sanitizeText(attributes.tree_color || configurationSnapshot.treeColor || configurationSnapshot.tree_color || '');
   const bowColorValue = sanitizeText(attributes.bow_color || configurationSnapshot.bowColor || configurationSnapshot.bow_color || configurationSnapshot.bow_and_stocking_color || '');
+  const bottomTextLine1 = sanitizeText(attributes.bottom_text_line_1 || configurationSnapshot.bottomTextLine1 || configurationSnapshot.bottom_text_line_1 || '');
+  const bottomTextLine2 = sanitizeText(attributes.bottom_text_line_2 || configurationSnapshot.bottomTextLine2 || configurationSnapshot.bottom_text_line_2 || '');
+  const yearMode = sanitizeText(attributes.year_mode || configurationSnapshot.yearMode || configurationSnapshot.year_mode || '');
   const rows = [
     { label: 'Size', value: sanitizeText(attributes.size || configurationSnapshot.size || '') },
     { label: 'Tree Color', value: treeColorValue ? getColorDisplayMarkup(treeColorValue) : '', isHtml: Boolean(treeColorValue) },
     { label: getBowColorDetailLabel(productDefinitionId), value: bowColorValue ? getColorDisplayMarkup(bowColorValue) : '', isHtml: Boolean(bowColorValue) },
     { label: familyFieldLabel, value: sanitizeText(attributes.family_name || configurationSnapshot.familyName || configurationSnapshot.family_name || configurationSnapshot.lastName || configurationSnapshot.last_name || '') },
+    { label: 'Bottom Text Line 1', value: bottomTextLine1 },
+    { label: 'Bottom Text Line 2', value: bottomTextLine2 },
     { label: 'Personalization', value: formatPersonalizationModeLabel(configurationSnapshot.personalizationMode || configurationSnapshot.personalization_mode || '') },
     { label: 'Edge Text', value: sanitizeText(configurationSnapshot.edgeText || configurationSnapshot.edge_text || '') },
+    { label: 'Year on Star', value: yearMode },
     { label: 'Year', value: formatDisplayValue(attributes.year ?? configurationSnapshot.year ?? configurationSnapshot.establishedYear ?? configurationSnapshot.established_year ?? '') }
   ];
 
@@ -9455,6 +9678,9 @@ function clearEditableOrderStateAfterSubmit() {
   draft.familyName = '';
   draft.personalizationMode = '';
   draft.edgeText = '';
+  draft.bottomTextLine1 = '';
+  draft.bottomTextLine2 = '';
+  draft.yearMode = '';
   draft.year = getDefaultYearValue('tree_ornament');
   draft.entries = [];
   localStorage.removeItem(storageKey);
@@ -9619,6 +9845,9 @@ function loadCartItemIntoDraft(itemId) {
   draft.familyName = draftSource.familyName;
   draft.personalizationMode = draftSource.personalizationMode;
   draft.edgeText = draftSource.edgeText;
+  draft.bottomTextLine1 = draftSource.bottomTextLine1;
+  draft.bottomTextLine2 = draftSource.bottomTextLine2;
+  draft.yearMode = draftSource.yearMode;
   draft.year = draftSource.year;
   draft.entries = draftSource.entries;
   draft.productDefinitionId = resolveConfiguredProductDefinitionId(draftSource.productDefinitionId);
@@ -9717,7 +9946,7 @@ function addTreeItemToOrder() {
       return;
     }
     clearOrderUiNote();
-    openAddConfirmation(savedItem.itemId, 'Added to Your Order', 'This ornament has been saved to the current order.');
+    openAddConfirmation(savedItem.itemId, 'Added to Your Order', `This ${config.itemTypeLabel || 'ornament'} has been saved to the current order.`);
   } catch {
     reviewState.saving = false;
     reviewState.error = 'We could not save this item. Please try again.';
@@ -9727,6 +9956,9 @@ function addTreeItemToOrder() {
 }
 
 function addEntry(kind) {
+  if (kind === 'pet' && getProductConfig().allowsPets === false) {
+    return;
+  }
   const { reachedLimit } = getCapacityDetails();
   if (reachedLimit) {
     renderCapacityMessage();
@@ -9797,6 +10029,9 @@ function createCommittedPetEntry() {
 }
 
 function openPendingPetEntry() {
+  if (getProductConfig().allowsPets === false) {
+    return;
+  }
   const { reachedLimit } = getCapacityDetails();
   if (reachedLimit) {
     renderCapacityMessage();
@@ -9911,6 +10146,9 @@ function validateTreeForm() {
     familyName: sanitizeText(treeFields.familyName.value),
     personalizationMode: treeFields.personalizationMode.value,
     edgeText: treeFields.edgeText.value,
+    bottomTextLine1: sanitizeText(treeFields.bottomTextLine1.value),
+    bottomTextLine2: sanitizeText(treeFields.bottomTextLine2.value),
+    yearMode: treeFields.yearMode.value,
     year: treeFields.year.value.trim()
   };
 
@@ -9944,19 +10182,40 @@ function validateTreeForm() {
     isValid = false;
   }
 
+  if (config.requiresBottomTextLines) {
+    if (draft.productDefinitionId === 'large_tree_frame' && !values.bottomTextLine1 && !values.bottomTextLine2) {
+      setFieldError('bottomTextLine1', 'Enter text for at least one bottom line.');
+      isValid = false;
+    } else if (draft.productDefinitionId !== 'large_tree_frame') {
+      if (!values.bottomTextLine1) {
+        setFieldError('bottomTextLine1', 'Please enter bottom text line 1.');
+        isValid = false;
+      }
+      if (!values.bottomTextLine2) {
+        setFieldError('bottomTextLine2', 'Please enter bottom text line 2.');
+        isValid = false;
+      }
+    }
+  }
+  if (config.optionalYear && !allowedValues.yearMode.includes(values.yearMode)) {
+    setFieldError('yearMode', 'Please choose Include Year or No Year.');
+    isValid = false;
+  }
+
   const yearNumber = Number.parseInt(values.year, 10);
   const yearLooksValid = /^\d{4}$/.test(values.year) && yearNumber >= 1900 && yearNumber <= 2100;
-  if (config.requiresYear !== false && !values.year) {
+  const includesYear = !config.optionalYear || values.yearMode === 'Include Year';
+  if (config.requiresYear !== false && includesYear && !values.year) {
     setFieldError('year', getYearFieldRequiredMessage());
     isValid = false;
-  } else if (config.requiresYear !== false && !yearLooksValid) {
+  } else if (config.requiresYear !== false && includesYear && !yearLooksValid) {
     setFieldError('year', 'Enter a valid 4-digit year.');
     isValid = false;
   }
 
   const minimumEntryCount = Number.isFinite(config.minimumEntryCount) ? config.minimumEntryCount : (config.requiresEntries ? 1 : 0);
   if (minimumEntryCount > 0 && draft.entries.length < minimumEntryCount) {
-    setFieldError('entries', 'Add at least one person or pet.');
+    setFieldError('entries', config.allowsPets === false ? 'Add at least one name.' : 'Add at least one person or pet.');
     isValid = false;
   }
 
@@ -9965,7 +10224,7 @@ function validateTreeForm() {
     setFieldError('entries', `${size} ornaments can include up to ${limit} combined people and pets.`);
     isValid = false;
   } else if (!config.requiresSize && count > limit) {
-    setFieldError('entries', `This ornament can include up to ${limit} combined people and pets.`);
+    setFieldError('entries', `${config.displayName} can include up to ${limit} ${config.allowsPets === false ? 'names' : 'combined people and pets'}.`);
     isValid = false;
   }
 
@@ -9984,6 +10243,9 @@ function validateTreeForm() {
     }
 
     if (entry.kind === 'pet') {
+      if (config.allowsPets === false) {
+        messages.push('This product accepts names only.');
+      }
       if (!getAllowedPetIconLabels().includes(normalizePetIconLabel(entry.icon))) {
         messages.push('Choose an icon.');
       }

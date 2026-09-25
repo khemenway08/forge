@@ -9,7 +9,7 @@
   <meta name="pinterest" content="nopin">
   <title>The Hilltop Shop Custom Orders</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="css/app.css?v=20260903-54">
+  <link rel="stylesheet" href="css/app.css?v=20260925-55">
 </head>
 <body>
   <div class="app-shell">
@@ -383,6 +383,16 @@
             </div>
           </button>
 
+          <button class="product-card" type="button" data-product="large-tree-frame">
+            <img src="/assets/products/large-tree-frame.jpg" alt="Large Tree Frame" width="1536" height="2048" decoding="async" loading="lazy" nopin="nopin" data-pin-nopin="true">
+            <div class="card-copy">
+              <h3>Large Tree Frame</h3>
+              <p>A framed family tree with ordered names, two bottom text lines, bow color, and an optional year.</p>
+              <div class="price">$45.00</div>
+              <span class="tap-label">Tap to customize</span>
+            </div>
+          </button>
+
           <button class="product-card" type="button" data-product="veteran">
             <img src="/assets/products/veteran-flag-ornament.jpg" alt="Veteran Flag Ornament" width="1536" height="2048" decoding="async" loading="lazy" nopin="nopin" data-pin-nopin="true">
             <div class="card-copy">
@@ -524,6 +534,18 @@
               <p class="field-error" data-error-for="familyName" aria-live="polite"></p>
             </div>
 
+            <div class="form-group" data-product-field-group="bottomTextLine1" hidden>
+              <label for="bottom-text-line-1">Bottom Text Line 1</label>
+              <input id="bottom-text-line-1" name="bottomTextLine1" type="text" maxlength="60" placeholder="Enter bottom text line 1" spellcheck="false" autocorrect="off" autocomplete="off" autocapitalize="words">
+              <p class="field-error" data-error-for="bottomTextLine1" aria-live="polite"></p>
+            </div>
+
+            <div class="form-group" data-product-field-group="bottomTextLine2" hidden>
+              <label for="bottom-text-line-2">Bottom Text Line 2</label>
+              <input id="bottom-text-line-2" name="bottomTextLine2" type="text" maxlength="60" placeholder="Enter bottom text line 2" spellcheck="false" autocorrect="off" autocomplete="off" autocapitalize="words">
+              <p class="field-error" data-error-for="bottomTextLine2" aria-live="polite"></p>
+            </div>
+
             <div class="form-group people-pets-group" data-product-field-group="entries">
               <div class="section-heading">
                 <div>
@@ -564,6 +586,20 @@
               <ol class="entry-list" id="people-pets-list" data-entry-list></ol>
 
               <p class="field-error" data-error-for="entries" aria-live="polite"></p>
+            </div>
+
+            <div class="form-group" data-product-field-group="yearMode" hidden>
+              <span class="field-legend" id="year-mode-label">Year on Star</span>
+              <input id="year-mode" name="yearMode" type="hidden" value="">
+              <div class="option-choice-group" role="radiogroup" aria-labelledby="year-mode-label" data-choice-group="yearMode">
+                <button class="option-choice" type="button" role="radio" data-choice-field="yearMode" data-choice-value="Include Year" aria-checked="false">
+                  <span class="option-choice-label">Include Year</span>
+                </button>
+                <button class="option-choice" type="button" role="radio" data-choice-field="yearMode" data-choice-value="No Year" aria-checked="false">
+                  <span class="option-choice-label">No Year</span>
+                </button>
+              </div>
+              <p class="field-error" data-error-for="yearMode" aria-live="polite"></p>
             </div>
 
             <div class="form-group" data-product-field-group="year">
@@ -805,29 +841,29 @@
     </div>
   </div>
 
-  <script src="js/forge-staff-inventory-api.js?v=20260903-54"></script>
-  <script src="js/forge-product-catalog.js?v=20260903-54"></script>
-  <script src="js/forge-order-payload-builder.js?v=20260903-54"></script>
-  <script src="js/forge-order-payload-preview.js?v=20260903-54"></script>
-  <script src="js/forge-api-client.js?v=20260903-54"></script>
-  <script src="js/forge-order-store.js?v=20260903-54"></script>
-  <script src="js/forge-order-server-sync.js?v=20260903-54"></script>
-  <script src="js/forge-sync-status.js?v=20260903-54"></script>
-  <script src="js/forge-order-submission.js?v=20260903-54"></script>
-  <script src="js/forge-event-state.js?v=20260903-54"></script>
-  <script src="js/forge-staff-api-client.js?v=20260903-54"></script>
-  <script src="js/forge-staff-catalog-ordering.js?v=20260903-54"></script>
-  <script src="js/forge-catalog-image-viewer.js?v=20260903-54"></script>
-  <script src="js/forge-staff-design-catalog-api.js?v=20260903-54"></script>
-  <script src="js/forge-staff-design-catalog.js?v=20260903-54"></script>
-  <script src="js/forge-staff-hat-catalog-api.js?v=20260903-54"></script>
-  <script src="js/forge-staff-hat-catalog.js?v=20260903-54"></script>
-  <script src="js/forge-staff-material-catalog-api.js?v=20260903-54"></script>
-  <script src="js/forge-staff-material-catalog.js?v=20260903-54"></script>
-  <script src="js/forge-staff-finished-hat-catalog-api.js?v=20260903-54"></script>
-  <script src="js/forge-staff-finished-hat-catalog.js?v=20260903-54"></script>
-  <script src="js/forge-staff-orders-runtime.js?v=20260903-54"></script>
-  <script src="js/forge-local-orders-queue.js?v=20260903-54"></script>
-  <script src="js/app.js?v=20260903-54"></script>
+  <script src="js/forge-staff-inventory-api.js?v=20260925-55"></script>
+  <script src="js/forge-product-catalog.js?v=20260925-55"></script>
+  <script src="js/forge-order-payload-builder.js?v=20260925-55"></script>
+  <script src="js/forge-order-payload-preview.js?v=20260925-55"></script>
+  <script src="js/forge-api-client.js?v=20260925-55"></script>
+  <script src="js/forge-order-store.js?v=20260925-55"></script>
+  <script src="js/forge-order-server-sync.js?v=20260925-55"></script>
+  <script src="js/forge-sync-status.js?v=20260925-55"></script>
+  <script src="js/forge-order-submission.js?v=20260925-55"></script>
+  <script src="js/forge-event-state.js?v=20260925-55"></script>
+  <script src="js/forge-staff-api-client.js?v=20260925-55"></script>
+  <script src="js/forge-staff-catalog-ordering.js?v=20260925-55"></script>
+  <script src="js/forge-catalog-image-viewer.js?v=20260925-55"></script>
+  <script src="js/forge-staff-design-catalog-api.js?v=20260925-55"></script>
+  <script src="js/forge-staff-design-catalog.js?v=20260925-55"></script>
+  <script src="js/forge-staff-hat-catalog-api.js?v=20260925-55"></script>
+  <script src="js/forge-staff-hat-catalog.js?v=20260925-55"></script>
+  <script src="js/forge-staff-material-catalog-api.js?v=20260925-55"></script>
+  <script src="js/forge-staff-material-catalog.js?v=20260925-55"></script>
+  <script src="js/forge-staff-finished-hat-catalog-api.js?v=20260925-55"></script>
+  <script src="js/forge-staff-finished-hat-catalog.js?v=20260925-55"></script>
+  <script src="js/forge-staff-orders-runtime.js?v=20260925-55"></script>
+  <script src="js/forge-local-orders-queue.js?v=20260925-55"></script>
+  <script src="js/app.js?v=20260925-55"></script>
 </body>
 </html>
