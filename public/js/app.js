@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260925-58';
+const FORGE_BUILD_VERSION = '20260925-59';
 const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
@@ -354,6 +354,7 @@ const ornamentProductConfigs = {
     requiresEntries: true,
     minimumEntryCount: 1,
     allowsPets: false,
+    advertisesEntryLimit: false,
     requiresBottomTextLines: true,
     optionalYear: true,
     yearModeDefault: 'Include Year',
@@ -3499,7 +3500,15 @@ function renderCapacityMessage() {
   const { size, limit, count, reachedLimit, overLimit } = getCapacityDetails();
   const entryNoun = config.allowsPets === false ? 'names' : 'combined people and pets';
 
-  if (!config.requiresSize) {
+  if (config.advertisesEntryLimit === false) {
+    if (overLimit) {
+      capacityMessage.textContent = `Too many ${entryNoun} have been added. Remove ${count - limit} entr${count - limit === 1 ? 'y' : 'ies'} before continuing.`;
+    } else if (reachedLimit) {
+      capacityMessage.textContent = 'The name entry limit has been reached. Remove one to add another.';
+    } else {
+      capacityMessage.textContent = '';
+    }
+  } else if (!config.requiresSize) {
     if (overLimit) {
       capacityMessage.textContent = `${config.displayName} supports up to ${limit} ${entryNoun}. Remove ${count - limit} entr${count - limit === 1 ? 'y' : 'ies'} before continuing.`;
     } else if (reachedLimit) {
@@ -4458,9 +4467,13 @@ function getOrnamentOrderItemValidationIssues(item) {
     issues.push('This item has invalid pricing.');
   }
   if (limit && entries.length > limit) {
-    issues.push(config.requiresSize
-      ? `${size} ornaments support up to ${limit} combined people and pets.`
-      : `${config.displayName} supports up to ${limit} ${config.allowsPets === false ? 'names' : 'combined people and pets'}.`);
+    if (config.advertisesEntryLimit === false) {
+      issues.push('Too many names have been added.');
+    } else {
+      issues.push(config.requiresSize
+        ? `${size} ornaments support up to ${limit} combined people and pets.`
+        : `${config.displayName} supports up to ${limit} ${config.allowsPets === false ? 'names' : 'combined people and pets'}.`);
+    }
   }
 
   entries.forEach((entry) => {
@@ -10348,7 +10361,9 @@ function validateTreeForm() {
     setFieldError('entries', `${size} ornaments can include up to ${limit} combined people and pets.`);
     isValid = false;
   } else if (!config.requiresSize && count > limit) {
-    setFieldError('entries', `${config.displayName} can include up to ${limit} ${config.allowsPets === false ? 'names' : 'combined people and pets'}.`);
+    setFieldError('entries', config.advertisesEntryLimit === false
+      ? 'Too many names have been added.'
+      : `${config.displayName} can include up to ${limit} ${config.allowsPets === false ? 'names' : 'combined people and pets'}.`);
     isValid = false;
   }
 

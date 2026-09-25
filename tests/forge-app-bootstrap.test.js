@@ -7,7 +7,7 @@ const vm = require('vm');
 const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'), 'utf8');
 const cssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
-const BUILD_VERSION = '20260925-58';
+const BUILD_VERSION = '20260925-59';
 
 function extractScreenMarkup(screenId) {
   const match = indexSource.match(new RegExp(`<section class="screen[\\s\\S]*?data-screen="${screenId}"[\\s\\S]*?<\\/section>`));
@@ -1799,6 +1799,49 @@ test('Large Tree Frame accepts either bottom text line but rejects both blank', 
   assert.equal(issuesFor('Grandma & Grandpa', 'Our Family').includes('Enter text for at least one bottom line.'), false);
   assert.equal(issuesFor('', '').filter((issue) => issue === 'Enter text for at least one bottom line.').length, 1);
   assert.match(appSource, /setFieldError\('bottomTextLine1', 'Enter text for at least one bottom line\.'\)/);
+});
+
+test('Large Tree Frame keeps its technical name ceiling out of customer-facing capacity copy', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+
+  vm.runInContext(`
+    resetDraftState('large_tree_frame');
+    renderCapacityMessage();
+  `, context);
+  assert.equal(vm.runInContext('ornamentProductConfigs.large_tree_frame.preSizeLimit', context), 250);
+  assert.equal(vm.runInContext('capacityMessage.textContent', context), '');
+
+  vm.runInContext(`
+    draft.entries = Array.from({ length: 250 }, (_, index) => ({
+      id: 'name-' + index,
+      kind: 'person',
+      name: 'Name ' + index
+    }));
+    renderCapacityMessage();
+  `, context);
+  assert.doesNotMatch(vm.runInContext('capacityMessage.textContent', context), /250/);
+
+  const overLimitCopy = vm.runInContext(`
+    draft.entries.push({ id: 'name-over-limit', kind: 'person', name: 'Extra Name' });
+    renderCapacityMessage();
+    capacityMessage.textContent;
+  `, context);
+  assert.doesNotMatch(overLimitCopy, /250/);
+  assert.match(overLimitCopy, /Too many names have been added/);
+
+  const reviewIssues = JSON.parse(vm.runInContext(`JSON.stringify(getOrnamentOrderItemValidationIssues({
+    productDefinitionId: 'large_tree_frame',
+    unitPrice: 45,
+    bowColor: 'Red',
+    bottomTextLine1: 'Our Family',
+    bottomTextLine2: '',
+    yearMode: 'No Year',
+    year: '',
+    orderedEntries: draft.entries,
+    configurationSnapshot: {}
+  }))`, context));
+  assert.ok(reviewIssues.includes('Too many names have been added.'));
+  assert.doesNotMatch(reviewIssues.join(' '), /250/);
 });
 
 test('year-on-star products default to the runtime year and restore it after No Year', () => {
