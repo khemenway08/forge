@@ -19,6 +19,8 @@ require_once __DIR__ . '/lib/event-repository.php';
 require_once __DIR__ . '/lib/outbound-message-repository.php';
 require_once __DIR__ . '/lib/order-repository.php';
 require_once __DIR__ . '/lib/staff-auth.php';
+require_once __DIR__ . '/lib/artwork-template-readiness.php';
+require_once __DIR__ . '/lib/artwork-template-repository.php';
 require_once __DIR__ . '/lib/staff-order-repository.php';
 require_once __DIR__ . '/lib/staff-catalog-sort-order.php';
 require_once __DIR__ . '/lib/staff-design-catalog-importer.php';
@@ -58,7 +60,12 @@ function buildOrderHandlerFromEnvironment(?callable $unexpectedExceptionReporter
 function buildStaffOrderRepositoryFromEnvironment(): PdoStaffOrderRepository
 {
     $pdo = DatabaseConnectionFactory::createFromEnvironment(loadPrivateDatabaseConfig());
-    return new PdoStaffOrderRepository($pdo, loadPrivateTrayConfig(), new PdoOutboundMessageRepository($pdo));
+    return new PdoStaffOrderRepository(
+        $pdo,
+        loadPrivateTrayConfig(),
+        new PdoOutboundMessageRepository($pdo),
+        new PdoArtworkTemplateRepository($pdo)
+    );
 }
 
 function buildEventRepositoryFromEnvironment(): PdoEventRepository

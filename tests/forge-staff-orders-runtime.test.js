@@ -165,6 +165,7 @@ test('authenticated hosted session loads adapted server orders', async () => {
               payload_sha256: 'def456',
               production_status: 'tray_assigned',
               current_tray_number: 12,
+              artwork_setup_needed: true,
               payload: { customer: { full_name: 'Kyle' }, items: [] }
             }
           ]
@@ -186,6 +187,7 @@ test('authenticated hosted session loads adapted server orders', async () => {
   assert.equal(result.records[0].staff_read_only, true);
   assert.equal(result.records[0].production_status, 'tray_assigned');
   assert.equal(result.records[0].current_tray_number, 12);
+  assert.equal(result.records[0].artwork_setup_needed, true);
   assert.equal(result.records[0].staff_can_assign_tray, false);
   assert.equal(result.records[1].forge_order_uuid, 'order-2');
   assert.equal(result.records[1].production_status, 'submitted');

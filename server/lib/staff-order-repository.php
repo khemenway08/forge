@@ -108,15 +108,24 @@ final class PdoStaffOrderRepository
     /** @var array{FORGE_TRAY_NUMBERS?: mixed} */
     private array $trayConfig;
     private ?PdoOutboundMessageRepository $outboundMessageRepository;
+    private ?PdoArtworkTemplateRepository $artworkTemplateRepository;
+    /** @var array<string, array<string, mixed>>|null */
+    private ?array $activeArtworkRegistrations = null;
 
     /**
      * @param array{FORGE_TRAY_NUMBERS?: mixed} $trayConfig
      */
-    public function __construct(PDO $pdo, array $trayConfig = [], ?PdoOutboundMessageRepository $outboundMessageRepository = null)
+    public function __construct(
+        PDO $pdo,
+        array $trayConfig = [],
+        ?PdoOutboundMessageRepository $outboundMessageRepository = null,
+        ?PdoArtworkTemplateRepository $artworkTemplateRepository = null
+    )
     {
         $this->pdo = $pdo;
         $this->trayConfig = $trayConfig;
         $this->outboundMessageRepository = $outboundMessageRepository;
+        $this->artworkTemplateRepository = $artworkTemplateRepository;
     }
 
     /**
@@ -178,7 +187,7 @@ final class PdoStaffOrderRepository
         $completedTrayReleaseByOrderUuid = $this->loadCompletedTrayReleaseHistory($orderUuids);
         $normalized = [];
         foreach ($recordsByOrderUuid as $orderUuid => $record) {
-            $normalized[] = normalizeStoredStaffOrderRecord(
+            $normalized[] = $this->normalizeStoredOrderRecord(
                 $record,
                 $itemProductionRowsByOrder[$orderUuid] ?? [],
                 $emailStatusesByOrderUuid[$orderUuid] ?? null,
@@ -247,7 +256,7 @@ final class PdoStaffOrderRepository
             return null;
         }
 
-        return normalizeStoredStaffOrderRecord(
+        return $this->normalizeStoredOrderRecord(
             $record,
             $this->loadItemProductionRowsForOrder($orderUuid),
             $this->loadOrderConfirmationMetadata([$orderUuid])[$orderUuid] ?? null,
@@ -317,7 +326,7 @@ final class PdoStaffOrderRepository
                 throw new StaffOrderNotFoundException('That order could not be found.');
             }
 
-            $normalizedOrder = normalizeStoredStaffOrderRecord($orderRow);
+            $normalizedOrder = $this->normalizeStoredOrderRecord($orderRow);
             $currentTrayNumber = normalizeNullableTrayNumber($normalizedOrder['current_tray_number'] ?? null);
             $productionStatus = is_string($normalizedOrder['production_status'] ?? null)
                 ? $normalizedOrder['production_status']
@@ -430,7 +439,7 @@ final class PdoStaffOrderRepository
 
             return [
                 'already_assigned' => false,
-                'order' => normalizeStoredStaffOrderRecord($updatedOrderRow),
+                'order' => $this->normalizeStoredOrderRecord($updatedOrderRow),
                 'tray' => normalizeStoredTrayRecord($updatedTrayRow),
                 'assignment_history' => normalizeStoredTrayAssignmentHistoryRecord($historyRow),
             ];
@@ -493,7 +502,7 @@ final class PdoStaffOrderRepository
                 throw new StaffOrderNotFoundException('That order could not be found.');
             }
 
-            $lockedOrder = normalizeStoredStaffOrderRecord($orderRow, $this->loadItemProductionRowsForOrderForUpdate($orderUuid));
+            $lockedOrder = $this->normalizeStoredOrderRecord($orderRow, $this->loadItemProductionRowsForOrderForUpdate($orderUuid));
             $currentTrayNumber = normalizeNullableTrayNumber($lockedOrder['current_tray_number'] ?? null);
             if ($currentTrayNumber === null) {
                 throw new ProductionOrderItemNotCompletableException('Assign a production tray before marking completed pieces.');
@@ -515,7 +524,7 @@ final class PdoStaffOrderRepository
 
             $this->ensureItemProductionRowsForOrder($orderUuid, $payloadItems, $timestamp);
             $itemProductionRows = $this->loadItemProductionRowsForOrderForUpdate($orderUuid);
-            $normalizedOrder = normalizeStoredStaffOrderRecord($orderRow, $itemProductionRows);
+            $normalizedOrder = $this->normalizeStoredOrderRecord($orderRow, $itemProductionRows);
             $items = is_array($normalizedOrder['payload']['items'] ?? null) ? $normalizedOrder['payload']['items'] : [];
             $itemIndex = findStaffPayloadItemIndexByLineId($items, $normalizedLineId);
             if ($itemIndex < 0) {
@@ -600,7 +609,7 @@ final class PdoStaffOrderRepository
             ]);
 
             $updatedItemRows = $this->loadItemProductionRowsForOrderForUpdate($orderUuid);
-            $updatedOrder = normalizeStoredStaffOrderRecord($orderRow, $updatedItemRows);
+            $updatedOrder = $this->normalizeStoredOrderRecord($orderRow, $updatedItemRows);
             $updatedItems = is_array($updatedOrder['payload']['items'] ?? null) ? $updatedOrder['payload']['items'] : [];
             $updatedItemIndex = findStaffPayloadItemIndexByLineId($updatedItems, $normalizedLineId);
             if ($updatedItemIndex < 0) {
@@ -632,7 +641,7 @@ final class PdoStaffOrderRepository
             if (!is_array($refreshedOrderRow)) {
                 throw new StorageUnavailableException('Item completion could not be saved.');
             }
-            $refreshedOrder = normalizeStoredStaffOrderRecord($refreshedOrderRow, $this->loadItemProductionRowsForOrderForUpdate($orderUuid));
+            $refreshedOrder = $this->normalizeStoredOrderRecord($refreshedOrderRow, $this->loadItemProductionRowsForOrderForUpdate($orderUuid));
             $refreshedItems = is_array($refreshedOrder['payload']['items'] ?? null) ? $refreshedOrder['payload']['items'] : [];
             $refreshedItemIndex = findStaffPayloadItemIndexByLineId($refreshedItems, $normalizedLineId);
             if ($refreshedItemIndex < 0) {
@@ -704,7 +713,7 @@ final class PdoStaffOrderRepository
                 ':updated_at' => currentUtcDatabaseDateTime(),
                 ':forge_order_uuid' => $forgeOrderUuid,
             ]);
-            $updated = normalizeStoredStaffOrderRecord(
+            $updated = $this->normalizeStoredOrderRecord(
                 $this->loadOrderRowForUpdate($forgeOrderUuid),
                 $stateRows,
                 $this->loadOrderConfirmationMetadata([$forgeOrderUuid])[$forgeOrderUuid] ?? null
@@ -764,7 +773,7 @@ final class PdoStaffOrderRepository
 
             $this->pdo->commit();
 
-            $normalizedOrder = normalizeStoredStaffOrderRecord(
+            $normalizedOrder = $this->normalizeStoredOrderRecord(
                 $updatedOrderRow,
                 $this->loadItemProductionRowsForOrder($orderUuid)
             );
@@ -815,7 +824,7 @@ final class PdoStaffOrderRepository
                 throw new StaffOrderNotFoundException('That order could not be found.');
             }
 
-            $lockedOrder = normalizeStoredStaffOrderRecord(
+            $lockedOrder = $this->normalizeStoredOrderRecord(
                 $orderRow,
                 $this->loadItemProductionRowsForOrderForUpdate($orderUuid),
                 $this->loadOrderConfirmationMetadata([$orderUuid])[$orderUuid] ?? null
@@ -925,7 +934,7 @@ final class PdoStaffOrderRepository
 
             return [
                 'already_applied' => false,
-                'order' => normalizeStoredStaffOrderRecord(
+                'order' => $this->normalizeStoredOrderRecord(
                     $updatedOrderRow,
                     $this->loadItemProductionRowsForOrder($orderUuid),
                     $this->loadOrderConfirmationMetadata([$orderUuid])[$orderUuid] ?? null,
@@ -975,7 +984,7 @@ final class PdoStaffOrderRepository
                 throw new StaffOrderNotFoundException('That order could not be found.');
             }
 
-            $lockedOrder = normalizeStoredStaffOrderRecord($orderRow, $this->loadItemProductionRowsForOrderForUpdate($orderUuid));
+            $lockedOrder = $this->normalizeStoredOrderRecord($orderRow, $this->loadItemProductionRowsForOrderForUpdate($orderUuid));
             $eventSnapshot = is_array($lockedOrder['payload']['event'] ?? null) ? $lockedOrder['payload']['event'] : null;
             if (($eventSnapshot['event_type'] ?? null) === 'test_session') {
                 throw new CancelOrderNotAllowedException('Test Session orders must be deleted with Delete Test Order.');
@@ -1054,7 +1063,7 @@ final class PdoStaffOrderRepository
             $this->pdo->commit();
 
             return [
-                'order' => normalizeStoredStaffOrderRecord($updatedOrderRow, $this->loadItemProductionRowsForOrder($orderUuid)),
+                'order' => $this->normalizeStoredOrderRecord($updatedOrderRow, $this->loadItemProductionRowsForOrder($orderUuid)),
                 'tray' => $releasedTray,
                 'assignment_history' => is_array($releasedHistory) ? normalizeStoredTrayAssignmentHistoryRecord($releasedHistory) : null,
             ];
@@ -1103,7 +1112,7 @@ final class PdoStaffOrderRepository
                 throw new StaffOrderNotFoundException('That order could not be found.');
             }
 
-            $lockedOrder = normalizeStoredStaffOrderRecord($orderRow, $this->loadItemProductionRowsForOrderForUpdate($orderUuid));
+            $lockedOrder = $this->normalizeStoredOrderRecord($orderRow, $this->loadItemProductionRowsForOrderForUpdate($orderUuid));
             $eventSnapshot = is_array($lockedOrder['payload']['event'] ?? null) ? $lockedOrder['payload']['event'] : null;
             if (($eventSnapshot['event_type'] ?? null) !== 'test_session') {
                 throw new TestOrderDeletionNotAllowedException('Only Test Session orders can be permanently deleted.');
@@ -1957,6 +1966,36 @@ final class PdoStaffOrderRepository
         }
 
         return $historyByOrderUuid;
+    }
+
+    /**
+     * @param mixed $record
+     * @param array<int, array<string, mixed>> $itemProductionRows
+     * @param array<string, mixed>|null $confirmationEmailStatus
+     * @param array<string, mixed>|null $completedTrayRelease
+     * @return array<string, mixed>
+     */
+    private function normalizeStoredOrderRecord(
+        $record,
+        array $itemProductionRows = [],
+        ?array $confirmationEmailStatus = null,
+        ?array $completedTrayRelease = null
+    ): array {
+        $normalized = normalizeStoredStaffOrderRecord(
+            $record,
+            $itemProductionRows,
+            $confirmationEmailStatus,
+            $completedTrayRelease
+        );
+
+        if ($this->artworkTemplateRepository === null) {
+            return $normalized;
+        }
+        if ($this->activeArtworkRegistrations === null) {
+            $this->activeArtworkRegistrations = $this->artworkTemplateRepository->listActiveRegistrationsByProduct();
+        }
+
+        return applyArtworkReadinessToStaffOrderRecord($normalized, $this->activeArtworkRegistrations);
     }
 }
 

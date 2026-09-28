@@ -731,6 +731,7 @@
       total_item_count: totalItemCount,
       completed_item_count: completedItemCount,
       has_open_flags: Boolean(record && record.has_open_flags) || Boolean(payload && payload.has_open_flags),
+      artwork_setup_needed: Boolean(record && record.artwork_setup_needed),
       payload: normalizedPayload,
       staff_data_source: STAFF_DATA_SOURCES.server,
       staff_read_only: true,

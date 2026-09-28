@@ -5481,6 +5481,283 @@ $runner->run('submitted corrections preserve legacy fallback line identity and r
     assertSame(false, $pdo->inTransaction());
 });
 
+function createArtworkRegistrationFixture(array $overrides = []): array
+{
+    $digest = str_repeat('a', 64);
+    return array_replace_recursive([
+        'registration_id' => '123e4567-e89b-42d3-a456-426614174900',
+        'product_definition_id' => 'babys_first_christmas',
+        'family_id' => 'babys-first-christmas',
+        'selector_type' => 'none',
+        'allowed_variants' => ['single' => "Baby's First Christmas"],
+        'launcher_family_id' => 'babys-first-christmas',
+        'artwork_label' => "Baby's First Christmas",
+        'configuration_revision' => 3,
+        'configuration_digest' => $digest,
+        'registration_status' => 'active',
+        'validations' => [],
+    ], $overrides);
+}
+
+function createArtworkOrderItemFixture(array $overrides = []): array
+{
+    return array_replace_recursive([
+        'line_id' => 'line-artwork-1',
+        'product_definition_id' => 'babys_first_christmas',
+        'product_display_name' => "Baby's First Christmas",
+        'product_category' => 'ornament',
+        'configuration_snapshot' => [],
+        'personalization_order' => [],
+        'structured_attributes' => [
+            'product_definition_id' => 'babys_first_christmas',
+            'category' => 'ornament',
+        ],
+    ], $overrides);
+}
+
+$runner->run('artwork readiness resolves single size and personalization-count registrations', static function (): void {
+    $digest = str_repeat('a', 64);
+    $valid = [
+        'validation_status' => 'valid',
+        'validated_at' => '2026-09-28T15:00:00+00:00',
+        'launcher_profile_label' => 'Production Mac',
+        'configuration_revision' => 3,
+        'configuration_digest' => $digest,
+        'validation_error_code' => null,
+    ];
+
+    $single = createArtworkRegistrationFixture(['validations' => ['single' => $valid]]);
+    $singleResult = \Forge\Server\resolveArtworkTemplateReadiness(
+        createArtworkOrderItemFixture(),
+        ['babys_first_christmas' => $single]
+    );
+    assertSame('ready', $singleResult['state']);
+    assertSame('Production Mac', $singleResult['launcher_profile_label']);
+
+    $size = createArtworkRegistrationFixture([
+        'product_definition_id' => 'tree_ornament',
+        'family_id' => 'christmas-tree',
+        'selector_type' => 'size',
+        'allowed_variants' => ['small' => 'Christmas Tree — Small', 'large' => 'Christmas Tree — Large'],
+        'launcher_family_id' => 'christmas-tree',
+        'artwork_label' => 'Christmas Tree',
+        'validations' => ['small' => $valid],
+    ]);
+    $sizeResult = \Forge\Server\resolveArtworkTemplateReadiness(
+        createArtworkOrderItemFixture([
+            'product_definition_id' => 'tree_ornament',
+            'configuration_snapshot' => ['size' => 'Small'],
+            'structured_attributes' => ['product_definition_id' => 'tree_ornament', 'category' => 'ornament', 'size' => 'Small'],
+        ]),
+        ['tree_ornament' => $size]
+    );
+    assertSame('ready', $sizeResult['state']);
+    assertSame('small', $sizeResult['variant_key']);
+
+    $count = createArtworkRegistrationFixture([
+        'product_definition_id' => 'antler_ornament',
+        'family_id' => 'antler',
+        'selector_type' => 'personalization_count',
+        'allowed_variants' => ['3' => 'Antler 3-position', '4' => 'Antler 4-position', '5' => 'Antler 5-position'],
+        'launcher_family_id' => 'antler',
+        'artwork_label' => 'Antler Ornament',
+        'validations' => ['5' => $valid],
+    ]);
+    $entries = array_fill(0, 5, ['type' => 'person', 'name' => 'Name']);
+    $countResult = \Forge\Server\resolveArtworkTemplateReadiness(
+        createArtworkOrderItemFixture([
+            'product_definition_id' => 'antler_ornament',
+            'personalization_order' => $entries,
+            'structured_attributes' => ['product_definition_id' => 'antler_ornament', 'category' => 'ornament', 'people_count' => 99, 'pet_count' => 99],
+        ]),
+        ['antler_ornament' => $count]
+    );
+    assertSame('ready', $countResult['state']);
+    assertSame('5', $countResult['variant_key']);
+});
+
+$runner->run('artwork readiness distinguishes missing registration unsupported variants and per-variant validation problems', static function (): void {
+    $item = createArtworkOrderItemFixture();
+    $notConfigured = \Forge\Server\resolveArtworkTemplateReadiness($item, []);
+    assertSame('template_not_configured', $notConfigured['state']);
+
+    $antler = createArtworkRegistrationFixture([
+        'product_definition_id' => 'antler_ornament',
+        'selector_type' => 'personalization_count',
+        'allowed_variants' => array_combine(array_map('strval', range(3, 10)), array_map(static fn (int $count): string => "Antler {$count}-position", range(3, 10))),
+        'validations' => [
+            '5' => [
+                'validation_status' => 'invalid',
+                'validated_at' => '2026-09-28T15:00:00+00:00',
+                'launcher_profile_label' => 'Production Mac',
+                'configuration_revision' => 3,
+                'configuration_digest' => str_repeat('a', 64),
+                'validation_error_code' => 'master_missing',
+            ],
+        ],
+    ]);
+    $twoEntries = createArtworkOrderItemFixture([
+        'product_definition_id' => 'antler_ornament',
+        'personalization_order' => array_fill(0, 2, ['type' => 'person', 'name' => 'Name']),
+        'structured_attributes' => ['product_definition_id' => 'antler_ornament', 'category' => 'ornament'],
+    ]);
+    $unsupported = \Forge\Server\resolveArtworkTemplateReadiness($twoEntries, ['antler_ornament' => $antler]);
+    assertSame('unsupported_variant', $unsupported['state']);
+    assertTrue(strpos($unsupported['detail'], 'Configured range: 3–10') !== false);
+
+    $fiveEntries = $twoEntries;
+    $fiveEntries['personalization_order'] = array_fill(0, 5, ['type' => 'person', 'name' => 'Name']);
+    $missing = \Forge\Server\resolveArtworkTemplateReadiness($fiveEntries, ['antler_ornament' => $antler]);
+    assertSame('template_validation_problem', $missing['state']);
+    assertTrue(strpos($missing['detail'], 'Master Missing') !== false);
+
+    $sixEntries = $twoEntries;
+    $sixEntries['personalization_order'] = array_fill(0, 6, ['type' => 'person', 'name' => 'Name']);
+    $unvalidated = \Forge\Server\resolveArtworkTemplateReadiness($sixEntries, ['antler_ornament' => $antler]);
+    assertSame('template_validation_problem', $unvalidated['state']);
+    assertTrue(strpos($unvalidated['detail'], 'Master Missing') !== false);
+});
+
+$runner->run('artwork readiness rejects stale and failed validation and ignores non-ornament lines', static function (): void {
+    $registration = createArtworkRegistrationFixture([
+        'validations' => [
+            'single' => [
+                'validation_status' => 'valid',
+                'validated_at' => '2026-09-28T15:00:00+00:00',
+                'launcher_profile_label' => 'Production Mac',
+                'configuration_revision' => 2,
+                'configuration_digest' => str_repeat('a', 64),
+                'validation_error_code' => null,
+            ],
+        ],
+    ]);
+    $stale = \Forge\Server\resolveArtworkTemplateReadiness(createArtworkOrderItemFixture(), ['babys_first_christmas' => $registration]);
+    assertSame('template_validation_problem', $stale['state']);
+
+    $registration['validations']['single']['configuration_revision'] = 3;
+    $registration['validations']['single']['validation_status'] = 'invalid';
+    $registration['validations']['single']['validation_error_code'] = 'invalid_file_type';
+    $failed = \Forge\Server\resolveArtworkTemplateReadiness(createArtworkOrderItemFixture(), ['babys_first_christmas' => $registration]);
+    assertSame('template_validation_problem', $failed['state']);
+
+    $nonOrnament = createArtworkOrderItemFixture([
+        'product_category' => 'sign',
+        'structured_attributes' => ['product_definition_id' => 'classic_family_sign', 'category' => 'sign'],
+    ]);
+    assertSame(null, \Forge\Server\resolveArtworkTemplateReadiness($nonOrnament, []));
+});
+
+$runner->run('artwork readiness enrichment is derived without mutating payloads or exposing local paths', static function (): void {
+    $payload = ['items' => [createArtworkOrderItemFixture()]];
+    $record = ['payload' => $payload];
+    $registration = createArtworkRegistrationFixture([
+        'absolute_master_path' => '/Users/kyle/private/master.ai',
+        'validations' => [],
+    ]);
+    $enriched = \Forge\Server\applyArtworkReadinessToStaffOrderRecord($record, ['babys_first_christmas' => $registration]);
+
+    assertSame($payload, $record['payload']);
+    assertSame('template_validation_problem', $enriched['payload']['items'][0]['artwork_readiness']['state']);
+    assertSame(true, $enriched['artwork_setup_needed']);
+    assertTrue(strpos(json_encode($enriched, JSON_THROW_ON_ERROR), '/Users/') === false);
+});
+
+$runner->run('artwork template repository keeps a registered family valid while individual variants are missing', static function (): void {
+    $pdo = new PDO('sqlite::memory:');
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+    $pdo->exec('CREATE TABLE forge_artwork_template_registrations (
+        registration_id TEXT PRIMARY KEY,
+        product_definition_id TEXT NOT NULL UNIQUE,
+        family_id TEXT NOT NULL UNIQUE,
+        selector_type TEXT NOT NULL,
+        allowed_variants_json TEXT NOT NULL,
+        launcher_family_id TEXT NOT NULL UNIQUE,
+        artwork_label TEXT NOT NULL,
+        configuration_revision INTEGER NOT NULL,
+        configuration_digest TEXT NOT NULL,
+        registration_status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )');
+    $pdo->exec('CREATE TABLE forge_artwork_template_validations (
+        registration_id TEXT NOT NULL,
+        variant_key TEXT NOT NULL,
+        validation_status TEXT NOT NULL,
+        validated_at TEXT NOT NULL,
+        launcher_profile_label TEXT NOT NULL,
+        configuration_revision INTEGER NOT NULL,
+        configuration_digest TEXT NOT NULL,
+        validation_error_code TEXT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (registration_id, variant_key)
+    )');
+    $digest = str_repeat('b', 64);
+    $registration = $pdo->prepare('INSERT INTO forge_artwork_template_registrations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    $registration->execute([
+        'registration-grinch',
+        'grinch_family_tree',
+        'grinch-tree',
+        'personalization_count',
+        json_encode(['5' => 'Grinch Tree 5-position', '6' => 'Grinch Tree 6-position'], JSON_THROW_ON_ERROR),
+        'grinch-tree',
+        'Grinch Tree',
+        1,
+        $digest,
+        'active',
+        '2026-09-28 12:00:00.000000',
+        '2026-09-28 12:00:00.000000',
+    ]);
+    $validation = $pdo->prepare('INSERT INTO forge_artwork_template_validations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    $validation->execute([
+        'registration-grinch',
+        '5',
+        'valid',
+        '2026-09-28 12:05:00.000000',
+        'Production Mac',
+        1,
+        $digest,
+        null,
+        '2026-09-28 12:05:00.000000',
+    ]);
+
+    $repository = new \Forge\Server\PdoArtworkTemplateRepository($pdo);
+    $registrations = $repository->listActiveRegistrationsByProduct();
+    assertTrue(isset($registrations['grinch_family_tree']));
+    assertSame(['5' => 'Grinch Tree 5-position', '6' => 'Grinch Tree 6-position'], $registrations['grinch_family_tree']['allowed_variants']);
+    assertSame([5], array_keys($registrations['grinch_family_tree']['validations']));
+
+    $baseItem = createArtworkOrderItemFixture([
+        'product_definition_id' => 'grinch_family_tree',
+        'product_display_name' => 'Grinch Tree',
+        'structured_attributes' => ['product_definition_id' => 'grinch_family_tree', 'category' => 'ornament'],
+    ]);
+    $readyItem = $baseItem;
+    $readyItem['personalization_order'] = array_fill(0, 5, ['type' => 'person', 'name' => 'Name']);
+    assertSame('ready', \Forge\Server\resolveArtworkTemplateReadiness($readyItem, $registrations)['state']);
+
+    $missingItem = $baseItem;
+    $missingItem['personalization_order'] = array_fill(0, 6, ['type' => 'person', 'name' => 'Name']);
+    $missing = \Forge\Server\resolveArtworkTemplateReadiness($missingItem, $registrations);
+    assertSame('template_validation_problem', $missing['state']);
+    assertTrue(strpos($missing['detail'], 'Master Missing') !== false);
+});
+
+$runner->run('artwork template migration stores registration separately from per-variant validation without paths', static function (): void {
+    $migrationSource = file_get_contents(dirname(__DIR__) . '/migrations/019_create_forge_artwork_templates.sql');
+    assertTrue(is_string($migrationSource));
+    assertTrue(strpos($migrationSource, 'forge_artwork_template_registrations') !== false);
+    assertTrue(strpos($migrationSource, 'forge_artwork_template_validations') !== false);
+    assertTrue(strpos($migrationSource, 'allowed_variants_json') !== false);
+    assertTrue(strpos($migrationSource, 'variant_key') !== false);
+    assertTrue(strpos($migrationSource, 'configuration_revision') !== false);
+    assertTrue(strpos($migrationSource, 'validation_error_code') !== false);
+    assertTrue(stripos($migrationSource, 'filesystem_path') === false);
+    assertTrue(stripos($migrationSource, 'absolute_path') === false);
+    assertTrue(stripos($migrationSource, 'master_path') === false);
+    assertTrue(strpos($migrationSource, 'forge_orders') === false);
+});
+
 $runner->run('invalid stored staff order payload fails safely', static function (): void {
     assertThrows(
         static function (): void {

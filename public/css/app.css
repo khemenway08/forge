@@ -5421,6 +5421,59 @@ body.forge-catalog-image-viewer-open {
   gap: 8px;
 }
 
+.staff-artwork-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.staff-artwork-badge--ready {
+  border-color: rgba(76,175,115,.35);
+  background: rgba(76,175,115,.12);
+  color: #9be0b5;
+}
+
+.staff-artwork-badge--problem {
+  border-color: rgba(240,190,90,.34);
+  background: rgba(240,190,90,.12);
+  color: #f5d58e;
+}
+
+.staff-artwork-readiness {
+  display: grid;
+  gap: 5px;
+  margin: 0 var(--staff-detail-inset);
+  padding: 12px 14px;
+  border: 1px solid rgba(140,151,166,.14);
+  border-radius: 16px;
+  background: rgba(255,255,255,.03);
+}
+
+.staff-artwork-readiness span {
+  color: var(--staff-muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+
+.staff-artwork-readiness strong {
+  color: var(--staff-text);
+}
+
+.staff-artwork-readiness p {
+  margin: 0;
+  color: var(--staff-muted-strong);
+  font-size: 13px;
+}
+
 .staff-order-detail-section {
   padding: 16px 0 18px;
   gap: 12px;

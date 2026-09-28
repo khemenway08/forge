@@ -7,7 +7,7 @@ const vm = require('vm');
 const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'), 'utf8');
 const cssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
-const BUILD_VERSION = '20260925-59';
+const BUILD_VERSION = '20260928-60';
 
 function extractScreenMarkup(screenId) {
   const match = indexSource.match(new RegExp(`<section class="screen[\\s\\S]*?data-screen="${screenId}"[\\s\\S]*?<\\/section>`));
@@ -3251,6 +3251,66 @@ test('shared server order detail assign tray button opens the tray picker after 
   assert.equal(getTrayLoadCount(), 2);
   assert.equal(trayDialog.hidden, false);
   assert.match(trayDialog.innerHTML, /Assign Tray/);
+});
+
+test('staff orders show per-line artwork readiness and one aggregate setup warning', async () => {
+  const { context, detailDialog, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
+  setSharedRecord({
+    artwork_setup_needed: true,
+    payload: {
+      forge_order_number: 1001,
+      customer: { full_name: 'Kyle Hemenway' },
+      fulfillment: { method: 'shipping' },
+      items: [
+        {
+          line_id: 'shared-antler-line',
+          line_number: 1,
+          product_definition_id: 'antler_ornament',
+          product_display_name: 'Antler Ornament',
+          product_category: 'ornament',
+          quantity: 1,
+          completed_quantity: 0,
+          production_status: 'pending',
+          pricing: { final_unit_price_cents: 2600, line_total_cents: 2600 },
+          personalization_order: Array.from({ length: 9 }, (_, index) => ({ type: 'person', name: `Name ${index + 1}` })),
+          structured_attributes: { category: 'ornament' },
+          configuration_snapshot: {},
+          artwork_readiness: {
+            state: 'ready',
+            label: 'Ready',
+            detail: 'Ready — Antler 9-position',
+            validated_at: '2026-09-28T15:00:00+00:00',
+            launcher_profile_label: 'Production Mac'
+          },
+          open_flags: []
+        }
+      ]
+    }
+  });
+
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+
+  assert.match(String(detailDialog.innerHTML || ''), /Artwork: Ready/);
+  assert.match(String(detailDialog.innerHTML || ''), /Ready — Antler 9-position/);
+  assert.match(String(detailDialog.innerHTML || ''), /Last validated [^<]+ on Production Mac/);
+
+  const queueCardHtml = vm.runInContext(
+    'buildStaffOrderCardMarkup(staffOrdersState.records[0], staffOrdersState.filters)',
+    context
+  );
+  assert.equal((String(queueCardHtml).match(/Artwork Setup Needed/g) || []).length, 1);
+
+  const ordinaryItemCardHtml = vm.runInContext(`buildStaffOrderCardMarkup({
+    forge_order_uuid: 'sign-order',
+    production_status: 'submitted',
+    payload: {
+      customer: { full_name: 'Sign Customer' },
+      fulfillment: { method: 'pickup' },
+      items: [{ line_id: 'sign-line', product_category: 'sign', product_display_name: 'Sign', quantity: 1 }]
+    }
+  }, {})`, context);
+  assert.doesNotMatch(String(ordinaryItemCardHtml), /Artwork Setup Needed/);
 });
 
 test('shared server order detail assign tray still opens when hosted state is read-only and enabled flag is stale', async () => {

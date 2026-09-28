@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260925-59';
+const FORGE_BUILD_VERSION = '20260928-60';
 const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
@@ -7997,6 +7997,7 @@ function buildStaffOrderCardMarkup(record, filters) {
   const syncStatusLabel = getStaffSyncStatusLabel(record);
   const syncStatusBadgeClass = getStaffSyncStatusBadgeClass(record);
   const canFinalizeOrder = canCompleteStaffOrder(record);
+  const artworkSetupNeeded = staffOrderNeedsArtworkSetup(record);
 
   return `
     <article class="staff-order-card">
@@ -8012,6 +8013,7 @@ function buildStaffOrderCardMarkup(record, filters) {
           ${buildStaffSyncBadgeMarkup(record)}
           ${hasInternalNote ? '<span class="staff-status-badge staff-status-badge--sync-pending">NOTE</span>' : ''}
           ${hasFlags ? '<span class="staff-flag-badge">Open Flags</span>' : ''}
+          ${artworkSetupNeeded ? '<span class="staff-artwork-badge staff-artwork-badge--problem">Artwork Setup Needed</span>' : ''}
         </div>
       </div>
       <div class="staff-order-card-meta staff-order-card-meta--primary">
@@ -9234,6 +9236,7 @@ function getStaffOrderItemsMarkup(record, items) {
     const isSaving = staffOrdersState.detailSavingLineId === item.line_id;
     const completionActionLabel = isSaving ? 'Saving...' : getStaffItemCompletionActionLabel(item);
     const quantityLabel = `${Number.isInteger(item.quantity) ? item.quantity : 1} × Piece${Number.isInteger(item.quantity) && item.quantity === 1 ? '' : 's'}`;
+    const artworkReadiness = getStaffArtworkReadiness(item);
     return `
       <article>
         <div class="staff-order-card-header">
@@ -9243,6 +9246,7 @@ function getStaffOrderItemsMarkup(record, items) {
           </div>
           <div class="staff-order-card-badges">
             <span class="staff-status-badge ${escapeHtml(getStaffItemProductionStatusBadgeClass(item))}">${escapeHtml(itemStatusLabel)}</span>
+            ${artworkReadiness ? `<span class="staff-artwork-badge ${escapeHtml(getStaffArtworkReadinessBadgeClass(artworkReadiness))}">Artwork: ${escapeHtml(artworkReadiness.label)}</span>` : ''}
             ${flags.length ? '<span class="staff-flag-badge">Item Flags</span>' : ''}
           </div>
         </div>
@@ -9263,6 +9267,7 @@ function getStaffOrderItemsMarkup(record, items) {
             >${escapeHtml(completionActionLabel)}</button>
           `}
         </div>
+        ${artworkReadiness ? buildStaffArtworkReadinessMarkup(artworkReadiness) : ''}
         <div class="staff-order-detail-grid">
           ${itemDetails.map((detail) => `
             <div>
@@ -9289,6 +9294,61 @@ function getStaffOrderItemsMarkup(record, items) {
       </article>
     `;
   }).join('');
+}
+
+function staffOrderNeedsArtworkSetup(record) {
+  if (record?.artwork_setup_needed === true) {
+    return true;
+  }
+  const items = Array.isArray(record?.payload?.items) ? record.payload.items : [];
+  return items.some((item) => {
+    const readiness = getStaffArtworkReadiness(item);
+    return readiness && readiness.state !== 'ready';
+  });
+}
+
+function getStaffArtworkReadiness(item) {
+  const readiness = item?.artwork_readiness;
+  if (!readiness || typeof readiness !== 'object') {
+    return null;
+  }
+  const states = new Set(['ready', 'template_not_configured', 'unsupported_variant', 'template_validation_problem']);
+  const state = sanitizeText(readiness.state || '').toLowerCase();
+  if (!states.has(state)) {
+    return null;
+  }
+  const fallbackLabels = {
+    ready: 'Ready',
+    template_not_configured: 'Template Not Configured',
+    unsupported_variant: 'Unsupported Variant',
+    template_validation_problem: 'Template Validation Problem'
+  };
+  return {
+    state,
+    label: sanitizeText(readiness.label || '') || fallbackLabels[state],
+    detail: sanitizeText(readiness.detail || ''),
+    validatedAt: sanitizeText(readiness.validated_at || ''),
+    launcherProfileLabel: sanitizeText(readiness.launcher_profile_label || '')
+  };
+}
+
+function getStaffArtworkReadinessBadgeClass(readiness) {
+  return readiness?.state === 'ready'
+    ? 'staff-artwork-badge--ready'
+    : 'staff-artwork-badge--problem';
+}
+
+function buildStaffArtworkReadinessMarkup(readiness) {
+  const validationDetail = readiness.state === 'ready' && readiness.validatedAt
+    ? `<p>Last validated ${escapeHtml(formatReadableDateTime(readiness.validatedAt))}${readiness.launcherProfileLabel ? ` on ${escapeHtml(readiness.launcherProfileLabel)}` : ''}</p>`
+    : '';
+  return `
+    <div class="staff-artwork-readiness">
+      <span>Artwork Template</span>
+      <strong>${escapeHtml(readiness.detail || readiness.label)}</strong>
+      ${validationDetail}
+    </div>
+  `;
 }
 
 function buildStaffPersonalizationGridMarkup(entries) {
