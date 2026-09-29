@@ -68,6 +68,13 @@ function buildStaffOrderRepositoryFromEnvironment(): PdoStaffOrderRepository
     );
 }
 
+function buildArtworkTemplateRepositoryFromEnvironment(): PdoArtworkTemplateRepository
+{
+    return new PdoArtworkTemplateRepository(
+        DatabaseConnectionFactory::createFromEnvironment(loadPrivateDatabaseConfig())
+    );
+}
+
 function buildEventRepositoryFromEnvironment(): PdoEventRepository
 {
     $pdo = DatabaseConnectionFactory::createFromEnvironment(loadPrivateDatabaseConfig());

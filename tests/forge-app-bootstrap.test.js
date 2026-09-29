@@ -7,7 +7,7 @@ const vm = require('vm');
 const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'), 'utf8');
 const cssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
-const BUILD_VERSION = '20260928-60';
+const BUILD_VERSION = '20260928-62';
 
 function extractScreenMarkup(screenId) {
   const match = indexSource.match(new RegExp(`<section class="screen[\\s\\S]*?data-screen="${screenId}"[\\s\\S]*?<\\/section>`));
@@ -3253,10 +3253,10 @@ test('shared server order detail assign tray button opens the tray picker after 
   assert.match(trayDialog.innerHTML, /Assign Tray/);
 });
 
-test('staff orders show per-line artwork readiness and one aggregate setup warning', async () => {
+test('staff orders update per-line artwork readiness and clear the aggregate warning when ready', async () => {
   const { context, detailDialog, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
   setSharedRecord({
-    artwork_setup_needed: true,
+    artwork_setup_needed: false,
     payload: {
       forge_order_number: 1001,
       customer: { full_name: 'Kyle Hemenway' },
@@ -3299,7 +3299,19 @@ test('staff orders show per-line artwork readiness and one aggregate setup warni
     'buildStaffOrderCardMarkup(staffOrdersState.records[0], staffOrdersState.filters)',
     context
   );
-  assert.equal((String(queueCardHtml).match(/Artwork Setup Needed/g) || []).length, 1);
+  assert.doesNotMatch(String(queueCardHtml), /Artwork Setup Needed/);
+
+  const problemCardHtml = vm.runInContext(`buildStaffOrderCardMarkup({
+    forge_order_uuid: 'ornament-order',
+    production_status: 'submitted',
+    payload: {
+      customer: { full_name: 'Ornament Customer' },
+      fulfillment: { method: 'pickup' },
+      items: [{ line_id: 'ornament-line', product_category: 'ornament', product_display_name: 'Tree Ornament', quantity: 1,
+        artwork_readiness: { state: 'template_validation_problem', label: 'Template Validation Problem' } }]
+    }
+  }, {})`, context);
+  assert.equal((String(problemCardHtml).match(/Artwork Setup Needed/g) || []).length, 1);
 
   const ordinaryItemCardHtml = vm.runInContext(`buildStaffOrderCardMarkup({
     forge_order_uuid: 'sign-order',

@@ -5672,6 +5672,7 @@ $runner->run('artwork template repository keeps a registered family valid while 
         family_id TEXT NOT NULL UNIQUE,
         selector_type TEXT NOT NULL,
         allowed_variants_json TEXT NOT NULL,
+        resolution_config_json TEXT NOT NULL,
         launcher_family_id TEXT NOT NULL UNIQUE,
         artwork_label TEXT NOT NULL,
         configuration_revision INTEGER NOT NULL,
@@ -5693,13 +5694,14 @@ $runner->run('artwork template repository keeps a registered family valid while 
         PRIMARY KEY (registration_id, variant_key)
     )');
     $digest = str_repeat('b', 64);
-    $registration = $pdo->prepare('INSERT INTO forge_artwork_template_registrations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    $registration = $pdo->prepare('INSERT INTO forge_artwork_template_registrations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     $registration->execute([
         'registration-grinch',
         'grinch_family_tree',
         'grinch-tree',
         'personalization_count',
         json_encode(['5' => 'Grinch Tree 5-position', '6' => 'Grinch Tree 6-position'], JSON_THROW_ON_ERROR),
+        json_encode(['pattern' => 'GRINCH {count} NAME_MASTER.ai'], JSON_THROW_ON_ERROR),
         'grinch-tree',
         'Grinch Tree',
         1,
@@ -5741,6 +5743,110 @@ $runner->run('artwork template repository keeps a registered family valid while 
     $missing = \Forge\Server\resolveArtworkTemplateReadiness($missingItem, $registrations);
     assertSame('template_validation_problem', $missing['state']);
     assertTrue(strpos($missing['detail'], 'Master Missing') !== false);
+});
+
+function createArtworkTemplateManagementTestPdo(): PDO
+{
+    $pdo = new PDO('sqlite::memory:');
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+    $pdo->exec('CREATE TABLE forge_artwork_template_registrations (registration_id TEXT PRIMARY KEY, product_definition_id TEXT NOT NULL UNIQUE, family_id TEXT NOT NULL UNIQUE, selector_type TEXT NOT NULL, allowed_variants_json TEXT NOT NULL, resolution_config_json TEXT NOT NULL, launcher_family_id TEXT NOT NULL UNIQUE, artwork_label TEXT NOT NULL, configuration_revision INTEGER NOT NULL, configuration_digest TEXT NOT NULL, registration_status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)');
+    $pdo->exec('CREATE TABLE forge_artwork_template_validations (registration_id TEXT NOT NULL, variant_key TEXT NOT NULL, validation_status TEXT NOT NULL, validated_at TEXT NOT NULL, launcher_profile_label TEXT NOT NULL, configuration_revision INTEGER NOT NULL, configuration_digest TEXT NOT NULL, validation_error_code TEXT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (registration_id,variant_key))');
+    $pdo->exec('CREATE TABLE forge_artwork_template_setup_tokens (token_hash TEXT PRIMARY KEY, registration_id TEXT NOT NULL, configuration_revision INTEGER NOT NULL, configuration_digest TEXT NOT NULL, expires_at TEXT NOT NULL, consumed_at TEXT NULL, created_at TEXT NOT NULL)');
+    $pdo->exec('CREATE TABLE forge_artwork_template_report_tokens (token_hash TEXT PRIMARY KEY, registration_id TEXT NOT NULL, configuration_revision INTEGER NOT NULL, configuration_digest TEXT NOT NULL, expires_at TEXT NOT NULL, consumed_at TEXT NULL, created_at TEXT NOT NULL)');
+    return $pdo;
+}
+
+$runner->run('artwork registration validation supports single size and constrained count configurations without paths', static function (): void {
+    $single = \Forge\Server\normalizeArtworkRegistrationInput([
+        'product_definition_id' => 'babys_first_christmas', 'selector_type' => 'none', 'artwork_label' => "Baby's First Christmas",
+        'family_id' => 'baby-first', 'launcher_family_id' => 'baby-first', 'allowed_variants' => ['single' => 'Single'], 'resolution_config' => ['filename' => 'BABY_MASTER.ai'],
+    ]);
+    assertSame('BABY_MASTER.ai', $single['resolution_config']['filename']);
+    $size = \Forge\Server\normalizeArtworkRegistrationInput([
+        'product_definition_id' => 'tree_ornament', 'selector_type' => 'size', 'artwork_label' => 'Christmas Tree',
+        'family_id' => 'christmas-tree', 'launcher_family_id' => 'christmas-tree',
+        'allowed_variants' => ['small' => 'Small', 'large' => 'Large'],
+        'resolution_config' => ['filenames' => ['small' => 'SMALL_CHRISTMAS TREE_MASTER.ai', 'large' => 'LARGE_CHRISTMAS TREE_MASTER.ai']],
+    ]);
+    assertSame('SMALL_CHRISTMAS TREE_MASTER.ai', $size['resolution_config']['filenames']['small']);
+    $count = \Forge\Server\normalizeArtworkRegistrationInput([
+        'product_definition_id' => 'antler_ornament', 'selector_type' => 'personalization_count', 'artwork_label' => 'Antler',
+        'family_id' => 'antler', 'launcher_family_id' => 'antler', 'allowed_variants' => ['3' => '3-position', '10' => '10-position'],
+        'resolution_config' => ['pattern' => 'ANTLER {count} NAME_MASTER.ai'],
+    ]);
+    assertSame('ANTLER {count} NAME_MASTER.ai', $count['resolution_config']['pattern']);
+    assertThrows(static function (): void {
+        \Forge\Server\normalizeArtworkRegistrationInput(['product_definition_id'=>'antler_ornament','selector_type'=>'personalization_count','artwork_label'=>'Antler','family_id'=>'antler','launcher_family_id'=>'antler','allowed_variants'=>['3'=>'3'],'resolution_config'=>['pattern'=>'ANTLER {name} {count}_MASTER.ai']]);
+    }, static function ($error): void { assertTrue($error instanceof InvalidArgumentException); });
+    assertThrows(static function (): void {
+        \Forge\Server\normalizeArtworkRegistrationInput(['product_definition_id'=>'tree_ornament','selector_type'=>'size','artwork_label'=>'Tree','family_id'=>'tree','launcher_family_id'=>'tree','allowed_variants'=>['small'=>'Small'],'resolution_config'=>['filenames'=>['small'=>'/Users/kyle/master.ai']]]);
+    }, static function ($error): void { assertTrue($error instanceof InvalidArgumentException); });
+});
+
+$runner->run('artwork setup tokens are short lived single use and validation reports stay revision scoped', static function (): void {
+    $pdo = createArtworkTemplateManagementTestPdo();
+    $repository = new \Forge\Server\PdoArtworkTemplateRepository($pdo);
+    $input = [
+        'product_definition_id'=>'tree_ornament','selector_type'=>'size','artwork_label'=>'Christmas Tree','family_id'=>'christmas-tree','launcher_family_id'=>'christmas-tree',
+        'allowed_variants'=>['small'=>'Small','large'=>'Large'],'resolution_config'=>['filenames'=>['small'=>'SMALL_CHRISTMAS TREE_MASTER.ai','large'=>'LARGE_CHRISTMAS TREE_MASTER.ai']],
+    ];
+    $registration = $repository->saveRegistration($input);
+    assertSame(1, $registration['configuration_revision']);
+    assertSame('inactive', $registration['registration_status']);
+    $expired = $repository->issueSetupToken($registration['registration_id'], 30);
+    $expireStatement = $pdo->prepare('UPDATE forge_artwork_template_setup_tokens SET expires_at = ? WHERE token_hash = ?');
+    $expireStatement->execute(['2000-01-01 00:00:00.000000', hash('sha256', $expired['setup_token'])]);
+    assertThrows(static function () use ($repository, $expired): void { $repository->exchangeSetupToken($expired['setup_token']); }, static function ($error): void { assertTrue($error instanceof InvalidArgumentException); });
+    $issued = $repository->issueSetupToken($registration['registration_id'], 30);
+    assertSame(64, strlen($issued['setup_token']));
+    assertTrue(strtotime($issued['expires_at']) <= time() + 31);
+    $exchange = $repository->exchangeSetupToken($issued['setup_token'], 60);
+    assertSame($registration['registration_id'], $exchange['registration']['registration_id']);
+    assertThrows(static function () use ($repository, $issued): void { $repository->exchangeSetupToken($issued['setup_token']); }, static function ($error): void { assertTrue($error instanceof InvalidArgumentException); });
+    $reported = $repository->reportValidation($exchange['report_token'], 'Test Mac', [
+        ['variant_key'=>'small','status'=>'valid'], ['variant_key'=>'large','status'=>'invalid','error_code'=>'master_missing'],
+    ]);
+    assertSame('valid', $reported['validations']['small']['validation_status']);
+    assertSame('master_missing', $reported['validations']['large']['validation_error_code']);
+    assertThrows(static function () use ($repository, $exchange): void { $repository->reportValidation($exchange['report_token'], 'Test Mac', [['variant_key'=>'small','status'=>'valid']]); }, static function ($error): void { assertTrue($error instanceof InvalidArgumentException); });
+    $wrongVariantExchange = $repository->exchangeSetupToken($repository->issueSetupToken($registration['registration_id'])['setup_token']);
+    assertThrows(static function () use ($repository, $wrongVariantExchange): void { $repository->reportValidation($wrongVariantExchange['report_token'], 'Test Mac', [['variant_key'=>'arbitrary','status'=>'valid']]); }, static function ($error): void { assertTrue($error instanceof InvalidArgumentException); });
+    $active = $repository->setRegistrationActive($registration['registration_id'], true);
+    $ready = \Forge\Server\resolveArtworkTemplateReadiness(createArtworkOrderItemFixture(['product_definition_id'=>'tree_ornament','structured_attributes'=>['product_definition_id'=>'tree_ornament','category'=>'ornament','size'=>'Small']]), ['tree_ornament'=>$active]);
+    assertSame('ready', $ready['state']);
+    $missing = \Forge\Server\resolveArtworkTemplateReadiness(createArtworkOrderItemFixture(['product_definition_id'=>'tree_ornament','structured_attributes'=>['product_definition_id'=>'tree_ornament','category'=>'ornament','size'=>'Large']]), ['tree_ornament'=>$active]);
+    assertSame('template_validation_problem', $missing['state']);
+    $staleExchange = $repository->exchangeSetupToken($repository->issueSetupToken($registration['registration_id'])['setup_token']);
+    $input['resolution_config']['filenames']['small'] = 'SMALL_TREE_REVISED_MASTER.ai';
+    $revised = $repository->saveRegistration($input);
+    assertSame(2, $revised['configuration_revision']);
+    assertThrows(static function () use ($repository, $staleExchange): void { $repository->reportValidation($staleExchange['report_token'], 'Test Mac', [['variant_key'=>'small','status'=>'valid']]); }, static function ($error): void { assertTrue($error instanceof InvalidArgumentException); });
+    $stale = \Forge\Server\resolveArtworkTemplateReadiness(createArtworkOrderItemFixture(['product_definition_id'=>'tree_ornament','structured_attributes'=>['product_definition_id'=>'tree_ornament','category'=>'ornament','size'=>'Small']]), ['tree_ornament'=>$revised]);
+    assertSame('template_validation_problem', $stale['state']);
+});
+
+$runner->run('artwork setup endpoints separate authenticated staff management from token-scoped launcher callbacks', static function (): void {
+    $management = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/artwork-templates.php');
+    $token = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/artwork-template-setup-token.php');
+    $launcher = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/artwork-template-launcher.php');
+    assertTrue(strpos($management, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($token, 'requireAuthenticatedStaffSession') !== false);
+    assertTrue(strpos($launcher, 'requireAuthenticatedStaffSession') === false);
+    assertTrue(strpos($launcher, 'exchangeSetupToken') !== false);
+    assertTrue(strpos($launcher, 'reportValidation') !== false);
+    assertTrue(strpos($token, 'forge-artwork://setup?token=') !== false);
+    assertTrue(strpos($token, 'filesystem') === false);
+});
+
+$runner->run('artwork setup migration adds path-free resolution and scoped handshake storage', static function (): void {
+    $source = file_get_contents(dirname(__DIR__) . '/migrations/020_add_artwork_template_setup.sql');
+    assertTrue(strpos($source, 'resolution_config_json') !== false);
+    assertTrue(strpos($source, 'forge_artwork_template_setup_tokens') !== false);
+    assertTrue(strpos($source, 'forge_artwork_template_report_tokens') !== false);
+    assertTrue(stripos($source, 'filesystem_path') === false);
+    assertTrue(stripos($source, 'absolute_path') === false);
+    assertTrue(strpos($source, 'forge_orders') === false);
 });
 
 $runner->run('artwork template migration stores registration separately from per-variant validation without paths', static function (): void {

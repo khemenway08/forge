@@ -971,3 +971,30 @@ test('submitted edit client handles auth expiry, production conflicts and malfor
     }
   }
 });
+
+test('artwork template client uses authenticated path-free registration and constrained setup URLs', async () => {
+  const requests = [];
+  const registration = { registration_id: 'registration-1', product_definition_id: 'tree_ornament' };
+  const responses = [
+    createJsonResponse(200, { application: 'Forge', api_version: '1', status: 'ok', data: { registrations: [registration] } }),
+    createJsonResponse(200, { application: 'Forge', api_version: '1', status: 'ok', data: { registration } }),
+    createJsonResponse(200, { application: 'Forge', api_version: '1', status: 'ok', data: { setup_url: `forge-artwork://setup?token=${'a'.repeat(64)}`, expires_at: '2026-09-28T18:00:00Z' } })
+  ];
+  const client = staffApiClientModule.createForgeStaffApiClient({ fetchImpl: async (url, options) => { requests.push({ url, options }); return responses.shift(); } });
+  assert.equal((await client.listArtworkTemplates()).registrations[0].product_definition_id, 'tree_ornament');
+  await client.saveArtworkTemplate({ product_definition_id: 'tree_ornament', selector_type: 'size' });
+  const setup = await client.createArtworkSetupToken('registration-1');
+  assert.match(setup.setupUrl, /^forge-artwork:\/\/setup\?token=[a-f0-9]{64}$/);
+  assert.equal(requests[0].options.credentials, 'same-origin');
+  assert.equal(requests[1].options.credentials, 'same-origin');
+  assert.deepEqual(JSON.parse(requests[1].options.body), { action: 'save', registration: { product_definition_id: 'tree_ornament', selector_type: 'size' } });
+  assert.doesNotMatch(JSON.stringify(requests), /\/Users\//);
+  assert.doesNotMatch(setup.setupUrl, /path|filename|callback|command/i);
+});
+
+test('artwork setup client rejects arbitrary or path-bearing launcher URLs', async () => {
+  for (const setupUrl of ['forge-artwork://setup?token=short', `forge-artwork://setup?token=${'a'.repeat(64)}&path=/tmp/master.ai`, 'https://evil.example/setup']) {
+    const client = staffApiClientModule.createForgeStaffApiClient({ fetchImpl: async () => createJsonResponse(200, { application: 'Forge', api_version: '1', status: 'ok', data: { setup_url: setupUrl } }) });
+    await assert.rejects(client.createArtworkSetupToken('registration-1'), /unexpected response/);
+  }
+});

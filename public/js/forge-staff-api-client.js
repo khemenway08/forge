@@ -29,6 +29,8 @@
   const TRAYS_ENDPOINT = 'trays.php';
   const ASSIGN_TRAY_ENDPOINT = 'assign-tray.php';
   const COMPLETE_ITEM_ENDPOINT = 'complete-item.php';
+  const ARTWORK_TEMPLATES_ENDPOINT = 'artwork-templates.php';
+  const ARTWORK_SETUP_TOKEN_ENDPOINT = 'artwork-template-setup-token.php';
   const SAFE_ERROR_MESSAGES = {
     invalid_request: 'Staff authentication could not be prepared.',
     invalid_credentials: 'Invalid staff credentials.',
@@ -754,6 +756,34 @@
       }
     }
 
+    async function listArtworkTemplates() {
+      try {
+        const response = await performJsonRequest(fetchImpl, `${baseUrl}/${ARTWORK_TEMPLATES_ENDPOINT}`, timeoutMs, { method: 'GET', headers: { Accept: 'application/json' }, credentials: 'same-origin', cache: 'no-store' });
+        const payload = await parseJsonResponse(response);
+        if (response.status === 401) return { ok: false, authenticated: false, unauthenticated: true, registrations: [] };
+        if (!response.ok) throw buildServerError(response.status, payload);
+        const data = normalizeArtworkData(payload);
+        if (!Array.isArray(data.registrations)) throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+        return { ok: true, authenticated: true, registrations: data.registrations };
+      } catch (error) { throw normalizeClientError(error); }
+    }
+
+    function saveArtworkTemplate(registration) {
+      return submitStaffMutation(`${baseUrl}/${ARTWORK_TEMPLATES_ENDPOINT}`, { action: 'save', registration }, 'Artwork template registration could not be prepared.', (payload) => ({ ok: true, authenticated: true, registration: normalizeArtworkData(payload).registration }));
+    }
+
+    function setArtworkTemplateActive(registrationId, active) {
+      return submitStaffMutation(`${baseUrl}/${ARTWORK_TEMPLATES_ENDPOINT}`, { action: active ? 'activate' : 'deactivate', registration_id: registrationId }, 'Artwork template status could not be prepared.', (payload) => ({ ok: true, authenticated: true, registration: normalizeArtworkData(payload).registration }));
+    }
+
+    function createArtworkSetupToken(registrationId) {
+      return submitStaffMutation(`${baseUrl}/${ARTWORK_SETUP_TOKEN_ENDPOINT}`, { registration_id: registrationId }, 'Artwork setup could not be prepared.', (payload) => {
+        const data = normalizeArtworkData(payload);
+        if (typeof data.setup_url !== 'string' || !/^forge-artwork:\/\/setup\?token=[a-f0-9]{64}$/.test(data.setup_url)) throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+        return { ok: true, authenticated: true, setupUrl: data.setup_url, expiresAt: data.expires_at || null };
+      });
+    }
+
     return {
       checkSession,
       login,
@@ -776,8 +806,20 @@
       applyLegacyTestCleanup,
       deleteTestOrder,
       previewShippingExport,
-      getShippingExportDownloadUrl
+      getShippingExportDownloadUrl,
+      listArtworkTemplates,
+      saveArtworkTemplate,
+      setArtworkTemplateActive,
+      createArtworkSetupToken
     };
+  }
+
+  function normalizeArtworkData(payload) {
+    const data = payload && typeof payload === 'object' ? payload.data : null;
+    if (asTrimmedString(payload && payload.application) !== 'Forge' || asTrimmedString(payload && payload.api_version) !== '1' || asTrimmedString(payload && payload.status) !== 'ok' || !data || typeof data !== 'object') {
+      throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+    }
+    return data;
   }
 
   async function performJsonRequest(fetchImpl, url, timeoutMs, requestOptions) {

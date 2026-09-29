@@ -4,8 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const BUILD_VERSION = '20260928-60';
-const CACHE_NAME = 'forge-starter-v60';
+const BUILD_VERSION = '20260928-62';
+const CACHE_NAME = 'forge-starter-v62';
 
 function normalizeRequestUrl(input) {
   if (typeof input === 'string') {
@@ -305,7 +305,7 @@ test('index.html versions every Forge JavaScript bootstrap URL with the same bui
   const scriptMatches = [...html.matchAll(/<script\s+src="([^"]+)"><\/script>/g)];
   const scriptSources = scriptMatches.map((match) => match[1]);
 
-  assert.equal(scriptSources.length, 24);
+  assert.equal(scriptSources.length, 25);
   assert.ok(scriptSources.every((src) => src.includes(`?v=${BUILD_VERSION}`)));
   assert.deepEqual(scriptSources, [
     `js/forge-staff-inventory-api.js?v=${BUILD_VERSION}`,
@@ -330,6 +330,7 @@ test('index.html versions every Forge JavaScript bootstrap URL with the same bui
     `js/forge-staff-finished-hat-catalog-api.js?v=${BUILD_VERSION}`,
     `js/forge-staff-finished-hat-catalog.js?v=${BUILD_VERSION}`,
     `js/forge-staff-orders-runtime.js?v=${BUILD_VERSION}`,
+    `js/forge-artwork-template-setup.js?v=${BUILD_VERSION}`,
     `js/forge-local-orders-queue.js?v=${BUILD_VERSION}`,
     `js/app.js?v=${BUILD_VERSION}`
   ]);

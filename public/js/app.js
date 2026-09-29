@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260928-60';
+const FORGE_BUILD_VERSION = '20260928-62';
 const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
@@ -113,6 +113,7 @@ const forgeOrderServerSync = globalThis.ForgeOrderServerSync;
 const forgeSyncStatus = globalThis.ForgeSyncStatus;
 const forgeOrderSubmission = globalThis.ForgeOrderSubmission;
 const forgeEventState = globalThis.ForgeEventState;
+const forgeArtworkTemplateSetup = globalThis.ForgeArtworkTemplateSetup;
 const forgeStaffApiClient = globalThis.ForgeStaffApiClient;
 const forgeStaffDesignCatalogApi = globalThis.ForgeStaffDesignCatalogApi;
 const forgeStaffDesignCatalog = globalThis.ForgeStaffDesignCatalog;
@@ -7571,12 +7572,17 @@ function renderStaffAdminTools() {
   const syncSnapshot = getCurrentSyncSnapshot();
   staffAdminContent.innerHTML = `
     ${buildStaffSystemStatusCardMarkup(syncSnapshot)}
+    <div data-artwork-template-setup></div>
     ${buildStaffEventControlsMarkup()}
     <div class="staff-admin-tools-grid">
       ${buildShippingExportControlsMarkup()}
       ${buildLegacyCleanupControlsMarkup()}
     </div>
   `;
+  const artworkSetupRoot = staffAdminContent.querySelector('[data-artwork-template-setup]');
+  if (artworkSetupRoot && forgeArtworkTemplateSetup && typeof forgeArtworkTemplateSetup.mount === 'function') {
+    forgeArtworkTemplateSetup.mount(artworkSetupRoot, { apiClient: staffApiClient, productCatalog: forgeProductCatalog });
+  }
   updateLegacyCleanupConfirmationUi();
 }
 

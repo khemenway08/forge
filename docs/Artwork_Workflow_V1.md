@@ -230,6 +230,21 @@ rename it as part of this workflow. Forge uses explicit
 product/variant-to-master mappings and never guesses a master from a
 folder or filename.
 
+### Artwork Template Setup
+
+Forge Staff Admin Tools provides self-service artwork-template
+registration using the canonical `product_definition_id`. Registrations
+support **Single Master**, **By Size**, and **By Personalization Position
+Count**. Exact filenames or the constrained `{count}` pattern are stored
+by Forge; absolute Mac paths remain only in the local launcher registry.
+
+A registered family may be empty or partially complete. The designated
+production Mac validates each configured variant independently and reports
+cached readiness to Forge. Missing files remain `master_missing` for their
+specific variants without invalidating the family or another Ready variant.
+Staff Orders reads this cached state without requiring the launcher to be
+online.
+
 ------------------------------------------------------------------------
 
 ## Prepare Artwork Requirements
@@ -387,21 +402,19 @@ the Mac. The browser cannot freely copy arbitrary local files, create
 arbitrary folders, or launch arbitrary local documents without an
 appropriate bridge.
 
-Therefore the **first technical milestone is an architecture
-proof-of-concept**.
+Forge uses the installed **Forge Artwork Launcher**, registered for the
+constrained `forge-artwork://` URL scheme. Authenticated Forge staff issue
+a short-lived one-use token; the launcher exchanges it against the fixed
+Forge origin, presents the native macOS picker, validates masters read-only,
+and reports per-variant results using a separately scoped report token.
 
-Prove that one controlled Forge action on the Mac can:
+The maintained launcher source is tracked at
+`tools/forge-artwork-launcher/`. Machine-specific configuration and the
+local template registry remain protected under
+`~/Library/Application Support/Forge Artwork Launcher/`.
 
-1.  Identify one designated `.ai` master.
-2.  Copy it to one designated destination.
-3.  Generate the destination filename.
-4.  Leave the master untouched.
-5.  Open the copy in Adobe Illustrator.
-
-Possible mechanisms may include a small local helper, registered
-protocol/launcher, macOS automation, or another appropriate bridge. Do
-not commit to a mechanism until the existing Forge architecture and Mac
-environment have been inspected.
+This bridge currently proves template registration and validation. It does
+not yet implement Prepare Artwork, create customer files, or open Illustrator.
 
 ------------------------------------------------------------------------
 
@@ -564,16 +577,17 @@ Parked ideas:
 
 ## Development Checkpoint
 
-**Current state --- 2026-09-28**
+**Current state --- 2026-09-29**
 
 -   Workflow scoped.
 -   Real production bottlenecks identified.
 -   Proof-sheet concept validated with real active orders.
 -   Representative clean master library established.
--   No V1 implementation should begin until the Mac/browser/local-file
-    bridge has been investigated.
--   **Next action: Milestone 0 --- Read-Only Architecture
-    Investigation.**
+-   Mac/browser bridge proof-of-concept completed.
+-   Artwork-template readiness and self-service template setup implemented.
+-   Christmas Tree Small and Large masters validated on the designated
+    production Mac through the native launcher workflow.
+-   Prepare Artwork has not begun.
 
 Representative clean masters: - Acrylic Star/Tree - Christmas Tree ---
 Small - Christmas Tree --- Large - Baby's First Christmas --- single
