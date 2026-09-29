@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260929-64';
+const FORGE_BUILD_VERSION = '20260929-65';
 const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
 const USPS_ADDRESS_BOOK_HEADERS = Object.freeze([
   'First Name',
@@ -342,7 +342,7 @@ const ornamentProductConfigs = {
     galleryProductKey: 'present-stack',
     requiresSize: false,
     sizeLimits: {},
-    preSizeLimit: 10,
+    preSizeLimit: 12,
     requiresTreeColor: false,
     requiresBowColor: true,
     requiresEntries: true,

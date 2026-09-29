@@ -185,7 +185,7 @@ products:
       year: {required: true, type: year, default: 2026, editable: true}
     rules:
       min_total_names: 1
-      max_total_names: 10
+      max_total_names: 12
       people_and_pets_share_capacity: true
 
   grinch_tree:

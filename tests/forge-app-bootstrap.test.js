@@ -7,7 +7,7 @@ const vm = require('vm');
 const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'), 'utf8');
 const cssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
-const BUILD_VERSION = '20260929-64';
+const BUILD_VERSION = '20260929-65';
 
 function extractScreenMarkup(screenId) {
   const match = indexSource.match(new RegExp(`<section class="screen[\\s\\S]*?data-screen="${screenId}"[\\s\\S]*?<\\/section>`));
@@ -1853,6 +1853,36 @@ test('Large Tree Frame keeps its technical name ceiling out of customer-facing c
   }))`, context));
   assert.ok(reviewIssues.includes('Too many names have been added.'));
   assert.doesNotMatch(reviewIssues.join(' '), /250/);
+});
+
+test('Present Stack accepts up to 12 names and rejects a thirteenth entry', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+  const issuesFor = (count) => JSON.parse(vm.runInContext(`JSON.stringify(getOrnamentOrderItemValidationIssues({
+    productDefinitionId: 'present_stack',
+    unitPrice: 30,
+    bowColor: 'Red',
+    familyName: 'Smith',
+    year: '2026',
+    orderedEntries: Array.from({ length: ${count} }, (_, index) => ({
+      kind: 'person',
+      name: 'Name ' + (index + 1)
+    })),
+    configurationSnapshot: {}
+  }))`, context));
+  const capacityIssue = 'Present Stack Ornament supports up to 12 combined people and pets.';
+
+  assert.equal(vm.runInContext('ornamentProductConfigs.present_stack.preSizeLimit', context), 12);
+  assert.equal(issuesFor(1).includes(capacityIssue), false);
+  assert.equal(issuesFor(12).includes(capacityIssue), false);
+  assert.equal(issuesFor(13).includes(capacityIssue), true);
+
+  vm.runInContext(`
+    resetDraftState('present_stack');
+    draft.entries = Array.from({ length: 12 }, (_, index) => ({ id: 'name-' + index, kind: 'person', name: 'Name ' + index }));
+    renderCapacityMessage();
+  `, context);
+  assert.equal(vm.runInContext('addPersonButton.disabled', context), true);
+  assert.match(vm.runInContext('capacityMessage.textContent', context), /full at 12/);
 });
 
 test('year-on-star products default to the runtime year and restore it after No Year', () => {
