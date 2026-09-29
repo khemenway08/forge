@@ -7,7 +7,7 @@ const vm = require('vm');
 const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'), 'utf8');
 const cssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
-const BUILD_VERSION = '20260928-62';
+const BUILD_VERSION = '20260929-63';
 
 function extractScreenMarkup(screenId) {
   const match = indexSource.match(new RegExp(`<section class="screen[\\s\\S]*?data-screen="${screenId}"[\\s\\S]*?<\\/section>`));
@@ -788,6 +788,8 @@ function loadForgeHostedStaffAppForTrayDetail() {
   let cancelOrderError = null;
   let deleteTestOrderError = null;
   let sharedRecordDeleted = false;
+  let clipboardText = '';
+  const openedWindows = [];
 
   welcomeScreen.dataset.screen = 'welcome';
   staffAccessScreen.dataset.screen = 'staff-access';
@@ -1037,7 +1039,7 @@ function loadForgeHostedStaffAppForTrayDetail() {
     localStorage: { getItem() { return null; }, setItem() {}, removeItem() {}, clear() {} },
     sessionStorage: { getItem() { return null; }, setItem() {}, removeItem() {}, clear() {} },
     navigator: {
-      clipboard: { writeText: async () => {} },
+      clipboard: { writeText: async (value) => { clipboardText = String(value); } },
       serviceWorker: { register: async () => ({}) }
     },
     location: { protocol: 'https:', hostname: 'forge.thehilltopshop.com', search: '', href: 'https://forge.thehilltopshop.com/' },
@@ -1050,6 +1052,7 @@ function loadForgeHostedStaffAppForTrayDetail() {
     HTMLSelectElement: function HTMLSelectElement() {},
     Node: function Node() {},
     alert() {},
+    open(...args) { openedWindows.push(args); return null; },
     window: null,
     globalThis: null
   };
@@ -1270,6 +1273,8 @@ function loadForgeHostedStaffAppForTrayDetail() {
     context,
     detailDialog,
     detailBackdrop,
+    staffOrdersScreen,
+    staffOrdersList,
     trayDialog,
     getAssignTrayButton() {
       return assignTrayButton;
@@ -1300,6 +1305,12 @@ function loadForgeHostedStaffAppForTrayDetail() {
     },
     getDetailRenderCount() {
       return detailRenderCount;
+    },
+    getClipboardText() {
+      return clipboardText;
+    },
+    getOpenedWindows() {
+      return openedWindows.slice();
     },
     setSharedRecord(overrides) {
       Object.assign(sharedRecord, structuredClone(overrides));
@@ -3603,9 +3614,22 @@ test('shared server order detail renders the internal notes section and note bad
   assert.match(String(detailDialog.innerHTML || ''), /Customer confirmed spelling\./);
   assert.match(String(detailDialog.innerHTML || ''), /Paid cash at show\./);
   assert.match(String(detailDialog.innerHTML || ''), />NOTE</);
+  assert.match(String(detailDialog.innerHTML || ''), /staff-note-attention-badge/);
 });
 
-test('shared server shipping orders show the copy shipping address action in order detail', async () => {
+test('whitespace-only internal notes keep the collapsed header neutral', async () => {
+  const { context, detailDialog, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
+  setSharedRecord({ internal_note: '   \n  ', has_internal_note: true });
+
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+
+  const markup = String(detailDialog.innerHTML || '');
+  assert.match(markup, /<summary><span>Internal Notes<\/span><\/summary>/);
+  assert.doesNotMatch(markup, /staff-note-attention-badge/);
+});
+
+test('shared server shipping orders show production-first postal actions in order detail', async () => {
   const { context, detailDialog, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
 
   setSharedRecord({
@@ -3631,11 +3655,12 @@ test('shared server shipping orders show the copy shipping address action in ord
   await context.openStaffAccessScreen('staff-orders');
   await context.openStaffOrderDetail('shared-order-1');
 
-  assert.match(String(detailDialog.innerHTML || ''), /Copy Shipping Address/);
+  assert.match(String(detailDialog.innerHTML || ''), /Copy Address/);
+  assert.match(String(detailDialog.innerHTML || ''), /Open USPS/);
   assert.match(String(detailDialog.innerHTML || ''), /123 Main Street/);
 });
 
-test('shared server pickup orders do not show the copy shipping address action in order detail', async () => {
+test('shared server pickup orders do not show shipping postal actions in order detail', async () => {
   const { context, detailDialog, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
 
   setSharedRecord({
@@ -3651,7 +3676,149 @@ test('shared server pickup orders do not show the copy shipping address action i
   await context.openStaffAccessScreen('staff-orders');
   await context.openStaffOrderDetail('shared-order-1');
 
-  assert.doesNotMatch(String(detailDialog.innerHTML || ''), /Copy Shipping Address/);
+  assert.doesNotMatch(String(detailDialog.innerHTML || ''), /Copy Address/);
+  assert.doesNotMatch(String(detailDialog.innerHTML || ''), /Open USPS/);
+});
+
+test('Order Detail Copy Address writes only a clean multiline domestic postal address', async () => {
+  const { context, detailDialog, getClipboardText, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
+  setSharedRecord({
+    payload: {
+      customer: { full_name: 'Kyle Hemenway', email: 'private@example.com', phone: '555-111-2222' },
+      fulfillment: {
+        method: 'shipping',
+        shipping_address: {
+          address_1: '123 Main Street', address_2: 'Suite 4', city: 'Austin', state: 'TX', postal_code: '78701', country: 'United States'
+        }
+      },
+      items: [{ line_id: 'shared-tree-line', quantity: 1, completed_quantity: 0, production_status: 'pending' }],
+      forge_order_number: 1001
+    }
+  });
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+  detailDialog.dispatchEvent({
+    type: 'click',
+    target: createDispatchTarget({ action: 'staff-copy-shipping-address', orderUuid: 'shared-order-1' }),
+    preventDefault() {}
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(getClipboardText(), 'Kyle Hemenway\n123 Main Street\nSuite 4\nAustin TX 78701');
+  assert.doesNotMatch(getClipboardText(), /private@example\.com|555-111-2222/);
+  assert.doesNotMatch(getClipboardText(), /United States/);
+  assert.match(String(detailDialog.innerHTML || ''), /Shipping address copied\./);
+});
+
+test('shipping queue Copy Address reuses the postal formatter without mutating the source order', async () => {
+  const { context, getClipboardText, setSharedRecord, staffOrdersList, staffOrdersScreen } = loadForgeHostedStaffAppForTrayDetail();
+  setSharedRecord({ payload: {
+    customer: { full_name: 'Local QA Customer', email: 'qa@example.com', phone: '555-111-2222' },
+    fulfillment: {
+      method: 'shipping',
+      shipping_address: { address_1: '123 Test Lane', address_2: 'Unit B', city: 'Madison', state: 'WI', postal_code: '53703', country: 'USA' }
+    },
+    items: [{ line_id: 'line-1', product_display_name: 'Tree Ornament', quantity: 1, production_status: 'pending' }],
+    forge_order_number: 1001
+  } });
+  await context.openStaffAccessScreen('staff-orders');
+  const addressBefore = vm.runInContext('structuredClone(staffOrdersState.records[0].payload.fulfillment.shipping_address)', context);
+
+  assert.match(String(staffOrdersList.innerHTML || ''), /data-action="staff-copy-shipping-address"/);
+  staffOrdersScreen.dispatchEvent({
+    type: 'click',
+    target: createDispatchTarget({ action: 'staff-copy-shipping-address', orderUuid: 'shared-order-1' }),
+    preventDefault() {}
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(getClipboardText(), 'Local QA Customer\n123 Test Lane\nUnit B\nMadison WI 53703');
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(vm.runInContext('staffOrdersState.records[0].payload.fulfillment.shipping_address', context))),
+    JSON.parse(JSON.stringify(addressBefore))
+  );
+  assert.match(String(staffOrdersList.innerHTML || ''), /Shipping address copied\./);
+});
+
+test('Open USPS launches only the official USPS site in a separate window', async () => {
+  const { context, detailDialog, getOpenedWindows, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
+  setSharedRecord({ payload: {
+    customer: { full_name: 'Shipping Customer' },
+    fulfillment: { method: 'shipping', shipping_address: { address_1: '123 Main', city: 'Austin', state: 'TX', postal_code: '78701' } },
+    items: [{ line_id: 'line-1', quantity: 1, production_status: 'pending' }],
+    forge_order_number: 1001
+  } });
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+  detailDialog.dispatchEvent({ type: 'click', target: createDispatchTarget({ action: 'staff-open-usps' }), preventDefault() {} });
+  assert.deepEqual(getOpenedWindows(), [['https://www.usps.com/', '_blank', 'noopener,noreferrer']]);
+});
+
+test('orders queue cards lead with customer and products while suppressing redundant tray assignment copy', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+  const markup = vm.runInContext(`buildStaffOrderCardMarkup({
+    forge_order_uuid: 'queue-order-1', forge_order_number: 1200, staff_data_source: 'server', sync_status: 'synced',
+    production_status: 'tray_assigned', current_tray_number: 4, total_item_count: 3, completed_item_count: 1,
+    payload: {
+      customer: { full_name: 'Queue Customer' },
+      fulfillment: { method: 'shipping', needed_by: '2026-12-01' },
+      event: { event_id: 'event-1', event_name: 'A Very Long Winter Market Event Name', event_type: 'live_event' },
+      items: [
+        { line_id: 'line-1', product_display_name: 'Tree Ornament', quantity: 2, artwork_readiness: { state: 'ready', label: 'Ready' } },
+        { line_id: 'line-2', product_display_name: 'Wooden Sign', quantity: 1, artwork_readiness: { state: 'template_validation_problem', label: 'Template Validation Problem' } }
+      ]
+    }
+  }, forgeLocalOrdersQueue.createEmptyOrderFilters())`, context);
+
+  assert.ok(markup.indexOf('Queue Customer') < markup.indexOf('Order 1200'));
+  assert.match(markup, /staff-order-products--prominent/);
+  assert.match(markup, /2 × Tree Ornament/);
+  assert.match(markup, /1 × Wooden Sign/);
+  assert.match(markup, /NEEDED DEC 1/);
+  assert.match(markup, /TRAY 4/);
+  assert.doesNotMatch(markup, /Tray Assigned/);
+  assert.match(markup, /Artwork Setup Needed/);
+  assert.match(markup, /data-action="staff-copy-shipping-address"/);
+  assert.doesNotMatch(markup, /Order Subtotal|Applicable sales tax/);
+
+  const pickupMarkup = vm.runInContext(`buildStaffOrderCardMarkup({
+    forge_order_uuid: 'pickup-order-1', forge_order_number: 1201, production_status: 'submitted',
+    payload: { customer: { full_name: 'Pickup Customer' }, fulfillment: { method: 'pickup', needed_by: '2026-12-01' }, items: [{ line_id: 'line-1', product_display_name: 'Wooden Sign', quantity: 1 }] }
+  }, forgeLocalOrdersQueue.createEmptyOrderFilters())`, context);
+  assert.doesNotMatch(pickupMarkup, /data-action="staff-copy-shipping-address"/);
+});
+
+test('staff order detail puts items before shipping and secondary information while preserving production actions', async () => {
+  const { context, detailDialog, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
+  setSharedRecord({
+    production_status: 'tray_assigned', current_tray_number: 3, staff_can_complete_items: true, staff_can_assign_tray: false,
+    payload: {
+      customer: { full_name: 'Production Customer', email: 'customer@example.com', phone: '5551112222', preferred_contact: 'Text' },
+      fulfillment: { method: 'shipping', needed_by: '2026-12-01', shipping_address: { address_1: '123 Main', city: 'Austin', state: 'TX', postal_code: '78701' } },
+      items: [
+        { line_id: 'line-1', product_display_name: 'Tree Ornament', quantity: 1, completed_quantity: 0, production_status: 'pending', artwork_readiness: { state: 'ready', label: 'Ready', detail: 'Ready — Small' } },
+        { line_id: 'line-2', product_display_name: 'Wooden Sign', quantity: 1, completed_quantity: 0, production_status: 'pending' }
+      ],
+      forge_order_number: 1001
+    },
+    total_item_count: 2, completed_item_count: 0
+  });
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+  const markup = String(detailDialog.innerHTML || '');
+
+  assert.ok(markup.indexOf('<h3>Items</h3>') < markup.indexOf('<h3>Shipping</h3>'));
+  assert.ok(markup.indexOf('<h3>Items</h3>') < markup.indexOf('<h3>Customer Contact</h3>'));
+  assert.ok(markup.indexOf('<h3>Items</h3>') < markup.indexOf('<summary><span>Internal Notes'));
+  assert.match(markup, /Production Customer/);
+  assert.match(markup, /NEEDED DEC 1/);
+  assert.match(markup, /TRAY 3/);
+  assert.doesNotMatch(markup, /Tray Assigned/);
+  assert.match(markup, /Tree Ornament/);
+  assert.match(markup, /Wooden Sign/);
+  assert.match(markup, /Artwork: Ready/);
+  assert.match(markup, /staff-complete-item/);
+  assert.match(markup, /<details class="staff-order-detail-section staff-order-detail-collapsible">\s*<summary><span>Internal Notes<\/span><\/summary>/);
 });
 
 test('shared server order detail renders cancel-order confirmation with the stored order context', async () => {
@@ -4193,7 +4360,7 @@ test('loading localhost demo orders performs no IndexedDB reads or API calls and
   assert.equal(harness.getListOrdersCalls(), 1);
   assert.equal(harness.getFetchCalls(), 0);
   assert.match(String(harness.staffOrdersList.innerHTML || ''), /Sarah Williams/);
-  assert.match(String(harness.staffOrdersList.innerHTML || ''), /NO TRAY ASSIGNED/);
+  assert.match(String(harness.staffOrdersList.innerHTML || ''), /staff-order-products--prominent/);
   assert.match(String(harness.staffOrdersList.innerHTML || ''), /Ready to Pack/);
   assert.equal(harness.demoLoadButton.disabled, true);
   assert.equal(harness.demoClearButton.disabled, false);

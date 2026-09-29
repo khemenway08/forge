@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260928-62';
+const FORGE_BUILD_VERSION = '20260929-63';
 const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
@@ -193,6 +193,8 @@ const staffOrdersState = {
   detailInternalNoteSaving: false,
   detailInternalNoteStatus: '',
   detailInternalNoteStatusTone: 'success',
+  detailShippingStatus: '',
+  detailShippingStatusTone: 'success',
   detailMoreActionsExpanded: false,
   detailDestructiveAction: '',
   detailDestructiveConfirmationText: '',
@@ -3925,6 +3927,24 @@ function formatReadableDate(value) {
   }).format(parsed);
 }
 
+function formatNeededByPill(value) {
+  if (!value) {
+    return 'NEEDED BY NOT PROVIDED';
+  }
+
+  const parsed = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return `NEEDED ${String(value).toUpperCase()}`;
+  }
+
+  const dateParts = new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric'
+  }).format(parsed).toUpperCase();
+  const year = parsed.getFullYear() === new Date().getFullYear() ? '' : ` ${parsed.getFullYear()}`;
+  return `NEEDED ${dateParts}${year}`;
+}
+
 function formatReadableDateTime(value) {
   if (!value) {
     return '';
@@ -5652,6 +5672,11 @@ function ensureStaffOrderDetailUi() {
       return;
     }
 
+    if (action === 'staff-open-usps') {
+      window.open('https://www.usps.com/', '_blank', 'noopener,noreferrer');
+      return;
+    }
+
     if (action === 'staff-confirm-cancel-order' && orderUuid && !staffOrdersState.detailDestructiveSaving) {
       submitStaffOrderCancellation(orderUuid);
       return;
@@ -6303,14 +6328,18 @@ function getOrderEventSnapshot(record) {
 
 function buildOrderEventBadges(record) {
   const event = getOrderEventSnapshot(record);
-  if (!event) {
+  if (!event || event.event_type !== 'test_session') {
     return '';
   }
 
-  return `
-    <span class="staff-status-badge staff-status-badge--production-submitted">${escapeHtml(event.event_name)}</span>
-    ${event.event_type === 'test_session' ? '<span class="staff-flag-badge">TEST</span>' : ''}
-  `;
+  return '<span class="staff-flag-badge">TEST</span>';
+}
+
+function buildOrderProductionBadgeMarkup(record) {
+  if (getOrderTrayNumber(record) && getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.trayAssigned) {
+    return '';
+  }
+  return `<span class="staff-status-badge ${escapeHtml(getOrderProductionStatusBadgeClass(record))}">${escapeHtml(getOrderProductionStatusLabel(record))}</span>`;
 }
 
 function getStaffItemProductionStatus(item) {
@@ -7863,6 +7892,11 @@ async function downloadStaffShippingExport() {
   }
 }
 
+function isDomesticUsCountry(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/\./g, '');
+  return normalized === 'us' || normalized === 'usa' || normalized === 'united states';
+}
+
 function buildShippingAddressClipboardText(record) {
   const payload = record?.payload || {};
   const customer = payload.customer || {};
@@ -7871,33 +7905,48 @@ function buildShippingAddressClipboardText(record) {
     return '';
   }
 
+  const locality = [address.city || '', address.state || ''].filter(Boolean).join(' ');
   return [
     customer.full_name || '',
     address.address_1 || '',
     address.address_2 || '',
-    [address.city || '', address.state || '', address.postal_code || ''].filter(Boolean).join(', '),
-    address.country || '',
-    customer.phone ? `Phone: ${customer.phone}` : '',
-    customer.email ? `Email: ${customer.email}` : ''
+    [locality, address.postal_code || ''].filter(Boolean).join(' '),
+    isDomesticUsCountry(address.country) ? '' : (address.country || '')
   ].filter(Boolean).join('\n');
 }
 
-async function copyStaffShippingAddress(forgeOrderUuid) {
+function buildShippingAddressMarkup(record) {
+  return buildShippingAddressClipboardText(record)
+    .split('\n')
+    .map((line) => escapeHtml(line))
+    .join('<br>');
+}
+
+function showStaffAddressCopyFeedback(message, tone, target) {
+  if (target === 'queue') {
+    staffOrdersState.notice = message;
+    staffOrdersState.noticeTone = tone;
+    renderStaffOrdersQueue();
+    return;
+  }
+  staffOrdersState.detailShippingStatus = message;
+  staffOrdersState.detailShippingStatusTone = tone;
+  renderStaffOrderDetail();
+}
+
+async function copyStaffShippingAddress(forgeOrderUuid, feedbackTarget = 'detail') {
   const record = getCurrentStaffQueueRecords().find((candidate) => candidate?.forge_order_uuid === forgeOrderUuid)
     || staffOrdersState.detailRecord;
   const addressText = buildShippingAddressClipboardText(record);
   if (!addressText) {
-    staffOrdersState.detailError = 'This order does not have a shipping address to copy.';
-    renderStaffOrderDetail();
+    showStaffAddressCopyFeedback('This order does not have a shipping address to copy.', 'error', feedbackTarget);
     return;
   }
 
   try {
     if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
       await navigator.clipboard.writeText(addressText);
-      staffOrdersState.detailInternalNoteStatus = 'Shipping address copied.';
-      staffOrdersState.detailInternalNoteStatusTone = 'success';
-      renderStaffOrderDetail();
+      showStaffAddressCopyFeedback('Shipping address copied.', 'success', feedbackTarget);
       return;
     }
   } catch (error) {
@@ -7905,9 +7954,7 @@ async function copyStaffShippingAddress(forgeOrderUuid) {
   }
 
   window.prompt('Copy this shipping address:', addressText);
-  staffOrdersState.detailInternalNoteStatus = 'Shipping address ready to copy.';
-  staffOrdersState.detailInternalNoteStatusTone = 'success';
-  renderStaffOrderDetail();
+  showStaffAddressCopyFeedback('Shipping address ready to copy.', 'success', feedbackTarget);
 }
 
 async function previewLegacyTestCleanup() {
@@ -7990,31 +8037,31 @@ function buildStaffOrderCardMarkup(record, filters) {
   const payload = record.payload || {};
   const matchingItems = forgeLocalOrdersQueue.getMatchingOrderItems(record, filters);
   const productSummary = buildStaffProductSummary(matchingItems);
-  const estimatedTotalCents = payload.pricing?.estimated_total_cents;
   const fulfillmentMethod = payload.fulfillment?.method === 'pickup' ? 'Pickup' : 'Shipping';
+  const isShippingOrder = sanitizeText(payload.fulfillment?.method || '').toLowerCase() === 'shipping';
   const itemCount = matchingItems.reduce((sum, item) => sum + (Number.isInteger(item.quantity) ? item.quantity : 1), 0);
   const hasActiveItemFilters = ['product', 'ornamentType', 'size', 'treeColor', 'bowColor', 'year', 'productionStatus']
     .some((key) => String(filters?.[key] || 'all').toLowerCase() !== 'all');
   const hasFlags = Array.isArray(payload.open_flags) && payload.open_flags.length > 0;
   const hasInternalNote = Boolean(record.has_internal_note) || sanitizeText(record.internal_note || '') !== '';
   const trayLabel = getOrderTrayLabel(record);
-  const productionStatusLabel = getOrderProductionStatusLabel(record);
   const completionSummary = getOrderCompletionSummary(record);
-  const syncStatusLabel = getStaffSyncStatusLabel(record);
-  const syncStatusBadgeClass = getStaffSyncStatusBadgeClass(record);
   const canFinalizeOrder = canCompleteStaffOrder(record);
   const artworkSetupNeeded = staffOrderNeedsArtworkSetup(record);
+  const eventSnapshot = getOrderEventSnapshot(record);
+  const trayNumber = getOrderTrayNumber(record);
 
   return `
-    <article class="staff-order-card">
+    <article class="staff-order-card staff-order-card--production">
       <div class="staff-order-card-header">
         <div class="staff-order-card-title">
-          <div class="staff-order-ref">${escapeHtml(getOrderDisplayReference(record))}</div>
-          <p>${escapeHtml(formatReadableDateTime(record.submitted_at || record.local_saved_at || ''))}</p>
+          <h3 class="staff-order-customer-name">${escapeHtml(payload.customer?.full_name || 'Unknown customer')}</h3>
+          <p class="staff-order-secondary">${escapeHtml(getOrderDisplayReference(record))}${eventSnapshot?.event_name ? ` · ${escapeHtml(eventSnapshot.event_name)}` : ''}</p>
         </div>
         <div class="staff-order-card-badges">
-          <span class="staff-tray-badge ${escapeHtml(getOrderTrayBadgeClass(record))}">${escapeHtml(trayLabel)}</span>
-          <span class="staff-status-badge ${escapeHtml(getOrderProductionStatusBadgeClass(record))}">${escapeHtml(productionStatusLabel)}</span>
+          <span class="staff-needed-by-badge">${escapeHtml(formatNeededByPill(payload.fulfillment?.needed_by))}</span>
+          ${trayNumber ? `<span class="staff-tray-badge ${escapeHtml(getOrderTrayBadgeClass(record))}">${escapeHtml(trayLabel)}</span>` : ''}
+          ${buildOrderProductionBadgeMarkup(record)}
           ${buildOrderEventBadges(record)}
           ${buildStaffSyncBadgeMarkup(record)}
           ${hasInternalNote ? '<span class="staff-status-badge staff-status-badge--sync-pending">NOTE</span>' : ''}
@@ -8022,25 +8069,21 @@ function buildStaffOrderCardMarkup(record, filters) {
           ${artworkSetupNeeded ? '<span class="staff-artwork-badge staff-artwork-badge--problem">Artwork Setup Needed</span>' : ''}
         </div>
       </div>
-      <div class="staff-order-card-meta staff-order-card-meta--primary">
-        <div><span>Customer</span><strong>${escapeHtml(payload.customer?.full_name || 'Unknown customer')}</strong></div>
-        <div><span>Tray</span><strong>${escapeHtml(trayLabel)}</strong></div>
-        <div><span>Production</span><strong>${escapeHtml(productionStatusLabel)}</strong></div>
-        <div><span>Progress</span><strong>${escapeHtml(completionSummary)}</strong></div>
-      </div>
-      <div class="staff-order-card-meta staff-order-card-meta--secondary">
-        <div><span>${hasActiveItemFilters ? 'Matching Pieces' : 'Items'}</span><strong>${escapeHtml(String(itemCount))}</strong></div>
-        <div><span>Order Subtotal</span><strong>${Number.isInteger(estimatedTotalCents) ? escapeHtml(formatPrice(estimatedTotalCents / 100)) : 'Quote Required'}</strong></div>
-        <div><span>Fulfillment</span><strong>${escapeHtml(fulfillmentMethod)}</strong></div>
-      </div>
-      <p class="staff-order-detail-note">Applicable sales tax is added during payment.</p>
-      <div class="staff-order-products">
+      <div class="staff-order-products staff-order-products--prominent">
         <span>Products</span>
         <ul>${productSummary.map((line) => `<li><span>${escapeHtml(line)}</span></li>`).join('')}</ul>
       </div>
-      <div class="staff-order-card-actions">
-        <button class="secondary-button" type="button" data-action="staff-view-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">View Order</button>
-        ${canFinalizeOrder ? `<button class="primary-button" type="button" data-action="staff-complete-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Complete Order</button>` : ''}
+      <div class="staff-order-queue-facts">
+        <span><strong>${escapeHtml(String(itemCount))}</strong> ${escapeHtml(hasActiveItemFilters ? 'matching pieces' : (itemCount === 1 ? 'piece' : 'pieces'))}</span>
+        <span>${escapeHtml(fulfillmentMethod)}</span>
+        <span>${escapeHtml(completionSummary)}</span>
+      </div>
+      <div class="staff-order-card-actions staff-order-card-actions--split">
+        <div class="staff-order-card-action-group">
+          <button class="secondary-button" type="button" data-action="staff-view-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">View Order</button>
+          ${canFinalizeOrder ? `<button class="primary-button" type="button" data-action="staff-complete-order" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Complete Order</button>` : ''}
+        </div>
+        ${isShippingOrder ? `<button class="secondary-button" type="button" data-action="staff-copy-shipping-address" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Copy Address</button>` : ''}
       </div>
     </article>
   `;
@@ -8121,6 +8164,8 @@ async function openStaffOrderDetail(forgeOrderUuid) {
   staffOrdersState.detailInternalNoteSaving = false;
   staffOrdersState.detailInternalNoteStatus = '';
   staffOrdersState.detailInternalNoteStatusTone = 'success';
+  staffOrdersState.detailShippingStatus = '';
+  staffOrdersState.detailShippingStatusTone = 'success';
   resetStaffOrderDetailDestructiveState();
   staffOrdersState.detailOrderUuid = forgeOrderUuid;
   staffOrdersState.detailRecord = null;
@@ -8179,6 +8224,8 @@ function closeStaffOrderDetail() {
   staffOrdersState.detailInternalNoteSaving = false;
   staffOrdersState.detailInternalNoteStatus = '';
   staffOrdersState.detailInternalNoteStatusTone = 'success';
+  staffOrdersState.detailShippingStatus = '';
+  staffOrdersState.detailShippingStatusTone = 'success';
   resetStaffOrderDetailDestructiveState();
   renderStaffOrderDetail();
   if (lastStaffOrderDetailFocusTarget) {
@@ -8245,7 +8292,6 @@ function renderStaffOrderDetail() {
   const fulfillment = payload.fulfillment || {};
   const openFlags = Array.isArray(payload.open_flags) ? payload.open_flags : [];
   const shippingAddress = fulfillment.shipping_address || null;
-  const shortOrderReference = getOrderShortReference(record);
   const productionStatusLabel = getOrderProductionStatusLabel(record);
   const trayLabel = getOrderTrayLabel(record);
   const showAssignTrayAction = canStaffAssignTray(record);
@@ -8260,7 +8306,7 @@ function renderStaffOrderDetail() {
   const emailStatusDetail = getOrderEmailStatusDetail(record);
   const showRawJsonAction = isLoopbackHost(window.location);
   const internalNote = sanitizeText(record.internal_note || '');
-  const hasInternalNote = Boolean(record.has_internal_note) || internalNote !== '';
+  const hasInternalNote = internalNote !== '';
   const showOpenFlagProgressNote = getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.inProduction
     && completionCounts.totalItemCount > 0
     && completionCounts.completedItemCount >= completionCounts.totalItemCount
@@ -8271,18 +8317,18 @@ function renderStaffOrderDetail() {
   renderedDetailContainer.innerHTML = `
     <div class="staff-order-detail-header">
       <div class="staff-order-detail-heading">
-        <p class="eyebrow staff-orders-eyebrow">${escapeHtml(getStaffEnvironmentEyebrow())}</p>
-        <h2 id="staff-order-detail-title">${escapeHtml(getOrderDisplayReference(record))}</h2>
-        <p class="staff-order-detail-customer">${escapeHtml(customer.full_name || 'Unknown customer')}</p>
+        <p class="eyebrow staff-orders-eyebrow">${escapeHtml(getOrderDisplayReference(record))}</p>
+        <h2 id="staff-order-detail-title">${escapeHtml(customer.full_name || 'Unknown customer')}</h2>
+        <p class="staff-order-detail-customer">${escapeHtml(eventSnapshot?.event_name || getStaffEnvironmentEyebrow())}</p>
         <div class="staff-order-detail-badges">
-          <span class="staff-tray-badge ${escapeHtml(getOrderTrayBadgeClass(record))}">${escapeHtml(trayLabel)}</span>
-          <span class="staff-status-badge ${escapeHtml(getOrderProductionStatusBadgeClass(record))}">${escapeHtml(productionStatusLabel)}</span>
+          <span class="staff-needed-by-badge">${escapeHtml(formatNeededByPill(fulfillment.needed_by))}</span>
+          ${getOrderTrayNumber(record) ? `<span class="staff-tray-badge ${escapeHtml(getOrderTrayBadgeClass(record))}">${escapeHtml(trayLabel)}</span>` : ''}
+          ${buildOrderProductionBadgeMarkup(record)}
           ${buildOrderEventBadges(record)}
-          ${buildStaffSyncBadgeMarkup(record)}
           ${hasInternalNote ? '<span class="staff-status-badge staff-status-badge--sync-pending">NOTE</span>' : ''}
           ${openFlags.length ? '<span class="staff-flag-badge">Open Flags</span>' : ''}
+          ${staffOrderNeedsArtworkSetup(record) ? '<span class="staff-artwork-badge staff-artwork-badge--problem">Artwork Setup Needed</span>' : ''}
         </div>
-        <p class="staff-order-progress-text">${escapeHtml(completionSummary)}</p>
       </div>
       <div class="staff-order-card-actions staff-order-detail-actions">
         ${canStaffEditSubmittedOrder(record) ? `<button class="secondary-button" type="button" data-action="staff-edit-order">Edit Order</button>` : ''}
@@ -8298,93 +8344,46 @@ function renderStaffOrderDetail() {
     ${staffOrdersState.demoMode ? buildStaffNoticeMarkup('Demo order detail is for localhost visual QA only and does not save changes.', 'muted') : ''}
     ${showRawJsonAction ? buildStaffUtilityActionMarkup(record) : ''}
 
-    <div class="staff-order-detail-meta">
-      <div><span>Order Number</span><strong>${escapeHtml(getOrderDisplayReference(record))}</strong></div>
+    <div class="staff-order-detail-summary">
+      <div><span>Total Pieces</span><strong>${escapeHtml(String(completionCounts.totalItemCount))}</strong></div>
       <div><span>Fulfillment</span><strong>${escapeHtml(fulfillment.method === 'pickup' ? 'Pickup' : 'Shipping')}</strong></div>
-      <div><span>Submitted</span><strong>${escapeHtml(formatReadableDateTime(record.submitted_at || ''))}</strong></div>
-      <div><span>${escapeHtml(sourceConfig.savedTimestampLabel)}</span><strong>${escapeHtml(formatReadableDateTime(record.local_saved_at || record.received_at || ''))}</strong></div>
-      ${record.ready_to_pack_at ? `<div><span>Ready to Pack</span><strong>${escapeHtml(formatReadableDateTime(record.ready_to_pack_at))}</strong></div>` : ''}
-      ${record.completed_at ? `<div><span>Completed</span><strong>${escapeHtml(formatReadableDateTime(record.completed_at))}</strong></div>` : ''}
-      <div><span>Payment Method</span><strong>${escapeHtml(getRecordedPaymentMethodLabel(record))}</strong></div>
-      <div><span>Sync Status</span><strong>${escapeHtml(syncStatusLabel)}</strong></div>
-      <div><span>Customer Email</span><strong>${escapeHtml(emailStatusDetail)}</strong></div>
+      <div><span>Production Progress</span><strong>${escapeHtml(completionSummary)}</strong></div>
+      ${getOrderTrayNumber(record) && getOrderProductionStatus(record) === forgeOrderStore.PRODUCTION_STATUSES?.trayAssigned
+        ? ''
+        : `<div><span>Production State</span><strong>${escapeHtml(productionStatusLabel)}</strong></div>`}
     </div>
 
-    <section class="staff-order-detail-section">
-      <h3>Order</h3>
-      <div class="staff-order-detail-grid">
-        <div><span>Production Tray</span><strong>${escapeHtml(getOrderProductionTrayDetail(record))}</strong></div>
-        <div><span>Production Progress</span><strong>${escapeHtml(completionSummary)}</strong></div>
-        <div><span>Event</span><strong>${escapeHtml(eventSnapshot?.event_name || 'Not attached')}</strong></div>
-        <div><span>Event Type</span><strong>${escapeHtml(eventSnapshot?.event_type === 'test_session' ? 'Test Session' : (eventSnapshot ? 'Live Event' : 'Not attached'))}</strong></div>
-        <div><span>Order Subtotal</span><strong>${Number.isInteger(payload.pricing?.estimated_total_cents) ? escapeHtml(formatPrice(payload.pricing.estimated_total_cents / 100)) : 'Quote Required'}</strong></div>
-      </div>
-      <p class="staff-order-detail-note">Applicable sales tax is added during payment.</p>
-      ${showOpenFlagProgressNote ? '<p class="staff-order-detail-note">All required pieces are complete, but this order still has an open flag and cannot move to Ready to Pack yet.</p>' : ''}
-      ${isCancelledRecord ? '<p class="staff-order-detail-note">This order is cancelled and remains stored for history. Tray assignment, item completion, packing, and Ready-to-Pack progression are disabled.</p>' : ''}
-      ${openFlags.length ? `<div class="staff-order-detail-flags">
-        <span>Open Flags</span>
-        <ul>${openFlags.map((flag) => `<li>${escapeHtml(flag.message || flag.code || 'Open flag')}</li>`).join('')}</ul>
-      </div>` : ''}
+    ${showOpenFlagProgressNote ? buildStaffNoticeMarkup('All required pieces are complete, but this order still has an open flag and cannot move to Ready to Pack yet.', 'muted') : ''}
+    ${isCancelledRecord ? buildStaffNoticeMarkup('This order is cancelled and remains stored for history. Tray assignment, item completion, packing, and Ready-to-Pack progression are disabled.', 'muted') : ''}
+    ${openFlags.length ? `<section class="staff-order-detail-section staff-order-detail-flags"><h3>Open Flags</h3><ul>${openFlags.map((flag) => `<li>${escapeHtml(flag.message || flag.code || 'Open flag')}</li>`).join('')}</ul></section>` : ''}
+
+    <section class="staff-order-detail-section staff-order-detail-items staff-order-detail-items--primary">
+      <h3>Items</h3>
+      ${isCancelledRecord
+        ? '<p class="staff-order-detail-note">Cancelled orders stay visible for history, but item completion is permanently disabled.</p>'
+        : (isCompletedOrder(record)
+        ? '<p class="staff-order-detail-note">This order is completed and its tray has already been released back to the available pool.</p>'
+        : (isPackedOrder
+        ? '<p class="staff-order-detail-note">Packing has been verified and the assigned tray has already been released.</p>'
+        : (showNoTrayMessage
+          ? '<p class="staff-order-detail-note">Assign a tray before marking any finished piece complete.</p>'
+          : '<p class="staff-order-detail-note">Mark complete only after the finished piece has been placed in the assigned tray.</p>')))}
+      ${getStaffOrderItemsMarkup(record, payload.items || [])}
     </section>
 
-    <section class="staff-order-detail-section">
-      <h3>Internal Notes</h3>
-      ${staffOrdersState.detailInternalNoteStatus ? buildStaffNoticeMarkup(staffOrdersState.detailInternalNoteStatus, staffOrdersState.detailInternalNoteStatusTone) : ''}
-      <div class="staff-order-detail-row">
-        <span>INTERNAL NOTES</span>
-        <textarea
-          class="staff-packing-note"
-          data-staff-internal-note-field
-          rows="5"
-          maxlength="4000"
-          placeholder="Add a private operational note for staff only."
-          ${staffOrdersState.detailInternalNoteSaving ? 'disabled' : ''}
-        >${escapeHtml(staffOrdersState.detailInternalNoteDraft)}</textarea>
-      </div>
-      <div class="staff-order-card-actions">
-        <button
-          class="primary-button"
-          type="button"
-          data-action="staff-save-internal-note"
-          data-order-uuid="${escapeHtml(record.forge_order_uuid)}"
-          ${staffOrdersState.detailInternalNoteSaving ? 'disabled' : ''}
-        >${staffOrdersState.detailInternalNoteSaving ? 'Saving...' : 'Save Note'}</button>
-      </div>
-    </section>
-
-    <section class="staff-order-detail-section">
-      <h3>Customer</h3>
-      <div class="staff-order-detail-feature">
-        <span>Name</span>
-        <strong>${escapeHtml(customer.full_name || 'Not provided')}</strong>
-      </div>
-      <div class="staff-order-detail-grid">
-        <div><span>Email</span><strong>${escapeHtml(customer.email || 'Not provided')}</strong></div>
-        <div><span>Phone</span><strong>${escapeHtml(formatCustomerPhone(customer.phone || 'Not provided'))}</strong></div>
-        <div><span>Preferred Contact</span><strong>${escapeHtml(customer.preferred_contact || 'Not provided')}</strong></div>
-      </div>
-    </section>
-
-    <section class="staff-order-detail-section">
-      <h3>Fulfillment</h3>
-      <div class="staff-needed-by-callout" data-needed-by-state="normal">
-        <span>Needed By</span>
-        <strong>${escapeHtml(fulfillment.needed_by ? formatReadableDate(fulfillment.needed_by) : 'Not provided')}</strong>
-      </div>
-      <div class="staff-order-detail-grid">
-        <div><span>Method</span><strong>${escapeHtml(fulfillment.method === 'pickup' ? 'Pickup' : 'Shipping')}</strong></div>
-      </div>
-      ${shippingAddress ? `
-        <div class="staff-order-detail-row">
-          <span>Shipping Address</span>
-          <strong>${escapeHtml([shippingAddress.address_1, shippingAddress.address_2, [shippingAddress.city, shippingAddress.state, shippingAddress.postal_code].filter(Boolean).join(', '), shippingAddress.country].filter(Boolean).join(' • '))}</strong>
-        </div>
+    ${fulfillment.method === 'shipping' ? `
+      <section class="staff-order-detail-section staff-shipping-section">
+        <h3>Shipping</h3>
+        ${staffOrdersState.detailShippingStatus ? buildStaffNoticeMarkup(staffOrdersState.detailShippingStatus, staffOrdersState.detailShippingStatusTone) : ''}
+        ${shippingAddress
+          ? `<address class="staff-shipping-address">${buildShippingAddressMarkup(record)}</address>`
+          : '<p class="staff-order-detail-note">No shipping address is stored for this order.</p>'}
         <div class="staff-order-card-actions">
-          <button class="secondary-button" type="button" data-action="staff-copy-shipping-address" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Copy Shipping Address</button>
+          <button class="secondary-button" type="button" data-action="staff-copy-shipping-address" data-order-uuid="${escapeHtml(record.forge_order_uuid)}"${shippingAddress ? '' : ' disabled'}>Copy Address</button>
+          <button class="secondary-button" type="button" data-action="staff-open-usps">Open USPS</button>
         </div>
-      ` : '<p>Local pickup order.</p>'}
-    </section>
+      </section>
+    ` : ''}
 
     ${packingVerification ? `
       <section class="staff-order-detail-section">
@@ -8404,19 +8403,64 @@ function renderStaffOrderDetail() {
       </section>
     ` : ''}
 
-    <section class="staff-order-detail-section staff-order-detail-items">
-      <h3>Items</h3>
-      ${isCancelledRecord
-        ? '<p class="staff-order-detail-note">Cancelled orders stay visible for history, but item completion is permanently disabled.</p>'
-        : (isCompletedOrder(record)
-        ? '<p class="staff-order-detail-note">This order is completed and its tray has already been released back to the available pool.</p>'
-        : (isPackedOrder
-        ? '<p class="staff-order-detail-note">Packing has been verified and the assigned tray has already been released.</p>'
-        : (showNoTrayMessage
-          ? '<p class="staff-order-detail-note">Assign a tray before marking any finished piece complete.</p>'
-          : '<p class="staff-order-detail-note">Mark complete only after the finished piece has been placed in the assigned tray.</p>')))}
-      ${getStaffOrderItemsMarkup(record, payload.items || [])}
+    <section class="staff-order-detail-section staff-order-detail-customer-section">
+      <h3>Customer Contact</h3>
+      <div class="staff-order-detail-grid">
+        <div><span>Email</span><strong>${escapeHtml(customer.email || 'Not provided')}</strong></div>
+        <div><span>Phone</span><strong>${escapeHtml(formatCustomerPhone(customer.phone || 'Not provided'))}</strong></div>
+        <div><span>Preferred Contact</span><strong>${escapeHtml(customer.preferred_contact || 'Not provided')}</strong></div>
+      </div>
     </section>
+
+    <details class="staff-order-detail-section staff-order-detail-collapsible"${hasInternalNote ? ' open' : ''}>
+      <summary><span>Internal Notes</span>${hasInternalNote ? '<span class="staff-flag-badge staff-note-attention-badge">NOTE</span>' : ''}</summary>
+      <div class="staff-order-detail-collapsible-body">
+        ${staffOrdersState.detailInternalNoteStatus ? buildStaffNoticeMarkup(staffOrdersState.detailInternalNoteStatus, staffOrdersState.detailInternalNoteStatusTone) : ''}
+        <div class="staff-order-detail-row">
+          <textarea
+            class="staff-packing-note"
+            data-staff-internal-note-field
+            rows="3"
+            maxlength="4000"
+            aria-label="Internal notes"
+            placeholder="Add a private operational note for staff only."
+            ${staffOrdersState.detailInternalNoteSaving ? 'disabled' : ''}
+          >${escapeHtml(staffOrdersState.detailInternalNoteDraft)}</textarea>
+        </div>
+        <div class="staff-order-card-actions">
+          <button
+            class="primary-button"
+            type="button"
+            data-action="staff-save-internal-note"
+            data-order-uuid="${escapeHtml(record.forge_order_uuid)}"
+            ${staffOrdersState.detailInternalNoteSaving ? 'disabled' : ''}
+          >${staffOrdersState.detailInternalNoteSaving ? 'Saving...' : 'Save Note'}</button>
+        </div>
+      </div>
+    </details>
+
+    <details class="staff-order-detail-section staff-order-detail-collapsible">
+      <summary>Order Information</summary>
+      <div class="staff-order-detail-collapsible-body">
+        <div class="staff-order-detail-grid">
+          <div><span>Order Number</span><strong>${escapeHtml(getOrderDisplayReference(record))}</strong></div>
+          ${!getOrderTrayNumber(record) && (isCompletedOrder(record) || isPackedOrder)
+            ? `<div><span>Production Tray</span><strong>${escapeHtml(getOrderProductionTrayDetail(record))}</strong></div>`
+            : ''}
+          <div><span>Submitted</span><strong>${escapeHtml(formatReadableDateTime(record.submitted_at || ''))}</strong></div>
+          <div><span>${escapeHtml(sourceConfig.savedTimestampLabel)}</span><strong>${escapeHtml(formatReadableDateTime(record.local_saved_at || record.received_at || ''))}</strong></div>
+          ${record.ready_to_pack_at ? `<div><span>Ready to Pack</span><strong>${escapeHtml(formatReadableDateTime(record.ready_to_pack_at))}</strong></div>` : ''}
+          ${record.completed_at ? `<div><span>Completed</span><strong>${escapeHtml(formatReadableDateTime(record.completed_at))}</strong></div>` : ''}
+          <div><span>Event</span><strong>${escapeHtml(eventSnapshot?.event_name || 'Not attached')}</strong></div>
+          <div><span>Event Type</span><strong>${escapeHtml(eventSnapshot?.event_type === 'test_session' ? 'Test Session' : (eventSnapshot ? 'Live Event' : 'Not attached'))}</strong></div>
+          <div><span>Payment Method</span><strong>${escapeHtml(getRecordedPaymentMethodLabel(record))}</strong></div>
+          <div><span>Sync Status</span><strong>${escapeHtml(syncStatusLabel)}</strong></div>
+          <div><span>Customer Email</span><strong>${escapeHtml(emailStatusDetail)}</strong></div>
+          <div><span>Order Subtotal</span><strong>${Number.isInteger(payload.pricing?.estimated_total_cents) ? escapeHtml(formatPrice(payload.pricing.estimated_total_cents / 100)) : 'Quote Required'}</strong></div>
+        </div>
+        <p class="staff-order-detail-note">Applicable sales tax is added during payment.</p>
+      </div>
+    </details>
 
     ${buildStaffOrderDestructiveActionsMarkup(record)}
   `;
@@ -11519,6 +11563,11 @@ if (treeForm) {
 
     if (action === 'staff-clear-demo-orders') {
       clearStaffDemoOrdersForVisualQa();
+      return;
+    }
+
+    if (action === 'staff-copy-shipping-address' && orderUuid) {
+      copyStaffShippingAddress(orderUuid, 'queue');
       return;
     }
 
