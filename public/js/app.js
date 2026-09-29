@@ -1,6 +1,24 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260929-63';
+const FORGE_BUILD_VERSION = '20260929-64';
 const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
+const USPS_ADDRESS_BOOK_HEADERS = Object.freeze([
+  'First Name',
+  'MI',
+  'Last Name',
+  'Company Name',
+  'Address Line 1',
+  'Address Line 2',
+  'Address Line 3',
+  'City',
+  'State/Province',
+  'ZIP/Postal Code',
+  'Country',
+  'Urbanization',
+  'Phone Number',
+  'Email',
+  'Reference Number',
+  'Nickname'
+]);
 
 window.FORGE_BUILD_VERSION = FORGE_BUILD_VERSION;
 
@@ -1214,6 +1232,14 @@ function isLocalStaffDemoAvailable() {
 
 function getCurrentStaffQueueRecords() {
   return staffOrdersState.demoMode ? staffOrdersState.demoRecords : staffOrdersState.records;
+}
+
+function getDisplayedStaffOrderRecords() {
+  return forgeLocalOrdersQueue.filterLocalOrders(
+    getCurrentStaffQueueRecords(),
+    staffOrdersState.filters,
+    staffOrdersState.searchTerm
+  );
 }
 
 function createDemoShippingAddress(address1, city, state, postalCode) {
@@ -6819,11 +6845,7 @@ function renderStaffOrdersQueue() {
   renderStaffSourceUi();
   const queueRecords = getCurrentStaffQueueRecords();
   const sourceConfig = getStaffSourceConfig();
-  const filteredRecords = forgeLocalOrdersQueue.filterLocalOrders(
-    queueRecords,
-    staffOrdersState.filters,
-    staffOrdersState.searchTerm
-  );
+  const filteredRecords = getDisplayedStaffOrderRecords();
   const availableFilters = forgeLocalOrdersQueue.getAvailableOrderFilters(queueRecords, {
     activeFilters: staffOrdersState.filters,
     searchTerm: staffOrdersState.searchTerm
@@ -7932,6 +7954,171 @@ function showStaffAddressCopyFeedback(message, tone, target) {
   staffOrdersState.detailShippingStatus = message;
   staffOrdersState.detailShippingStatusTone = tone;
   renderStaffOrderDetail();
+}
+
+function trimUspsCsvValue(value) {
+  return value == null ? '' : String(value).trim();
+}
+
+function escapeUspsCsvValue(value) {
+  const text = trimUspsCsvValue(value);
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function getUspsExportCustomerName(customer) {
+  const companyName = trimUspsCsvValue(customer?.company_name || customer?.company || '');
+  let firstName = trimUspsCsvValue(customer?.first_name || '');
+  let lastName = trimUspsCsvValue(customer?.last_name || '');
+
+  if (!firstName || !lastName) {
+    const fullNameParts = sanitizeText(customer?.full_name || '').split(' ').filter(Boolean);
+    if (fullNameParts.length > 0) {
+      firstName = fullNameParts[0];
+      lastName = fullNameParts.slice(1).join(' ');
+    }
+  }
+
+  return {
+    firstName,
+    middleInitial: trimUspsCsvValue(customer?.middle_initial || customer?.mi || ''),
+    lastName,
+    companyName,
+    valid: Boolean(companyName || (firstName && lastName))
+  };
+}
+
+function getUspsExportCountry(address) {
+  const country = trimUspsCsvValue(address?.country || '');
+  if (country) {
+    return country;
+  }
+
+  const state = trimUspsCsvValue(address?.state || address?.state_province || '');
+  const postalCode = trimUspsCsvValue(address?.postal_code || address?.zip || '');
+  return /^[A-Za-z]{2}$/.test(state) && /^\d{5}(?:-\d{4})?$/.test(postalCode) ? 'US' : '';
+}
+
+function getUspsExportOrderReference(record) {
+  const value = record?.forge_order_number ?? record?.payload?.forge_order_number ?? '';
+  return trimUspsCsvValue(value);
+}
+
+function buildUspsAddressBookExport(records) {
+  const sourceRecords = Array.isArray(records) ? records : [];
+  const rows = [];
+  const skippedShippingOrders = [];
+  let pickupSkippedCount = 0;
+
+  sourceRecords.forEach((record) => {
+    const payload = record?.payload || {};
+    const fulfillment = payload.fulfillment || {};
+    const method = sanitizeText(fulfillment.method || '').toLowerCase();
+    if (!['shipping', 'mail', 'mailed'].includes(method)) {
+      if (method === 'pickup') {
+        pickupSkippedCount += 1;
+      }
+      return;
+    }
+
+    const customer = payload.customer || {};
+    const address = fulfillment.shipping_address && typeof fulfillment.shipping_address === 'object'
+      ? fulfillment.shipping_address
+      : {};
+    const customerName = getUspsExportCustomerName(customer);
+    const addressLine1 = trimUspsCsvValue(address.address_1 || address.address_line_1 || '');
+    const city = trimUspsCsvValue(address.city || '');
+    const state = trimUspsCsvValue(address.state || address.state_province || '');
+    const postalCode = trimUspsCsvValue(address.postal_code || address.zip || '');
+    const country = getUspsExportCountry(address);
+    const missingFields = [];
+
+    if (!customerName.valid) missingFields.push('customer_name');
+    if (!addressLine1) missingFields.push('address_1');
+    if (!city) missingFields.push('city');
+    if (!state) missingFields.push('state');
+    if (!postalCode) missingFields.push('postal_code');
+    if (!country) missingFields.push('country');
+
+    if (missingFields.length > 0) {
+      skippedShippingOrders.push({
+        referenceNumber: getUspsExportOrderReference(record),
+        missingFields
+      });
+      return;
+    }
+
+    rows.push([
+      customerName.firstName,
+      customerName.middleInitial,
+      customerName.lastName,
+      customerName.companyName,
+      addressLine1,
+      trimUspsCsvValue(address.address_2 || address.address_line_2 || ''),
+      trimUspsCsvValue(address.address_3 || address.address_line_3 || ''),
+      city,
+      state,
+      postalCode,
+      country,
+      trimUspsCsvValue(address.urbanization || ''),
+      trimUspsCsvValue(customer.phone || ''),
+      trimUspsCsvValue(customer.email || ''),
+      getUspsExportOrderReference(record),
+      ''
+    ]);
+  });
+
+  const csvLines = [USPS_ADDRESS_BOOK_HEADERS, ...rows]
+    .map((row) => row.map(escapeUspsCsvValue).join(','));
+
+  return {
+    csvText: rows.length > 0 ? `${csvLines.join('\r\n')}\r\n` : '',
+    exportedCount: rows.length,
+    pickupSkippedCount,
+    skippedShippingCount: skippedShippingOrders.length,
+    skippedShippingOrders
+  };
+}
+
+function getLocalIsoDate() {
+  const now = new Date();
+  const year = String(now.getFullYear()).padStart(4, '0');
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function downloadDisplayedStaffUspsAddresses() {
+  const result = buildUspsAddressBookExport(getDisplayedStaffOrderRecords());
+  const skippedReferences = result.skippedShippingOrders
+    .map((order) => order.referenceNumber ? `Order ${order.referenceNumber}` : 'an order without a reference')
+    .join(', ');
+  const skippedCopy = result.skippedShippingCount > 0
+    ? ` ${result.skippedShippingCount} shipping order${result.skippedShippingCount === 1 ? '' : 's'} skipped because required USPS information is missing: ${skippedReferences}.`
+    : '';
+  const pickupCopy = result.pickupSkippedCount > 0
+    ? ` ${result.pickupSkippedCount} pickup order${result.pickupSkippedCount === 1 ? '' : 's'} skipped.`
+    : '';
+
+  if (result.exportedCount === 0) {
+    staffOrdersState.notice = `No valid shipping addresses are available in the displayed orders.${skippedCopy}${pickupCopy}`;
+    staffOrdersState.noticeTone = 'error';
+    renderStaffOrdersQueue();
+    return result;
+  }
+
+  const filename = `USPS_Addresses_${getLocalIsoDate()}.csv`;
+  const blob = new Blob([result.csvText], { type: 'text/csv;charset=utf-8' });
+  const blobUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = blobUrl;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+
+  staffOrdersState.notice = `Exported ${result.exportedCount} shipping address${result.exportedCount === 1 ? '' : 'es'} to ${filename}.${skippedCopy}${pickupCopy}`;
+  staffOrdersState.noticeTone = result.skippedShippingCount > 0 ? 'error' : 'success';
+  renderStaffOrdersQueue();
+  return result;
 }
 
 async function copyStaffShippingAddress(forgeOrderUuid, feedbackTarget = 'detail') {
@@ -11435,6 +11622,11 @@ if (treeForm) {
     if (action === 'staff-refresh-orders') {
       staffOrdersState.notice = '';
       loadStaffOrdersQueue();
+      return;
+    }
+
+    if (action === 'staff-export-usps-addresses') {
+      downloadDisplayedStaffUspsAddresses();
       return;
     }
 

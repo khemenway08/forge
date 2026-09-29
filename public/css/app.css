@@ -4589,6 +4589,12 @@ body.forge-catalog-image-viewer-open {
   text-align: right;
 }
 
+.staff-orders-queue-actions {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+
 .staff-batch-groups,
 .staff-orders-list {
   display: grid;

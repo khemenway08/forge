@@ -7,7 +7,7 @@ const vm = require('vm');
 const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'), 'utf8');
 const cssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
-const BUILD_VERSION = '20260929-63';
+const BUILD_VERSION = '20260929-64';
 
 function extractScreenMarkup(screenId) {
   const match = indexSource.match(new RegExp(`<section class="screen[\\s\\S]*?data-screen="${screenId}"[\\s\\S]*?<\\/section>`));
@@ -3738,6 +3738,164 @@ test('shipping queue Copy Address reuses the postal formatter without mutating t
     JSON.parse(JSON.stringify(addressBefore))
   );
   assert.match(String(staffOrdersList.innerHTML || ''), /Shipping address copied\./);
+});
+
+test('USPS Address Book export uses the exact 16-column mapping and preserves source orders', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+  const records = [{
+    forge_order_uuid: 'usps-order-1',
+    forge_order_number: 1042,
+    payload: {
+      customer: {
+        full_name: "Jane O'Neil",
+        first_name: 'Jane',
+        middle_initial: 'Q',
+        last_name: "O'Neil",
+        phone: '555-010-1042',
+        email: 'jane@example.com'
+      },
+      fulfillment: {
+        method: 'shipping',
+        shipping_address: {
+          address_1: '12, "Main" Street',
+          address_2: 'Suite 2\nRear',
+          city: 'Boston',
+          state: 'MA',
+          postal_code: '00501',
+          country: ''
+        }
+      },
+      items: [{ line_id: 'line-1', product_display_name: 'Tree Ornament', quantity: 1 }]
+    }
+  }];
+  context.__uspsRecords = structuredClone(records);
+  const before = structuredClone(records);
+  const result = vm.runInContext('buildUspsAddressBookExport(__uspsRecords)', context);
+  const normalizedResult = JSON.parse(JSON.stringify(result));
+
+  assert.equal(
+    normalizedResult.csvText.split('\r\n')[0],
+    'First Name,MI,Last Name,Company Name,Address Line 1,Address Line 2,Address Line 3,City,State/Province,ZIP/Postal Code,Country,Urbanization,Phone Number,Email,Reference Number,Nickname'
+  );
+  assert.match(normalizedResult.csvText, /Jane,Q,O'Neil,,"12, ""Main"" Street","Suite 2\nRear",,Boston,MA,00501,US,,555-010-1042,jane@example\.com,1042,/);
+  assert.equal(normalizedResult.exportedCount, 1);
+  assert.equal(normalizedResult.skippedShippingCount, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(context.__uspsRecords)), before);
+});
+
+test('USPS Address Book export includes every displayed shipping order and excludes pickup orders', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+  context.__uspsRecords = [
+    {
+      forge_order_uuid: 'event-a-1', forge_order_number: 1201, production_status: 'submitted',
+      payload: {
+        customer: { full_name: 'Mary Ann Smith' },
+        fulfillment: { method: 'shipping', shipping_address: { address_1: '1 Main', city: 'Austin', state: 'TX', postal_code: '78701', country: 'United States' } },
+        event: { event_id: 'event-a', event_name: 'Event A' },
+        items: [{ line_id: 'line-a', product_display_name: 'Tree Ornament', quantity: 1 }]
+      }
+    },
+    {
+      forge_order_uuid: 'event-a-2', forge_order_number: 1202, production_status: 'submitted',
+      payload: {
+        customer: { first_name: 'John', last_name: 'Jones', full_name: 'John Jones' },
+        fulfillment: { method: 'mailed', shipping_address: { address_1: '2 Oak', address_2: 'Apt 4', city: 'Austin', state: 'TX', postal_code: '78702', country: 'US' } },
+        event: { event_id: 'event-a', event_name: 'Event A' },
+        items: [{ line_id: 'line-b', product_display_name: 'Antler Ornament', quantity: 1 }]
+      }
+    },
+    {
+      forge_order_uuid: 'event-a-pickup', forge_order_number: 1203, production_status: 'submitted',
+      payload: {
+        customer: { full_name: 'Pickup Customer' },
+        fulfillment: { method: 'pickup', shipping_address: null },
+        event: { event_id: 'event-a', event_name: 'Event A' },
+        items: [{ line_id: 'line-c', product_display_name: 'Wooden Sign', quantity: 1 }]
+      }
+    },
+    {
+      forge_order_uuid: 'event-b-1', forge_order_number: 1204, production_status: 'submitted',
+      payload: {
+        customer: { full_name: 'Other Event' },
+        fulfillment: { method: 'shipping', shipping_address: { address_1: '4 Pine', city: 'Dallas', state: 'TX', postal_code: '75001', country: 'US' } },
+        event: { event_id: 'event-b', event_name: 'Event B' },
+        items: [{ line_id: 'line-d', product_display_name: 'Tree Ornament', quantity: 1 }]
+      }
+    }
+  ];
+  vm.runInContext(`
+    staffOrdersState.records = __uspsRecords;
+    staffOrdersState.filters = forgeLocalOrdersQueue.createEmptyOrderFilters();
+    staffOrdersState.filters.event = 'event-a';
+  `, context);
+  const result = JSON.parse(JSON.stringify(vm.runInContext(
+    'buildUspsAddressBookExport(getDisplayedStaffOrderRecords())',
+    context
+  )));
+
+  assert.equal(result.exportedCount, 2);
+  assert.equal(result.pickupSkippedCount, 1);
+  assert.match(result.csvText, /Mary,,Ann Smith/);
+  assert.match(result.csvText, /John,,Jones/);
+  assert.match(result.csvText, /2 Oak,Apt 4/);
+  assert.match(result.csvText, /,1201,/);
+  assert.match(result.csvText, /,1202,/);
+  assert.doesNotMatch(result.csvText, /1203|1204|Pickup Customer|Other Event/);
+});
+
+test('USPS Address Book export reports invalid shipping records and creates no empty CSV', () => {
+  const { context } = loadForgeAppWithoutStaffModules();
+  context.__uspsRecords = [
+    {
+      forge_order_number: 1301,
+      payload: {
+        customer: { full_name: 'Cher' },
+        fulfillment: { method: 'shipping', shipping_address: { address_1: '1 Main', city: 'Austin', state: 'TX', postal_code: '78701', country: 'US' } },
+        items: [{ line_id: 'line-1', product_display_name: 'Tree Ornament', quantity: 1 }]
+      }
+    },
+    {
+      forge_order_number: 1302,
+      payload: {
+        customer: { full_name: 'Valid Name' },
+        fulfillment: { method: 'shipping', shipping_address: { address_1: '2 Main', city: '', state: 'TX', postal_code: '78702', country: 'US' } },
+        items: [{ line_id: 'line-2', product_display_name: 'Tree Ornament', quantity: 1 }]
+      }
+    },
+    {
+      forge_order_number: 1303,
+      payload: {
+        customer: { full_name: 'Pickup Name' },
+        fulfillment: { method: 'pickup', shipping_address: null },
+        items: [{ line_id: 'line-3', product_display_name: 'Wooden Sign', quantity: 1 }]
+      }
+    }
+  ];
+  const result = JSON.parse(JSON.stringify(vm.runInContext('buildUspsAddressBookExport(__uspsRecords)', context)));
+
+  assert.equal(result.exportedCount, 0);
+  assert.equal(result.csvText, '');
+  assert.equal(result.skippedShippingCount, 2);
+  assert.equal(result.pickupSkippedCount, 1);
+  assert.deepEqual(result.skippedShippingOrders[0], { referenceNumber: '1301', missingFields: ['customer_name'] });
+  assert.deepEqual(result.skippedShippingOrders[1], { referenceNumber: '1302', missingFields: ['city'] });
+
+  vm.runInContext(`
+    staffOrdersState.records = __uspsRecords;
+    staffOrdersState.filters = forgeLocalOrdersQueue.createEmptyOrderFilters();
+    downloadDisplayedStaffUspsAddresses();
+  `, context);
+  assert.match(vm.runInContext('staffOrdersState.notice', context), /No valid shipping addresses/);
+});
+
+test('Orders Queue exposes the USPS export action while retaining per-order Copy Address', () => {
+  assert.match(indexSource, /data-action="staff-export-usps-addresses"[^>]*>Export USPS Addresses<\/button>/);
+  const { context } = loadForgeAppWithoutStaffModules();
+  const markup = vm.runInContext(`buildStaffOrderCardMarkup({
+    forge_order_uuid: 'queue-copy-order', forge_order_number: 1401, production_status: 'submitted',
+    payload: { customer: { full_name: 'Queue Customer' }, fulfillment: { method: 'shipping' }, items: [{ line_id: 'line-1', product_display_name: 'Tree Ornament', quantity: 1 }] }
+  }, forgeLocalOrdersQueue.createEmptyOrderFilters())`, context);
+  assert.match(markup, /data-action="staff-copy-shipping-address"/);
 });
 
 test('Open USPS launches only the official USPS site in a separate window', async () => {
