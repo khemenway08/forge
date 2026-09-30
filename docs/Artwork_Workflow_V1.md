@@ -1,7 +1,7 @@
 # Forge Artwork Workflow V1
 
 **Status:** Approved working specification\
-**Date:** 2026-09-28\
+**Date:** 2026-09-30\
 **Project:** Forge --- The Hilltop Shop
 
 ## Purpose
@@ -31,9 +31,11 @@ edits the master. 4. Generates the correct `_LIVE.ai` filename. 5.
 Records the artwork/file association. 6. Opens the LIVE copy in Adobe
 Illustrator on the Mac.
 
-Staff personalizes normally, presses **Command-S**, then uses the
-Illustrator finalization workflow to create OUTLINED. Continue to the
-next ornament/order.
+Staff personalizes normally in the customer `_LIVE.ai` working file.
+Editable artwork may remain off the Illustrator artboard. Staff manually
+creates the outlined/merged production-ready version on the artboard and
+presses **Command-S**. Both states remain together in the same customer
+working file. Continue to the next ornament/order.
 
 ### 2. Proof
 
@@ -55,21 +57,22 @@ Antler — 7 Name              1
 Large Tree Frame             4
 ```
 
-Opening a group shows the expected count plus customer/order/tray and: -
-**Open LIVE** - **Open OUTLINED** - **Open All OUTLINED** - **Create
-Production File**
+Opening a group should show the expected count plus customer/order/tray and
+access to each associated customer working file. Forge provides **Open All
+Artwork** as a convenience action for the prepared customer working files in
+one canonical product/variant group. Production-file creation still requires
+the production-assembly decisions listed later in this document.
 
 ### 4. Build Production File on Mac
 
-**Open All OUTLINED** opens all customer OUTLINED files for that
-ornament group in Illustrator.
+The intended next phase opens the relevant customer working files and a
+separate combined production file. Only the manually prepared artwork on
+each customer file's artboard is eligible for production assembly; editable
+off-artboard artwork is not.
 
-**Create Production File** creates a correctly named file from that
-ornament's production template directly in `READY_TO_LASER` and opens
-it.
-
-The user manually copies the required pieces from the open OUTLINED
-files, arranges/nests them, and saves the production file.
+The exact production-template selection, group-opening behavior, transfer
+from customer artboards, placement/nesting, readiness signal, and production
+filename lifecycle must be approved before implementation.
 
 ### 5. Shop / Laser
 
@@ -90,26 +93,22 @@ under:
 
 Forge never edits or overwrites it.
 
-### LIVE
+### Customer Working File (`_LIVE.ai`)
 
-Editable customer artwork with live text.
+Persistent customer artwork containing both working states:
+
+- editable/live-text artwork may remain off the Illustrator artboard;
+- manually outlined/merged production-ready artwork is placed on the
+  artboard.
 
 Example:
 
 `SMITH_JOHN_CHRISTMAS-TREE-SMALL_LIVE.ai`
 
-All corrections return to LIVE.
-
-### OUTLINED
-
-Production-safe derivative of LIVE.
-
-Example:
-
-`SMITH_JOHN_CHRISTMAS-TREE-SMALL_OUTLINED.ai`
-
-OUTLINED is used to assemble production batches and can be regenerated
-from LIVE.
+All corrections return to this file. The `_LIVE.ai` suffix remains the
+current naming convention; it does not mean that every object in the file
+must remain live text. Forge does not create or associate a separate
+`_OUTLINED.ai` customer file.
 
 ### PRODUCTION
 
@@ -130,8 +129,7 @@ This is what belongs in `READY_TO_LASER`.
 ├── CUSTOMER_ARTWORK/
 │   └── YYYY/
 │       └── LASTNAME_FIRSTNAME_ORDERNUMBER/
-│           ├── LASTNAME_FIRSTNAME_ORNAMENT-TYPE_LIVE.ai
-│           └── LASTNAME_FIRSTNAME_ORNAMENT-TYPE_OUTLINED.ai
+│           └── LASTNAME_FIRSTNAME_ORNAMENT-TYPE_LIVE.ai
 ├── READY_TO_LASER/
 │   ├── 2026-09-28_CHRISTMAS-TREE-SMALL_PRODUCTION.ai
 │   ├── 2026-09-28_CHRISTMAS-TREE-LARGE_PRODUCTION.ai
@@ -166,8 +164,6 @@ Customer artwork targets:
 
 `LASTNAME_FIRSTNAME_ORNAMENT-TYPE_LIVE.ai`
 
-`LASTNAME_FIRSTNAME_ORNAMENT-TYPE_OUTLINED.ai`
-
 Normal user-facing filenames do not include personalization text. This
 keeps files immediately recognizable in Finder and Illustrator without
 creating long or unpredictable filenames from customer-entered text.
@@ -176,9 +172,7 @@ Examples:
 
 ``` text
 SMITH_JOHN_CHRISTMAS-TREE-SMALL_LIVE.ai
-SMITH_JOHN_CHRISTMAS-TREE-SMALL_OUTLINED.ai
 HEMENWAY_KYLE_ANTLER-9-NAME_LIVE.ai
-HEMENWAY_KYLE_ANTLER-9-NAME_OUTLINED.ai
 ```
 
 If the same order contains more than one artwork file of the same
@@ -190,13 +184,12 @@ number; later files use `-2`, `-3`, and so on:
 SMITH_JOHN_CHRISTMAS-TREE-SMALL_LIVE.ai
 SMITH_JOHN_CHRISTMAS-TREE-SMALL-2_LIVE.ai
 SMITH_JOHN_CHRISTMAS-TREE-SMALL-3_LIVE.ai
-SMITH_JOHN_CHRISTMAS-TREE-SMALL-2_OUTLINED.ai
 ```
 
-The OUTLINED derivative retains the LIVE file's discriminator. Forge
-retains the actual order-line/artwork association internally. Technical
+Forge retains the actual order-line/artwork association internally. Technical
 identifiers such as Forge UUIDs and line IDs do not appear in normal
-user-facing filenames.
+user-facing filenames. The discriminator belongs to the persistent customer
+working file and remains stable when that file is reopened.
 
 Production target:
 
@@ -267,21 +260,22 @@ unavailable.
 
 ------------------------------------------------------------------------
 
-## Illustrator LIVE → OUTLINED Finalization
+## Illustrator Customer Working-File Preparation
 
-V1 should investigate a small Illustrator script/action.
+There is no separate customer OUTLINED derivative and no automated
+Illustrator outline/merge action in this workflow.
 
-Desired one-shortcut behavior:
+The approved manual behavior is:
 
-1.  Save LIVE first.
-2.  Preserve LIVE with editable text.
-3.  Create a copy in the same folder.
-4.  Rename `_LIVE.ai` to `_OUTLINED.ai`.
-5.  Outline the required artwork/text on the copy only.
-6.  Save OUTLINED.
-7.  Leave Illustrator in a predictable state.
+1.  Open the associated customer `_LIVE.ai` working file through Forge.
+2.  Personalize the artwork.
+3.  Keep editable/live-text artwork off the artboard where useful.
+4.  Manually create the outlined/merged production-ready artwork on the
+    artboard.
+5.  Press **Command-S** so both states remain in the same associated file.
 
-**LIVE must never be destructively outlined.**
+MASTER remains untouched. The customer working file remains editable and is
+the only customer artwork file Forge associates with that order line.
 
 ------------------------------------------------------------------------
 
@@ -296,35 +290,63 @@ Example group:
 CHRISTMAS TREE — SMALL
 Expected Artwork: 7
 
-Tray  Customer       LIVE          OUTLINED
-3     Smith          Open LIVE     Open OUTLINED
-5     Jones          Open LIVE     Open OUTLINED
-7     Miller         Open LIVE     Open OUTLINED
-8     Brown          Open LIVE     Open OUTLINED
-9     Davis          Open LIVE     Open OUTLINED
-11    Wilson         Open LIVE     Open OUTLINED
-14    Taylor         Open LIVE     Open OUTLINED
+Tray  Customer       Customer Artwork
+3     Smith          Open Working File
+5     Jones          Open Working File
+7     Miller         Open Working File
+8     Brown          Open Working File
+9     Davis          Open Working File
+11    Wilson         Open Working File
+14    Taylor         Open Working File
 ```
 
 The expected quantity must be prominent. This provides reconciliation
 before cutting and reduces missed ornaments.
 
-### Open All OUTLINED
+### Group Opening and Future Assembly
 
-One action opens every available OUTLINED file for the selected ornament
-group on the Mac. Missing OUTLINED files must be clearly identified, not
-silently skipped. Forge does not combine or manipulate artwork.
+**Open All Artwork** opens the existing prepared customer `_LIVE.ai` working
+files for one canonical product/variant group through the secure Mac launcher.
+It does not create associations or create, copy, rename, save, or modify files.
+
+Future production assembly may use only the manually prepared artwork on each
+file's artboard. The safe mechanism for copying artboard artwork into a
+combined production file is not yet defined.
 
 ### Create Production File
 
-For the selected ornament group:
+Before this action is implemented, define how Forge selects the batch, how an
+item is marked ready for assembly, which production template is used, how the
+production filename and repeat runs are handled, whether Forge opens or copies
+artboard artwork, and who controls placement/nesting. A production file must
+remain separate from every customer working file and must never silently
+overwrite an existing file.
 
-1.  Determine configured production template.
-2.  Generate production filename.
-3.  Create it directly in `READY_TO_LASER`.
-4.  Open it in Illustrator.
-5.  Do not automatically copy customer artwork into it in V1.
-6.  Never silently overwrite an existing production file.
+### Production Assembly Decisions Required
+
+Do not implement production assembly until these choices are approved:
+
+1.  **Batch membership:** product/variant grouping plus the event, order,
+    tray, production status, or explicit staff selection rules that include or
+    exclude an item.
+2.  **Assembly readiness:** the explicit staff action or state confirming that
+    the customer file's on-artboard artwork is ready. `prepared` currently
+    confirms file creation/opening only and must not imply assembly readiness.
+3.  **Production template:** the explicit product/variant-to-template mapping,
+    approved local root, and behavior when a template is missing or invalid.
+4.  **Artboard source:** which artboard is production-ready when a customer
+    file has multiple artboards, and whether the source must follow a naming or
+    index convention.
+5.  **Transfer behavior:** whether the launcher only opens the selected
+    customer files for manual copying or an approved Illustrator script copies
+    artboard contents into the combined production file.
+6.  **Placement and nesting:** fully manual placement or a defined automated
+    rule, including units, scale, layer, origin, spacing, and material bounds.
+7.  **Production destination and naming:** staging versus direct creation in
+    `READY_TO_LASER`, batch date/sequence naming, and repeat-run behavior.
+8.  **Idempotency and corrections:** how Forge records which order lines were
+    included, refuses duplicate inclusion, and handles a customer working file
+    changed after assembly without silently overwriting prior production work.
 
 ------------------------------------------------------------------------
 
@@ -413,8 +435,10 @@ The maintained launcher source is tracked at
 local template registry remain protected under
 `~/Library/Application Support/Forge Artwork Launcher/`.
 
-This bridge currently proves template registration and validation. It does
-not yet implement Prepare Artwork, create customer files, or open Illustrator.
+This bridge implements template registration and validation plus Prepare
+Artwork/Open LIVE Artwork. It creates or reopens the explicitly associated
+customer working file and opens that file in Illustrator without modifying the
+MASTER.
 
 ------------------------------------------------------------------------
 
@@ -429,8 +453,7 @@ record needs enough information to associate:
 -   relevant template/production variant,
 -   tray where applicable,
 -   master/template association,
--   LIVE file path,
--   OUTLINED file path,
+-   customer `_LIVE.ai` working-file path,
 -   artwork-prepared state/time,
 -   proof state.
 
@@ -475,18 +498,17 @@ Codex/development work must:
 named `LASTNAME_FIRSTNAME_ANTLER-9-NAME_LIVE.ai` copy, leaves the master
 unchanged, opens LIVE in Illustrator, and avoids uncontrolled duplicates.
 
-**OUTLINED:** Finalization saves LIVE first, creates OUTLINED, outlines
-only the copy, and leaves LIVE editable.
+**Customer working state:** Staff keeps editable artwork and manually prepared
+on-artboard production artwork in the same associated `_LIVE.ai` file and
+saves it normally. Forge creates no customer OUTLINED derivative.
 
 **Production Group:** Seven Small Christmas Tree artworks display as
 `Christmas Tree — Small: 7` with all seven customer/order/tray records.
 
-**Open All OUTLINED:** One action opens all valid OUTLINED files;
-missing files are clearly identified.
-
-**Create Production File:** Forge creates a correctly named production
-file from the configured production template in `READY_TO_LASER`, opens
-it, and does not silently overwrite an existing file.
+**Production assembly:** A future approved action uses only production-ready
+artwork placed on customer-file artboards and creates or opens a separate
+combined production file without modifying customer files or silently
+overwriting an existing production file.
 
 **Reconciliation:** The expected ornament-group quantity is visible
 before laser production.
@@ -512,24 +534,31 @@ Use real Forge order/product/customer data: template mapping, folder
 creation, generated filename, duplicate detection, persistent
 association, Open LIVE.
 
-### Milestone 3 --- Illustrator Finalization Proof
+### Milestone 3 --- Customer Working-File Workflow
 
-Test LIVE → OUTLINED: save LIVE, create copy, outline copy only,
-predictable state.
+Approved manual Illustrator workflow: editable artwork may remain off-artboard;
+production-ready outlined/merged artwork is placed on the artboard; both states
+are saved together in the associated `_LIVE.ai` file. No additional customer
+file or automation is required.
 
-### Milestone 4 --- Artwork Queue
+### Milestone 4 --- Production Assembly Design
 
-Grouped view with expected counts, customer, order/tray, Open LIVE, Open
-OUTLINED.
+Approve batch selection, assembly readiness, production-template mapping,
+artboard transfer behavior, placement/nesting responsibility, production-file
+naming, and repeat-run safeguards.
 
-### Milestone 5 --- Open All OUTLINED
+### Milestone 5 --- Read-Only Production Artwork Queue
 
-Group-level opening.
+Initial convenience slice implemented: active, prepared customer working files
+are grouped by canonical product/variant and can be opened together through the
+secure Mac launcher. No artwork state or production-management state is added.
+A richer queue with customer/order/tray and readiness management remains
+outside this slice.
 
-### Milestone 6 --- Create Production File
+### Milestone 6 --- Approved Production Assembly Bridge
 
-Production-template mapping, generated filename, `READY_TO_LASER`
-destination, opening, overwrite safeguards.
+Implement only the group opening, production-file creation, and artboard
+transfer behavior approved in Milestone 4, with overwrite safeguards.
 
 ### Milestone 7 --- Proofing Integration
 
@@ -577,7 +606,7 @@ Parked ideas:
 
 ## Development Checkpoint
 
-**Current state --- 2026-09-29**
+**Current state --- 2026-09-30**
 
 -   Workflow scoped.
 -   Real production bottlenecks identified.
@@ -587,7 +616,14 @@ Parked ideas:
 -   Artwork-template readiness and self-service template setup implemented.
 -   Christmas Tree Small and Large masters validated on the designated
     production Mac through the native launcher workflow.
--   Prepare Artwork has not begun.
+-   Prepare Artwork/Open LIVE Artwork implemented and manually validated for
+    Small Tree, Large Tree, same-variant discriminators, association reuse,
+    MASTER protection, and launcher completion reporting.
+-   Single customer working-file workflow approved; no separate OUTLINED file
+    or association will be created.
+-   Open All Artwork groups existing prepared customer working files by
+    canonical product/variant and opens them without creating or changing
+    artwork.
 
 Representative clean masters: - Acrylic Star/Tree - Christmas Tree ---
 Small - Christmas Tree --- Large - Baby's First Christmas --- single
@@ -604,10 +640,12 @@ architecture proof-of-concept.
 A normal cycle becomes:
 
 > Forge order → Prepare Artwork → correct customer LIVE file opens →
-> personalize → one finalization action safely creates OUTLINED →
+> personalize → manually keep editable artwork off-artboard and place the
+> production-ready outlined/merged artwork on the artboard → Command-S →
 > continue through orders → Production Artwork → select ornament group →
-> see expected quantity → Open All OUTLINED → Create Production File →
-> manually assemble on Mac → save → file is already in `READY_TO_LASER` →
+> see expected quantity → open the associated customer working files and a
+> separate combined production file using the approved assembly workflow →
+> assemble on Mac → save to `READY_TO_LASER` →
 > open on Windows/LightBurn and manufacture.
 
 The user should no longer need to remember where artwork lives,

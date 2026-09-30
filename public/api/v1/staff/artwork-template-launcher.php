@@ -26,6 +26,10 @@ try{
         $association=\Forge\Server\buildArtworkPreparationRepositoryFromEnvironment()->reportPreparation(trim((string)($payload['report_token']??'')),trim((string)($payload['launcher_profile_label']??'')),trim((string)($payload['status']??'')),isset($payload['master_sha256'])?(string)$payload['master_sha256']:null,isset($payload['live_sha256'])?(string)$payload['live_sha256']:null,isset($payload['error_code'])?(string)$payload['error_code']:null);
         \Forge\Server\ApiResponse::send(200,\Forge\Server\ApiResponse::success(['association'=>$association]));exit;
     }
+    if($action==='exchange_open_group'){
+        $result=\Forge\Server\buildArtworkPreparationRepositoryFromEnvironment()->exchangeOpenGroupToken(trim((string)($payload['open_token']??'')));
+        \Forge\Server\ApiResponse::send(200,\Forge\Server\ApiResponse::success($result));exit;
+    }
     throw new InvalidArgumentException('A valid launcher action is required.');
 }catch(\Forge\Server\ApiProblem $problem){\Forge\Server\ApiResponse::send($problem->getHttpStatus(),\Forge\Server\ApiResponse::error($problem->getErrorCodeValue(),$problem->getSafeMessage()),$problem->getHeaders());}
 catch(InvalidArgumentException $exception){\Forge\Server\ApiResponse::send(422,\Forge\Server\ApiResponse::error('invalid_request',$exception->getMessage()));}

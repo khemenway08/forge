@@ -30,6 +30,7 @@ trap 'rm -rf "$TEMP_ROOT"' EXIT
 "$SCRIPT_DIR/install.sh" --build-only >/dev/null
 "$BIN" --validate-url "forge-artwork://setup?token=$(printf 'a%.0s' {1..64})" | grep -q 'url_valid=yes'
 "$BIN" --validate-url "forge-artwork://prepare?token=$(printf 'b%.0s' {1..64})" | grep -q 'action=prepare'
+"$BIN" --validate-url "forge-artwork://open-group?token=$(printf 'c%.0s' {1..64})" | grep -q 'action=open-group'
 "$BIN" --probe-connection "$CONFIG_PATH" | grep -q 'http_status=422'
 python3 - "$CONFIG_PATH" "$TEMP_ROOT/bad-pin.json" <<'PY'
 import json, sys
@@ -63,6 +64,13 @@ test "$(find "$TEMP_ROOT/customers" -type f | wc -l | tr -d ' ')" = 1
 test "$(shasum -a 256 "$TEMP_ROOT/customers/2026/SMITH_JOHN_1042/SMITH_JOHN_BACKGROUND_LIVE.ai" | awk '{print $1}')" = "$SOURCE_HASH"
 test "$(stat -f '%i:%z:%m' "$TEMP_ROOT/masters/MASTER.ai")" = "$SOURCE_STAT"
 test "$(find "$TEMP_ROOT/customers" -type f | wc -l | tr -d ' ')" = 2
+"$BIN" --validate-live-group "$TEMP_ROOT/customers" '2026/SMITH_JOHN_1042/SMITH_JOHN_TEST_LIVE.ai' '2026/SMITH_JOHN_1042/SMITH_JOHN_BACKGROUND_LIVE.ai' | grep -q 'file_count=2'
+if "$BIN" --validate-live-group "$TEMP_ROOT/customers" '2026/SMITH_JOHN_1042/SMITH_JOHN_TEST_LIVE.ai' '2026/SMITH_JOHN_1042/SMITH_JOHN_TEST_LIVE.ai' >/dev/null 2>&1; then
+  echo 'duplicate prepared artwork path was accepted' >&2; exit 1
+fi
+if "$BIN" --validate-live-group "$TEMP_ROOT/customers" '../UNSAFE_LIVE.ai' >/dev/null 2>&1; then
+  echo 'unsafe prepared artwork path was accepted' >&2; exit 1
+fi
 if "$BIN" --copy-live "$TEMP_ROOT/masters" "$TEMP_ROOT/masters/MISSING.ai" "$TEMP_ROOT/customers" '2026/SMITH_JOHN_1042/SMITH_JOHN_MISSING_LIVE.ai' >/dev/null 2>&1; then
   echo 'missing master was copied' >&2; exit 1
 fi

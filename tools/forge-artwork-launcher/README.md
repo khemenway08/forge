@@ -10,6 +10,12 @@ registered master into the configured customer artwork root, verifies both
 SHA-256 values, records the local association, and opens only the LIVE copy in
 Adobe Illustrator 2025. It never opens or modifies a master.
 
+For an authenticated Open All Artwork request, the launcher receives only a
+single-use token. It resolves the explicitly associated prepared LIVE paths
+through Forge, validates that every file is an existing regular file inside
+the configured customer artwork root, and opens the complete set in
+Illustrator. It does not create, copy, rename, or modify artwork in this mode.
+
 ## Local configuration
 
 The launcher reads its machine-specific configuration from:

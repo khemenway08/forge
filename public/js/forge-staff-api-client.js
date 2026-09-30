@@ -33,6 +33,7 @@
   const ARTWORK_TEMPLATES_ENDPOINT = 'artwork-templates.php';
   const ARTWORK_SETUP_TOKEN_ENDPOINT = 'artwork-template-setup-token.php';
   const ARTWORK_PREPARE_TOKEN_ENDPOINT = 'artwork-prepare-token.php';
+  const ARTWORK_OPEN_GROUP_TOKEN_ENDPOINT = 'artwork-open-group-token.php';
   const SAFE_ERROR_MESSAGES = {
     invalid_request: 'Staff authentication could not be prepared.',
     invalid_credentials: 'Invalid staff credentials.',
@@ -814,6 +815,14 @@
       });
     }
 
+    function createArtworkOpenGroupToken(productDefinitionId, variantKey) {
+      return submitStaffMutation(`${baseUrl}/${ARTWORK_OPEN_GROUP_TOKEN_ENDPOINT}`, { product_definition_id: productDefinitionId, variant_key: variantKey }, 'Prepared artwork could not be opened.', (payload) => {
+        const data = normalizeArtworkData(payload);
+        if (typeof data.open_url !== 'string' || !/^forge-artwork:\/\/open-group\?token=[a-f0-9]{64}$/.test(data.open_url)) throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+        return { ok: true, authenticated: true, openUrl: data.open_url, expiresAt: data.expires_at || null, group: data.group || null };
+      });
+    }
+
     return {
       checkSession,
       login,
@@ -842,7 +851,8 @@
       saveArtworkTemplate,
       setArtworkTemplateActive,
       createArtworkSetupToken,
-      createArtworkPrepareToken
+      createArtworkPrepareToken,
+      createArtworkOpenGroupToken
     };
   }
 

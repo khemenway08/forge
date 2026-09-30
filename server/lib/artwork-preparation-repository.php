@@ -100,11 +100,60 @@ final class PdoArtworkPreparationRepository
         }catch(InvalidArgumentException|ArtworkPreparationConflictException $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}catch(PDOException $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw new StorageUnavailableException('Artwork preparation result could not be saved.',0,$e);}
     }
 
+    /** @return array{open_token:string,expires_at:string,group:array<string,mixed>} */
+    public function issueOpenGroupToken(string $productId, string $variantKey, int $ttlSeconds = 300): array
+    {
+        $productId = normalizeArtworkGroupIdentity($productId, 'A valid artwork product is required.');
+        $variantKey = normalizeArtworkGroupIdentity($variantKey, 'A valid artwork variant is required.');
+        $associations = $this->loadPreparedGroupAssociations($productId, $variantKey);
+        if ($associations === []) throw new ArtworkPreparationNotReadyException('No prepared artwork files are available for that ornament type.');
+        $anchor = $associations[0];
+        $token = bin2hex(random_bytes(32));
+        $created = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        $expires = $created->modify('+' . max(30, min(600, $ttlSeconds)) . ' seconds');
+        try {
+            $statement = $this->pdo->prepare('INSERT INTO forge_artwork_prepare_tokens (token_hash,artwork_file_id,configuration_revision,configuration_digest,expires_at,consumed_at,created_at) VALUES (:hash,:id,:revision,:digest,:expires,NULL,:created)');
+            $statement->execute([
+                ':hash'=>hash('sha256','open-group:'.$token),
+                ':id'=>$anchor['artwork_file_id'],
+                ':revision'=>$anchor['configuration_revision'],
+                ':digest'=>$anchor['configuration_digest'],
+                ':expires'=>artworkFormatDate($expires),
+                ':created'=>artworkFormatDate($created),
+            ]);
+        } catch (PDOException $e) {
+            throw new StorageUnavailableException('Prepared artwork could not be opened.', 0, $e);
+        }
+        return [
+            'open_token'=>$token,
+            'expires_at'=>$expires->format(\DateTimeInterface::ATOM),
+            'group'=>['product_definition_id'=>$productId,'variant_key'=>$variantKey,'file_count'=>count($associations)],
+        ];
+    }
+
+    /** @return array{group:array<string,mixed>,artwork_files:array<int,array<string,mixed>>} */
+    public function exchangeOpenGroupToken(string $token): array
+    {
+        $hash=hash('sha256','open-group:'.normalizeArtworkToken($token));$now=new \DateTimeImmutable('now',new \DateTimeZone('UTC'));
+        try{$this->pdo->beginTransaction();$select=$this->pdo->prepare('SELECT * FROM forge_artwork_prepare_tokens WHERE token_hash=:hash');$select->execute([':hash'=>$hash]);$row=$select->fetch();
+            if(!is_array($row)||$row['consumed_at']!==null||(string)$row['expires_at']<=artworkFormatDate($now))throw new InvalidArgumentException('The prepared-artwork open token is invalid or expired.');
+            $anchor=$this->loadAssociationById((string)$row['artwork_file_id']);
+            if($anchor===null||!artworkAssociationMatchesToken($anchor,$row)||($anchor['preparation_status']??'')!=='prepared')throw new ArtworkPreparationConflictException('The prepared artwork group changed. Refresh Forge and try again.');
+            $associations=$this->loadPreparedGroupAssociations((string)$anchor['product_definition_id'],(string)$anchor['variant_key']);
+            if($associations===[])throw new ArtworkPreparationNotReadyException('No prepared artwork files are available for that ornament type.');
+            $consume=$this->pdo->prepare('UPDATE forge_artwork_prepare_tokens SET consumed_at=:now WHERE token_hash=:hash AND consumed_at IS NULL');$consume->execute([':now'=>artworkFormatDate($now),':hash'=>$hash]);if($consume->rowCount()!==1)throw new InvalidArgumentException('The prepared-artwork open token has already been used.');
+            $this->pdo->commit();
+            return ['group'=>['product_definition_id'=>(string)$anchor['product_definition_id'],'variant_key'=>(string)$anchor['variant_key'],'file_count'=>count($associations)],'artwork_files'=>array_map('Forge\\Server\\publicArtworkAssociation',$associations)];
+        }catch(InvalidArgumentException|ArtworkPreparationConflictException|ArtworkPreparationNotReadyException $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw $e;}catch(PDOException $e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw new StorageUnavailableException('Prepared artwork could not be verified.',0,$e);}
+    }
+
     /** @return array<string,array<string,array<string,mixed>>> */
     public function listAssociationsForOrders(array $orderUuids): array
     { $ids=array_values(array_unique(array_filter(array_map('trim',$orderUuids))));if($ids===[])return[];$marks=implode(',',array_fill(0,count($ids),'?'));try{$s=$this->pdo->prepare('SELECT * FROM forge_order_artwork_files WHERE forge_order_uuid IN ('.$marks.')');$s->execute($ids);$rows=$s->fetchAll();}catch(PDOException $e){throw new StorageUnavailableException('Artwork file associations could not be loaded.',0,$e);}$out=[];foreach(is_array($rows)?$rows:[] as $row)$out[$row['forge_order_uuid']][$row['line_id']]=publicArtworkAssociation($row);return$out; }
     private function loadAssociationForLine(string $uuid,string $line):?array{$s=$this->pdo->prepare('SELECT * FROM forge_order_artwork_files WHERE forge_order_uuid=:uuid AND line_id=:line LIMIT 1');$s->execute([':uuid'=>$uuid,':line'=>$line]);$r=$s->fetch();return is_array($r)?$r:null;}
     private function loadAssociationById(string $id):?array{$s=$this->pdo->prepare('SELECT * FROM forge_order_artwork_files WHERE artwork_file_id=:id LIMIT 1');$s->execute([':id'=>$id]);$r=$s->fetch();return is_array($r)?$r:null;}
+    /** @return array<int,array<string,mixed>> */
+    private function loadPreparedGroupAssociations(string $productId,string $variantKey):array{$s=$this->pdo->prepare("SELECT a.* FROM forge_order_artwork_files a INNER JOIN forge_orders o ON o.forge_order_uuid=a.forge_order_uuid WHERE a.product_definition_id=:product AND a.variant_key=:variant AND a.preparation_status='prepared' AND COALESCE(NULLIF(LOWER(TRIM(o.production_status)),''),'submitted') NOT IN ('completed','packed','shipped','picked_up','cancelled') ORDER BY o.forge_order_number,a.line_id");$s->execute([':product'=>$productId,':variant'=>$variantKey]);$rows=$s->fetchAll();return array_values(array_filter(is_array($rows)?$rows:[],'is_array'));}
     private function reserveFilename(int $year,string $folder,string $base):string{$stem=substr($base,0,-8);$suffix='_LIVE.ai';$candidate=$base;$n=2;while(true){$s=$this->pdo->prepare('SELECT COUNT(*) FROM forge_order_artwork_files WHERE relative_live_path=:path');$s->execute([':path'=>$year.'/'.$folder.'/'.$candidate]);if((int)$s->fetchColumn()===0)return$candidate;$candidate=$stem.'-'.$n.$suffix;$n++;if($n>999)throw new ArtworkPreparationConflictException('A unique LIVE artwork filename could not be reserved.');}}
 }
 
@@ -115,6 +164,7 @@ function artworkFilenameComponent(string $value):string{$v=strtoupper(trim($valu
 function artworkProductFilenameComponent(string $product,string $variant):string{$map=['tree_ornament'=>'CHRISTMAS-TREE','antler_ornament'=>'ANTLER','babys_first_christmas'=>'BABYS-FIRST-CHRISTMAS','mr_and_mrs_christmas'=>'MR-AND-MRS-CHRISTMAS','little_reindeer_letter'=>'LITTLE-REINDEER-LETTER','present_stack'=>'PRESENT-STACK','grinch_tree'=>'GRINCH-TREE','large_tree_frame'=>'LARGE-TREE-FRAME','veteran_flag'=>'VETERAN-FLAG'];if(!isset($map[$product]))throw new ArtworkPreparationConflictException('This product has no approved artwork filename mapping.');$base=$map[$product];if($product==='tree_ornament')$base.='-'.artworkFilenameComponent($variant);if($product==='antler_ornament')$base.='-'.artworkFilenameComponent($variant).'-NAME';return$base;}
 function publicArtworkAssociation(array $row):array{return['artwork_file_id'=>(string)$row['artwork_file_id'],'line_id'=>(string)$row['line_id'],'product_definition_id'=>(string)$row['product_definition_id'],'variant_key'=>(string)$row['variant_key'],'order_year'=>(int)$row['order_year'],'customer_folder_name'=>(string)$row['customer_folder_name'],'live_filename'=>(string)$row['live_filename'],'relative_live_path'=>(string)$row['relative_live_path'],'status'=>(string)$row['preparation_status'],'prepared_at'=>normalizeArtworkValidationTimestamp($row['prepared_at']??null),'last_error_code'=>normalizeArtworkErrorCode($row['last_error_code']??null)];}
 function artworkAssociationMatchesToken(array $association,array $token):bool{return(int)$association['configuration_revision']===(int)$token['configuration_revision']&&hash_equals((string)$association['configuration_digest'],(string)$token['configuration_digest']);}
+function normalizeArtworkGroupIdentity(string $value,string $message):string{$v=strtolower(trim($value));if(!preg_match('/^[a-z0-9][a-z0-9_-]{0,127}$/',$v))throw new InvalidArgumentException($message);return$v;}
 function normalizeOptionalArtworkHash(?string $hash):?string{$v=strtolower(trim((string)$hash));if($v==='')return null;if(!preg_match('/^[a-f0-9]{64}$/',$v))throw new InvalidArgumentException('A valid artwork SHA-256 value is required.');return$v;}
 function normalizeArtworkPreparationError(?string $value):string{$v=normalizeArtworkErrorCode($value);$allowed=['master_missing','configuration_mismatch','outside_approved_root','symlink_rejected','not_regular_file','not_readable','destination_unavailable','destination_exists','copy_failed','copy_verification_failed','open_failed','bridge_unavailable'];return$v!==null&&in_array($v,$allowed,true)?$v:'preparation_failed';}
 function applyArtworkAssociationsToStaffOrderRecord(array $record,array $byLine):array{$payload=is_array($record['payload']??null)?$record['payload']:[];$items=[];foreach(is_array($payload['items']??null)?$payload['items']:[] as $item){if(is_array($item)){ $line=trim((string)($item['line_id']??''));if(isset($byLine[$line]))$item['artwork_file']=$byLine[$line];}$items[]=$item;}$payload['items']=$items;$record['payload']=$payload;return$record;}

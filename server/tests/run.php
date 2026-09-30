@@ -6832,6 +6832,43 @@ $runner->run('artwork preparation migration and endpoints are additive token sco
     assertTrue(strpos($launcher,'requireAuthenticatedStaffSession')===false);
 });
 
+$runner->run('prepared artwork groups open only prepared active associations without creating files or associations', static function (): void {
+    $pdo=createStaffOrderRepositoryTestPdo();createArtworkPreparationTestTables($pdo);$digest=str_repeat('c',64);$now='2026-09-30 12:00:00.000000';
+    $orders=[
+        ['123e4567-e89b-42d3-a456-426614174610',1060,'submitted'],
+        ['123e4567-e89b-42d3-a456-426614174611',1061,'in_production'],
+        ['123e4567-e89b-42d3-a456-426614174612',1062,'completed'],
+        ['123e4567-e89b-42d3-a456-426614174613',1063,'packed'],
+    ];
+    foreach($orders as [$uuid,$number,$status])seedStaffOrderRepositoryTestOrder($pdo,['forge_order_uuid'=>$uuid,'forge_order_number'=>$number,'production_status'=>$status]);
+    $pdo->exec("UPDATE forge_orders SET production_status = NULL WHERE forge_order_uuid = '123e4567-e89b-42d3-a456-426614174610'");
+    assertSame(null,$pdo->query("SELECT production_status FROM forge_orders WHERE forge_order_uuid = '123e4567-e89b-42d3-a456-426614174610'")->fetchColumn());
+    $insert=$pdo->prepare('INSERT INTO forge_order_artwork_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+    $rows=[
+        ['123e4567-e89b-42d3-a456-426614174710',$orders[0][0],'line-tree-a','registration-tree','tree_ornament','small',1,$digest,2026,'SMITH_JOHN_1060','SMITH_JOHN_CHRISTMAS-TREE-SMALL_LIVE.ai','2026/SMITH_JOHN_1060/SMITH_JOHN_CHRISTMAS-TREE-SMALL_LIVE.ai','prepared','Test Mac',str_repeat('a',64),str_repeat('d',64),$now,null,$now,$now],
+        ['123e4567-e89b-42d3-a456-426614174711',$orders[1][0],'line-tree-b','registration-tree','tree_ornament','small',1,$digest,2026,'DOE_JANE_1061','DOE_JANE_CHRISTMAS-TREE-SMALL_LIVE.ai','2026/DOE_JANE_1061/DOE_JANE_CHRISTMAS-TREE-SMALL_LIVE.ai','prepared','Test Mac',str_repeat('a',64),str_repeat('e',64),$now,null,$now,$now],
+        ['123e4567-e89b-42d3-a456-426614174712',$orders[0][0],'line-tree-large','registration-tree','tree_ornament','large',1,$digest,2026,'SMITH_JOHN_1060','SMITH_JOHN_CHRISTMAS-TREE-LARGE_LIVE.ai','2026/SMITH_JOHN_1060/SMITH_JOHN_CHRISTMAS-TREE-LARGE_LIVE.ai','prepared','Test Mac',str_repeat('a',64),str_repeat('f',64),$now,null,$now,$now],
+        ['123e4567-e89b-42d3-a456-426614174713',$orders[2][0],'line-complete','registration-tree','tree_ornament','small',1,$digest,2026,'DONE_ORDER_1062','DONE_ORDER_CHRISTMAS-TREE-SMALL_LIVE.ai','2026/DONE_ORDER_1062/DONE_ORDER_CHRISTMAS-TREE-SMALL_LIVE.ai','prepared','Test Mac',str_repeat('a',64),str_repeat('1',64),$now,null,$now,$now],
+        ['123e4567-e89b-42d3-a456-426614174715',$orders[3][0],'line-packed','registration-tree','tree_ornament','small',1,$digest,2026,'PACKED_ORDER_1063','PACKED_ORDER_CHRISTMAS-TREE-SMALL_LIVE.ai','2026/PACKED_ORDER_1063/PACKED_ORDER_CHRISTMAS-TREE-SMALL_LIVE.ai','prepared','Test Mac',str_repeat('a',64),str_repeat('2',64),$now,null,$now,$now],
+        ['123e4567-e89b-42d3-a456-426614174714',$orders[0][0],'line-pending','registration-tree','tree_ornament','small',1,$digest,2026,'SMITH_JOHN_1060','SMITH_JOHN_CHRISTMAS-TREE-SMALL-2_LIVE.ai','2026/SMITH_JOHN_1060/SMITH_JOHN_CHRISTMAS-TREE-SMALL-2_LIVE.ai','pending',null,null,null,null,null,$now,$now],
+    ];
+    foreach($rows as $row)$insert->execute($row);
+    $repository=new \Forge\Server\PdoArtworkPreparationRepository($pdo);$before=(int)$pdo->query('SELECT COUNT(*) FROM forge_order_artwork_files')->fetchColumn();
+    $issued=$repository->issueOpenGroupToken('tree_ornament','small');assertSame(2,$issued['group']['file_count']);assertSame(64,strlen($issued['open_token']));
+    assertThrows(static fn()=>$repository->exchangePrepareToken($issued['open_token']),static fn($error)=>assertTrue($error instanceof InvalidArgumentException));
+    $opened=$repository->exchangeOpenGroupToken($issued['open_token']);assertSame(2,$opened['group']['file_count']);assertSame('tree_ornament',$opened['group']['product_definition_id']);assertSame('small',$opened['group']['variant_key']);assertSame(2,count($opened['artwork_files']));
+    assertSame(['SMITH_JOHN_CHRISTMAS-TREE-SMALL_LIVE.ai','DOE_JANE_CHRISTMAS-TREE-SMALL_LIVE.ai'],array_column($opened['artwork_files'],'live_filename'));
+    assertSame($before,(int)$pdo->query('SELECT COUNT(*) FROM forge_order_artwork_files')->fetchColumn());
+    assertThrows(static fn()=>$repository->exchangeOpenGroupToken($issued['open_token']),static fn($error)=>assertTrue($error instanceof InvalidArgumentException));
+    $large=$repository->issueOpenGroupToken('tree_ornament','large');assertSame(1,$large['group']['file_count']);
+    assertThrows(static fn()=>$repository->issueOpenGroupToken('antler_ornament','9'),static fn($error)=>assertTrue($error instanceof \Forge\Server\ArtworkPreparationNotReadyException));
+});
+
+$runner->run('prepared artwork group endpoint remains staff authenticated and launcher exchange stays token scoped', static function (): void {
+    $start=file_get_contents(dirname(__DIR__,2).'/public/api/v1/staff/artwork-open-group-token.php');$launcher=file_get_contents(dirname(__DIR__,2).'/public/api/v1/staff/artwork-template-launcher.php');
+    assertTrue(is_string($start)&&is_string($launcher));assertTrue(strpos($start,'requireAuthenticatedStaffSession')!==false);assertTrue(strpos($start,'forge-artwork://open-group?token=')!==false);assertTrue(strpos($launcher,"exchange_open_group")!==false);assertTrue(strpos($launcher,'requireAuthenticatedStaffSession')===false);
+});
+
 function createArtworkPreparationTestTables(PDO $pdo): void
 {
     $pdo->exec('CREATE TABLE forge_artwork_template_registrations (registration_id TEXT PRIMARY KEY,product_definition_id TEXT UNIQUE,family_id TEXT,selector_type TEXT,allowed_variants_json TEXT,resolution_config_json TEXT,launcher_family_id TEXT,artwork_label TEXT,configuration_revision INTEGER,configuration_digest TEXT,registration_status TEXT,created_at TEXT,updated_at TEXT)');

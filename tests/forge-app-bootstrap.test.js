@@ -7,7 +7,7 @@ const vm = require('vm');
 const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'), 'utf8');
 const cssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
-const BUILD_VERSION = '20260930-67';
+const BUILD_VERSION = '20260930-68';
 
 function extractScreenMarkup(screenId) {
   const match = indexSource.match(new RegExp(`<section class="screen[\\s\\S]*?data-screen="${screenId}"[\\s\\S]*?<\\/section>`));
@@ -281,6 +281,7 @@ function loadForgeAppWithoutStaffModules({
   const staffOrdersSearch = createElement('input');
   const staffOrdersFilters = createElement('div');
   const staffBatchGroups = createElement('div');
+  const staffArtworkGroups = createElement('div');
   const staffOrdersList = createElement('div');
   const staffOrdersStatus = createElement('p');
   const staffOrdersLead = createElement('p');
@@ -359,6 +360,7 @@ function loadForgeAppWithoutStaffModules({
   env.registerSelector('[data-staff-orders-search]', staffOrdersSearch);
   env.registerSelector('[data-staff-orders-filters]', staffOrdersFilters);
   env.registerSelector('[data-staff-batch-groups]', staffBatchGroups);
+  env.registerSelector('[data-staff-artwork-groups]', staffArtworkGroups);
   env.registerSelector('[data-staff-orders-list]', staffOrdersList);
   env.registerSelector('[data-staff-orders-status]', staffOrdersStatus);
   env.registerSelector('[data-staff-orders-lead]', staffOrdersLead);
@@ -753,6 +755,7 @@ function loadForgeHostedStaffAppForTrayDetail() {
   const staffOrdersSearchInput = createElement('input');
   const staffOrdersFilters = createElement('div');
   const staffBatchGroups = createElement('div');
+  const staffArtworkGroups = createElement('div');
   const staffOrdersList = createElement('div');
   const staffOrdersStatus = createElement('p');
   const staffOrdersLead = createElement('p');
@@ -808,6 +811,7 @@ function loadForgeHostedStaffAppForTrayDetail() {
   env.registerSelector('[data-staff-orders-search]', staffOrdersSearchInput);
   env.registerSelector('[data-staff-orders-filters]', staffOrdersFilters);
   env.registerSelector('[data-staff-batch-groups]', staffBatchGroups);
+  env.registerSelector('[data-staff-artwork-groups]', staffArtworkGroups);
   env.registerSelector('[data-staff-orders-list]', staffOrdersList);
   env.registerSelector('[data-staff-orders-status]', staffOrdersStatus);
   env.registerSelector('[data-staff-orders-lead]', staffOrdersLead);
@@ -1356,6 +1360,7 @@ function loadForgeStaffDemoApp({
   const staffOrdersSearch = createElement('input');
   const staffOrdersFilters = createElement('div');
   const staffBatchGroups = createElement('div');
+  const staffArtworkGroups = createElement('div');
   const staffOrdersList = createElement('div');
   const staffOrdersStatus = createElement('p');
   const staffOrdersLead = createElement('p');
@@ -1396,6 +1401,7 @@ function loadForgeStaffDemoApp({
   env.registerSelector('[data-staff-orders-filters]', staffOrdersFilters);
   env.registerSelector('[data-staff-demo-controls]', demoControls);
   env.registerSelector('[data-staff-batch-groups]', staffBatchGroups);
+  env.registerSelector('[data-staff-artwork-groups]', staffArtworkGroups);
   env.registerSelector('[data-staff-orders-list]', staffOrdersList);
   env.registerSelector('[data-staff-orders-status]', staffOrdersStatus);
   env.registerSelector('[data-staff-orders-lead]', staffOrdersLead);
@@ -3303,6 +3309,48 @@ test('staff artwork preparation is gated by ready status and uses the constraine
   assert.match(app, /window\.location\.href = result\.prepareUrl/);
   assert.match(app, /The local bridge did not report completion/);
   assert.match(app, /artworkFile\?\.status === 'prepared' \? 'Open LIVE Artwork' : 'Prepare Artwork'/);
+});
+
+test('prepared artwork groups use canonical product and variant identity for active prepared associations only', () => {
+  const { context } = loadForgeHostedStaffAppForTrayDetail();
+  const groups = JSON.parse(vm.runInContext(`JSON.stringify(buildPreparedArtworkGroups([
+    { production_status: 'submitted', payload: { items: [
+      { product_definition_id: 'tree_ornament', product_display_name: 'Tree Ornament', artwork_file: { artwork_file_id: 'tree-small-a', product_definition_id: 'tree_ornament', variant_key: 'small', status: 'prepared' } },
+      { product_definition_id: 'tree_ornament', product_display_name: 'Tree Ornament', artwork_file: { artwork_file_id: 'tree-large-a', product_definition_id: 'tree_ornament', variant_key: 'large', status: 'prepared' } },
+      { product_definition_id: 'antler_ornament', product_display_name: 'Antler Ornament', artwork_file: { artwork_file_id: 'antler-nine-a', product_definition_id: 'antler_ornament', variant_key: '9', status: 'prepared' } },
+      { product_definition_id: 'tree_ornament', product_display_name: 'Tree Ornament', artwork_file: { artwork_file_id: 'tree-pending', product_definition_id: 'tree_ornament', variant_key: 'small', status: 'pending' } }
+    ] } },
+    { production_status: 'in_production', payload: { items: [
+      { product_definition_id: 'tree_ornament', product_display_name: 'Tree Ornament', artwork_file: { artwork_file_id: 'tree-small-b', product_definition_id: 'tree_ornament', variant_key: 'small', status: 'prepared' } },
+      { product_definition_id: 'tree_ornament', product_display_name: 'Tree Ornament', artwork_file: { artwork_file_id: 'tree-small-b', product_definition_id: 'tree_ornament', variant_key: 'small', status: 'prepared' } }
+    ] } },
+    { production_status: 'completed', payload: { items: [
+      { product_definition_id: 'tree_ornament', product_display_name: 'Tree Ornament', artwork_file: { artwork_file_id: 'tree-completed', product_definition_id: 'tree_ornament', variant_key: 'small', status: 'prepared' } }
+    ] } },
+    { production_status: 'cancelled', payload: { items: [
+      { product_definition_id: 'antler_ornament', product_display_name: 'Antler Ornament', artwork_file: { artwork_file_id: 'antler-cancelled', product_definition_id: 'antler_ornament', variant_key: '9', status: 'prepared' } }
+    ] } },
+    { production_status: 'packed', payload: { items: [
+      { product_definition_id: 'tree_ornament', product_display_name: 'Tree Ornament', artwork_file: { artwork_file_id: 'tree-packed', product_definition_id: 'tree_ornament', variant_key: 'small', status: 'prepared' } }
+    ] } }
+  ]))`, context));
+  assert.deepEqual(groups.map(({ key, fileCount }) => ({ key, fileCount })), [
+    { key: 'antler_ornament:9', fileCount: 1 },
+    { key: 'tree_ornament:large', fileCount: 1 },
+    { key: 'tree_ornament:small', fileCount: 2 }
+  ]);
+  const markup = vm.runInContext(`buildPreparedArtworkGroupsMarkup(buildPreparedArtworkGroups([{ production_status: 'submitted', payload: { items: [{ product_definition_id: 'tree_ornament', product_display_name: 'Tree Ornament', artwork_file: { artwork_file_id: 'tree-small-a', product_definition_id: 'tree_ornament', variant_key: 'small', status: 'prepared' } }] } }]))`, context);
+  assert.match(markup, /Tree Ornament — Small/);
+  assert.match(markup, /1 prepared artwork file/);
+  assert.match(markup, /data-action="staff-open-artwork-group"/);
+  assert.match(markup, />Open All Artwork</);
+});
+
+test('prepared artwork group action requests a constrained launcher token without creating artwork', () => {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(app, /createArtworkOpenGroupToken\(productDefinitionId, variantKey\)/);
+  assert.match(app, /window\.location\.href = result\.openUrl/);
+  assert.doesNotMatch(app, /openPreparedArtworkGroup[\s\S]{0,1600}createArtworkPrepareToken/);
 });
 
 test('staff orders update per-line artwork readiness and clear the aggregate warning when ready', async () => {

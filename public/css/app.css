@@ -4596,9 +4596,47 @@ body.forge-catalog-image-viewer-open {
 }
 
 .staff-batch-groups,
+.staff-artwork-groups,
 .staff-orders-list {
   display: grid;
   gap: 12px;
+}
+
+.staff-artwork-groups-heading {
+  display: grid;
+  gap: 5px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--staff-line);
+}
+
+.staff-artwork-groups-heading h2,
+.staff-artwork-groups-heading p {
+  margin: 0;
+}
+
+.staff-artwork-groups-heading > p:last-child {
+  color: var(--staff-muted);
+  font-size: 13px;
+}
+
+.staff-artwork-group-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(140,151,166,.14);
+  border-radius: 16px;
+  background: rgba(255,255,255,.03);
+}
+
+.staff-artwork-group-card strong {
+  color: var(--staff-text);
+}
+
+.staff-artwork-group-card p {
+  margin: 4px 0 0;
+  color: var(--staff-muted-strong);
+  font-size: 13px;
 }
 
 .staff-order-card-meta-copy {

@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260930-67';
+const FORGE_BUILD_VERSION = '20260930-68';
 const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
 const USPS_ADDRESS_BOOK_HEADERS = Object.freeze([
   'First Name',
@@ -90,6 +90,7 @@ const staffOrdersSearchInput = document.querySelector('[data-staff-orders-search
 const staffOrdersFilters = document.querySelector('[data-staff-orders-filters]');
 const staffDemoControls = document.querySelector('[data-staff-demo-controls]');
 const staffBatchGroups = document.querySelector('[data-staff-batch-groups]');
+const staffArtworkGroups = document.querySelector('[data-staff-artwork-groups]');
 const staffOrdersList = document.querySelector('[data-staff-orders-list]');
 const staffOrdersStatus = document.querySelector('[data-staff-orders-status]');
 const staffOrdersLead = document.querySelector('[data-staff-orders-lead]');
@@ -190,6 +191,9 @@ const staffOrdersState = {
   legacyCleanupConfirmationText: '',
   batchSummary: null,
   batchError: '',
+  artworkGroupOpeningKey: '',
+  artworkGroupNotice: '',
+  artworkGroupNoticeTone: 'success',
   batchDialogOpen: false,
   batchDialogLoading: false,
   batchDialogError: '',
@@ -6857,8 +6861,70 @@ function renderStaffBatchDialog() {
   `;
 }
 
+function buildPreparedArtworkGroups(records) {
+  const groups = new Map();
+  (Array.isArray(records) ? records : []).forEach((record) => {
+    const productionStatus = sanitizeText(record?.production_status || '').toLowerCase();
+    if (['completed', 'packed', 'shipped', 'picked_up', 'cancelled'].includes(productionStatus)) return;
+    (Array.isArray(record?.payload?.items) ? record.payload.items : []).forEach((item) => {
+      const file = item?.artwork_file;
+      if (!file || sanitizeText(file.status || '').toLowerCase() !== 'prepared') return;
+      const productDefinitionId = sanitizeText(file.product_definition_id || item.product_definition_id || '').toLowerCase();
+      const variantKey = sanitizeText(file.variant_key || '').toLowerCase();
+      const artworkFileId = sanitizeText(file.artwork_file_id || '');
+      if (!productDefinitionId || !variantKey || !artworkFileId) return;
+      const key = `${productDefinitionId}:${variantKey}`;
+      if (!groups.has(key)) {
+        const productLabel = sanitizeText(item.product_display_name || productDefinitionId) || 'Ornament';
+        groups.set(key, { key, productDefinitionId, variantKey, label: getPreparedArtworkGroupLabel(productLabel, productDefinitionId, variantKey), artworkFileIds: new Set() });
+      }
+      groups.get(key).artworkFileIds.add(artworkFileId);
+    });
+  });
+  return [...groups.values()]
+    .map((group) => ({ ...group, fileCount: group.artworkFileIds.size, artworkFileIds: [...group.artworkFileIds] }))
+    .sort((left, right) => left.label.localeCompare(right.label));
+}
+
+function getPreparedArtworkGroupLabel(productLabel, productDefinitionId, variantKey) {
+  if (variantKey === 'single') return productLabel;
+  if (productDefinitionId === 'antler_ornament' && /^\d+$/.test(variantKey)) return `${productLabel} — ${variantKey} Name`;
+  return `${productLabel} — ${variantKey.replace(/[_-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())}`;
+}
+
+function buildPreparedArtworkGroupsMarkup(groups) {
+  const notice = buildStaffNoticeMarkup(staffOrdersState.artworkGroupNotice, staffOrdersState.artworkGroupNoticeTone);
+  if (!Array.isArray(groups) || groups.length === 0) return `${notice}<div class="staff-empty-state"><h3>No prepared artwork</h3><p>Prepared customer LIVE files from active orders will appear here.</p></div>`;
+  return `${notice}${groups.map((group) => {
+    const opening = staffOrdersState.artworkGroupOpeningKey === group.key;
+    return `<article class="staff-artwork-group-card"><div><strong>${escapeHtml(group.label)}</strong><p>${escapeHtml(`${group.fileCount} prepared artwork ${group.fileCount === 1 ? 'file' : 'files'}`)}</p></div><button class="secondary-button" type="button" data-action="staff-open-artwork-group" data-product-definition-id="${escapeHtml(group.productDefinitionId)}" data-variant-key="${escapeHtml(group.variantKey)}" ${opening ? 'disabled' : ''}>${opening ? 'Opening Launcher…' : 'Open All Artwork'}</button></article>`;
+  }).join('')}`;
+}
+
+async function openPreparedArtworkGroup(productDefinitionId, variantKey) {
+  if (!staffApiClient || typeof staffApiClient.createArtworkOpenGroupToken !== 'function' || staffOrdersState.artworkGroupOpeningKey) return;
+  const key = `${productDefinitionId}:${variantKey}`;
+  staffOrdersState.artworkGroupOpeningKey = key;
+  staffOrdersState.artworkGroupNotice = 'Opening Forge Artwork Launcher…';
+  staffOrdersState.artworkGroupNoticeTone = 'success';
+  renderStaffOrdersQueue();
+  try {
+    const result = await staffApiClient.createArtworkOpenGroupToken(productDefinitionId, variantKey);
+    if (!result.ok || !result.openUrl) throw new Error('Prepared artwork could not be opened.');
+    window.location.href = result.openUrl;
+    const fileCount = Number(result.group?.file_count) || 0;
+    staffOrdersState.artworkGroupNotice = `Sent ${fileCount} prepared artwork file${fileCount === 1 ? '' : 's'} to the Mac launcher.`;
+  } catch (error) {
+    staffOrdersState.artworkGroupNotice = error?.message || 'Prepared artwork could not be opened.';
+    staffOrdersState.artworkGroupNoticeTone = 'error';
+  } finally {
+    staffOrdersState.artworkGroupOpeningKey = '';
+    renderStaffOrdersQueue();
+  }
+}
+
 function renderStaffOrdersQueue() {
-  if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled) || !staffOrdersFilters || !staffBatchGroups || !staffOrdersList || !staffOrdersStatus) {
+  if (!forgeLocalOrdersQueue.shouldCreateStaffOrdersUi(staffOrdersState.enabled) || !staffOrdersFilters || !staffBatchGroups || !staffArtworkGroups || !staffOrdersList || !staffOrdersStatus) {
     return;
   }
 
@@ -6938,12 +7004,14 @@ function renderStaffOrdersQueue() {
     staffOrdersStatus.textContent = sourceConfig.loadingOrders;
     staffOrdersList.innerHTML = '';
     staffBatchGroups.innerHTML = '';
+    staffArtworkGroups.innerHTML = '<p class="staff-orders-status">Loading prepared artwork…</p>';
     return;
   }
 
   staffOrdersStatus.textContent = staffOrdersState.error || `${filteredRecords.length} order${filteredRecords.length === 1 ? '' : 's'} shown`;
 
   staffBatchGroups.innerHTML = buildStaffBatchMarkup(batchSummary, staffOrdersState.batchError);
+  staffArtworkGroups.innerHTML = buildPreparedArtworkGroupsMarkup(buildPreparedArtworkGroups(queueRecords));
   staffOrdersList.innerHTML = `
     ${buildStaffNoticeMarkup(staffOrdersState.notice, staffOrdersState.noticeTone)}
     ${filteredRecords.length
@@ -11936,6 +12004,14 @@ if (treeForm) {
 
     if (action === 'staff-view-order' && orderUuid) {
       openStaffOrderDetail(orderUuid);
+    }
+
+    if (action === 'staff-open-artwork-group') {
+      const button = event.target.closest('[data-product-definition-id][data-variant-key]');
+      const productDefinitionId = button?.dataset.productDefinitionId || '';
+      const variantKey = button?.dataset.variantKey || '';
+      if (productDefinitionId && variantKey) openPreparedArtworkGroup(productDefinitionId, variantKey);
+      return;
     }
 
     if (action === 'staff-view-batch') {

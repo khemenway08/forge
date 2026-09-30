@@ -59,6 +59,26 @@ test('createArtworkPrepareToken rejects an unconstrained bridge URL', async () =
   await assert.rejects(() => client.createArtworkPrepareToken('order-1', 'line-1'), (error) => error.code === 'invalid_response');
 });
 
+test('createArtworkOpenGroupToken sends only canonical group identity and accepts constrained launcher URL', async () => {
+  const requests = [];
+  const token = 'b'.repeat(64);
+  const client = staffApiClientModule.createForgeStaffApiClient({ fetchImpl: async (url, options) => {
+    requests.push({ url, options });
+    return createJsonResponse(200, { application: 'Forge', api_version: '1', status: 'ok', data: { open_url: `forge-artwork://open-group?token=${token}`, expires_at: '2026-09-30T12:05:00Z', group: { product_definition_id: 'tree_ornament', variant_key: 'small', file_count: 2 } } });
+  } });
+  const result = await client.createArtworkOpenGroupToken('tree_ornament', 'small');
+  assert.equal(requests[0].url, '/api/v1/staff/artwork-open-group-token.php');
+  assert.deepEqual(JSON.parse(requests[0].options.body), { product_definition_id: 'tree_ornament', variant_key: 'small' });
+  assert.equal(result.openUrl, `forge-artwork://open-group?token=${token}`);
+  assert.equal(result.group.file_count, 2);
+});
+
+test('createArtworkOpenGroupToken rejects paths or extra data in a bridge URL', async () => {
+  const token = 'c'.repeat(64);
+  const client = staffApiClientModule.createForgeStaffApiClient({ fetchImpl: async () => createJsonResponse(200, { application: 'Forge', api_version: '1', status: 'ok', data: { open_url: `forge-artwork://open-group?token=${token}&path=/tmp/customer.ai` } }) });
+  await assert.rejects(() => client.createArtworkOpenGroupToken('tree_ornament', 'small'), (error) => error.code === 'invalid_response');
+});
+
 test('login sends POST JSON and same-origin credentials without leaking the pin to the URL', async () => {
   const requests = [];
   const client = staffApiClientModule.createForgeStaffApiClient({
