@@ -727,6 +727,81 @@ test('hosted internal note updates return the refreshed shared order safely', as
   assert.equal(result.order.current_tray_number, 6);
 });
 
+test('hosted flag resolution preserves the operational overlay on the refreshed order', async () => {
+  const payloadHash = 'a'.repeat(64);
+  const flagKey = 'b'.repeat(64);
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'https:', hostname: 'forge.example.com' },
+    staffApiClient: {
+      async resolveOrderFlag(orderUuid, expectedPayloadSha256, submittedFlagKey) {
+        assert.equal(orderUuid, 'order-flag-1');
+        assert.equal(expectedPayloadSha256, payloadHash);
+        assert.equal(submittedFlagKey, flagKey);
+        return {
+          ok: true,
+          authenticated: true,
+          order: {
+            forge_order_uuid: 'order-flag-1',
+            payload_sha256: payloadHash,
+            production_status: 'ready_to_pack',
+            current_tray_number: 2,
+            total_item_count: 1,
+            completed_item_count: 1,
+            has_open_flags: true,
+            has_unresolved_blocking_flags: false,
+            operational_flags: [{ flag_key: flagKey, scope: 'item', line_id: 'line-1', code: 'custom_icon', resolved: true }],
+            unresolved_flags: [],
+            resolved_flags: [{ flag_key: flagKey, scope: 'item', line_id: 'line-1', code: 'custom_icon', resolved: true }],
+            payload: { has_open_flags: true, items: [{ line_id: 'line-1', quantity: 1, completed_quantity: 1, production_status: 'complete' }] }
+          },
+          resolvedFlag: { flag_key: flagKey, resolved: true }
+        };
+      }
+    }
+  });
+
+  const result = await runtime.resolveOrderFlag('order-flag-1', payloadHash, flagKey);
+  assert.equal(result.ok, true);
+  assert.equal(result.order.has_open_flags, true);
+  assert.equal(result.order.has_unresolved_blocking_flags, false);
+  assert.equal(result.order.resolved_flags[0].flag_key, flagKey);
+  assert.equal(result.order.staff_can_complete_order, true);
+});
+
+test('hosted orders without a server operational flag overlay retain legacy flag fallback behavior', async () => {
+  const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
+    locationLike: { protocol: 'https:', hostname: 'forge.example.com' },
+    staffApiClient: {
+      async listOrders() {
+        return {
+          ok: true,
+          authenticated: true,
+          totalCount: 1,
+          limit: 50,
+          offset: 0,
+          orders: [{
+            forge_order_uuid: 'legacy-flag-order',
+            production_status: 'in_production',
+            current_tray_number: 2,
+            has_open_flags: true,
+            payload: {
+              has_open_flags: true,
+              open_flags: [{ code: 'custom_icon', message: 'Custom icon needs review.' }],
+              items: []
+            }
+          }]
+        };
+      }
+    }
+  });
+
+  const result = await runtime.loadOrders();
+  assert.equal(result.records[0].has_open_flags, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(result.records[0], 'has_unresolved_blocking_flags'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(result.records[0], 'unresolved_flags'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(result.records[0], 'resolved_flags'), false);
+});
+
 test('hosted cancellation returns the refreshed shared order and released tray safely', async () => {
   const runtime = staffOrdersRuntime.createStaffOrdersRuntime({
     locationLike: { protocol: 'https:', hostname: 'forge.example.com' },

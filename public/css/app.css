@@ -5308,6 +5308,21 @@ body.forge-catalog-image-viewer-open {
   padding: 2px var(--staff-detail-inset) 0;
 }
 
+.staff-order-flag-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.staff-order-flag-row .secondary-button {
+  flex: 0 0 auto;
+}
+
+.staff-order-detail-flags--resolved {
+  opacity: .78;
+}
+
 .staff-order-detail-items {
   display: grid;
   gap: 12px;

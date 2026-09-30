@@ -391,6 +391,38 @@ test('completeItemQuantity preserves the safe server invalid-request message', a
   );
 });
 
+test('resolveOrderFlag sends the exact payload revision and deterministic flag key', async () => {
+  const requests = [];
+  const payloadHash = 'a'.repeat(64);
+  const flagKey = 'b'.repeat(64);
+  const client = staffApiClientModule.createForgeStaffApiClient({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return createJsonResponse(200, {
+        application: 'Forge',
+        api_version: '1',
+        status: 'ok',
+        data: {
+          order: { forge_order_uuid: 'order-flag-1', has_unresolved_blocking_flags: false, payload: { items: [] } },
+          resolved_flag: { flag_key: flagKey, resolved: true }
+        }
+      });
+    }
+  });
+
+  const result = await client.resolveOrderFlag('order-flag-1', payloadHash, flagKey);
+  assert.equal(result.ok, true);
+  assert.equal(result.resolvedFlag.flag_key, flagKey);
+  assert.equal(requests[0].url, '/api/v1/staff/resolve-flag.php');
+  assert.equal(requests[0].options.method, 'POST');
+  assert.equal(requests[0].options.credentials, 'same-origin');
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    forge_order_uuid: 'order-flag-1',
+    expected_payload_sha256: payloadHash,
+    flag_key: flagKey
+  });
+});
+
 test('completeOrder sends POST JSON and returns the completed order with released tray details safely', async () => {
   const requests = [];
   const client = staffApiClientModule.createForgeStaffApiClient({

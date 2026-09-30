@@ -59,6 +59,18 @@ final class CompleteOrderNotAllowedException extends \RuntimeException
 {
 }
 
+final class OrderFlagNotFoundException extends \RuntimeException
+{
+}
+
+final class OrderFlagResolutionConflictException extends \RuntimeException
+{
+}
+
+final class OrderFlagResolutionNotAllowedException extends \RuntimeException
+{
+}
+
 final class TestOrderDeletionNotAllowedException extends \RuntimeException
 {
 }
@@ -183,6 +195,7 @@ final class PdoStaffOrderRepository
         }
 
         $itemProductionRowsByOrder = $this->loadItemProductionRowsForOrders($orderUuids);
+        $flagResolutionRowsByOrder = $this->loadFlagResolutionRowsForOrders($orderUuids);
         $emailStatusesByOrderUuid = $this->loadOrderConfirmationMetadata($orderUuids);
         $completedTrayReleaseByOrderUuid = $this->loadCompletedTrayReleaseHistory($orderUuids);
         $normalized = [];
@@ -191,7 +204,8 @@ final class PdoStaffOrderRepository
                 $record,
                 $itemProductionRowsByOrder[$orderUuid] ?? [],
                 $emailStatusesByOrderUuid[$orderUuid] ?? null,
-                $completedTrayReleaseByOrderUuid[$orderUuid] ?? null
+                $completedTrayReleaseByOrderUuid[$orderUuid] ?? null,
+                $flagResolutionRowsByOrder[$orderUuid] ?? []
             );
         }
 
@@ -260,7 +274,8 @@ final class PdoStaffOrderRepository
             $record,
             $this->loadItemProductionRowsForOrder($orderUuid),
             $this->loadOrderConfirmationMetadata([$orderUuid])[$orderUuid] ?? null,
-            $this->loadCompletedTrayReleaseHistory([$orderUuid])[$orderUuid] ?? null
+            $this->loadCompletedTrayReleaseHistory([$orderUuid])[$orderUuid] ?? null,
+            $this->loadFlagResolutionRowsForOrder($orderUuid)
         );
     }
 
@@ -675,6 +690,150 @@ final class PdoStaffOrderRepository
         }
     }
 
+    /**
+     * Resolve one submitted flag without changing the submitted payload or its hash.
+     *
+     * @return array{order: array<string, mixed>, resolved_flag: array<string, mixed>}
+     */
+    public function resolveOrderFlag(string $forgeOrderUuid, string $expectedPayloadSha256, string $flagKey): array
+    {
+        $orderUuid = trim($forgeOrderUuid);
+        $expectedHash = strtolower(trim($expectedPayloadSha256));
+        $normalizedFlagKey = strtolower(trim($flagKey));
+        if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/', $orderUuid)
+            || !preg_match('/^[0-9a-f]{64}$/', $expectedHash)
+            || !preg_match('/^[0-9a-f]{64}$/', $normalizedFlagKey)) {
+            throw new \InvalidArgumentException('A valid order UUID, payload hash and flag identity are required.');
+        }
+
+        try {
+            $this->pdo->beginTransaction();
+            $orderRow = $this->loadOrderRowForUpdate($orderUuid);
+            if ($orderRow === null) {
+                throw new StaffOrderNotFoundException('That order could not be found.');
+            }
+            $storedHash = strtolower(trim((string) ($orderRow['payload_sha256'] ?? '')));
+            if (!hash_equals($storedHash, $expectedHash)) {
+                throw new OrderFlagResolutionConflictException('This order changed. Refresh Staff Orders before resolving the flag.');
+            }
+
+            $rawStatus = normalizeProductionStatusValue($orderRow['production_status'] ?? null, normalizeNullableTrayNumber($orderRow['current_tray_number'] ?? null));
+            if (in_array($rawStatus, [self::ORDER_STATUS_COMPLETED, self::ORDER_STATUS_CANCELLED, 'packed', 'shipped', 'picked_up'], true)) {
+                throw new OrderFlagResolutionNotAllowedException('Flags on completed or cancelled orders cannot be changed.');
+            }
+
+            $itemRows = $this->loadItemProductionRowsForOrderForUpdate($orderUuid);
+            $resolutionRows = $this->loadFlagResolutionRowsForOrderForUpdate($orderUuid);
+            $lockedOrder = $this->normalizeStoredOrderRecord($orderRow, $itemRows, null, null, $resolutionRows);
+            $matchingFlag = null;
+            foreach ($lockedOrder['operational_flags'] ?? [] as $flag) {
+                if (is_array($flag) && hash_equals((string) ($flag['flag_key'] ?? ''), $normalizedFlagKey)) {
+                    $matchingFlag = $flag;
+                    break;
+                }
+            }
+            if ($matchingFlag === null) {
+                throw new OrderFlagNotFoundException('That submitted flag could not be found.');
+            }
+            if (($matchingFlag['resolved'] ?? false) === true) {
+                throw new OrderFlagResolutionConflictException('That flag was already resolved. Refresh the order.');
+            }
+
+            $timestamp = currentUtcDatabaseDateTime();
+            $insert = $this->pdo->prepare(
+                'INSERT INTO forge_order_flag_resolutions (
+                    forge_order_uuid,
+                    source_payload_sha256,
+                    flag_key,
+                    flag_scope,
+                    line_id,
+                    flag_code,
+                    flag_message_sha256,
+                    resolved_at,
+                    created_at
+                 ) VALUES (
+                    :forge_order_uuid,
+                    :source_payload_sha256,
+                    :flag_key,
+                    :flag_scope,
+                    :line_id,
+                    :flag_code,
+                    :flag_message_sha256,
+                    :resolved_at,
+                    :created_at
+                 )'
+            );
+            $insert->execute([
+                ':forge_order_uuid' => $orderUuid,
+                ':source_payload_sha256' => $storedHash,
+                ':flag_key' => $normalizedFlagKey,
+                ':flag_scope' => $matchingFlag['scope'],
+                ':line_id' => $matchingFlag['line_id'],
+                ':flag_code' => $matchingFlag['code'],
+                ':flag_message_sha256' => hash('sha256', (string) $matchingFlag['message']),
+                ':resolved_at' => $timestamp,
+                ':created_at' => $timestamp,
+            ]);
+
+            $updatedResolutionRows = $this->loadFlagResolutionRowsForOrderForUpdate($orderUuid);
+            $updatedOrder = $this->normalizeStoredOrderRecord($orderRow, $itemRows, null, null, $updatedResolutionRows);
+            $nextStatus = (string) ($updatedOrder['production_status'] ?? self::ORDER_STATUS_SUBMITTED);
+            $readyToPackAt = normalizeNullableIso8601Value($updatedOrder['ready_to_pack_at'] ?? null);
+            if ($nextStatus === self::ORDER_STATUS_READY_TO_PACK && $readyToPackAt === null) {
+                $readyToPackAt = OrderPayload::databaseDateTimeToIso8601($timestamp);
+            }
+            $updateOrder = $this->pdo->prepare(
+                'UPDATE forge_orders
+                 SET production_status = :production_status,
+                     ready_to_pack_at = :ready_to_pack_at,
+                     updated_at = :updated_at
+                 WHERE forge_order_uuid = :forge_order_uuid'
+            );
+            $updateOrder->execute([
+                ':production_status' => $nextStatus,
+                ':ready_to_pack_at' => $readyToPackAt === null ? null : OrderPayload::normalizeDatabaseDateTime($readyToPackAt),
+                ':updated_at' => $timestamp,
+                ':forge_order_uuid' => $orderUuid,
+            ]);
+
+            $refreshedRow = $this->loadOrderRowForUpdate($orderUuid);
+            if (!is_array($refreshedRow)) {
+                throw new StorageUnavailableException('Flag resolution could not be saved.');
+            }
+            $refreshed = $this->normalizeStoredOrderRecord($refreshedRow, $itemRows, null, null, $updatedResolutionRows);
+            $resolvedFlag = null;
+            foreach ($refreshed['resolved_flags'] ?? [] as $flag) {
+                if (is_array($flag) && ($flag['flag_key'] ?? '') === $normalizedFlagKey) {
+                    $resolvedFlag = $flag;
+                    break;
+                }
+            }
+            if ($resolvedFlag === null) {
+                throw new StorageUnavailableException('Flag resolution could not be verified.');
+            }
+
+            $this->pdo->commit();
+            return ['order' => $refreshed, 'resolved_flag' => $resolvedFlag];
+        } catch (
+            StaffOrderNotFoundException
+            | OrderFlagNotFoundException
+            | OrderFlagResolutionConflictException
+            | OrderFlagResolutionNotAllowedException
+            | StorageUnavailableException
+            | \InvalidArgumentException $exception
+        ) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $exception;
+        } catch (PDOException $exception) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw new StorageUnavailableException('Flag resolution is currently unavailable.', 0, $exception);
+        }
+    }
+
     /** Apply an allowlisted correction while holding the same order lock as production mutations. */
     public function updateSubmittedOrder(string $forgeOrderUuid, string $expectedPayloadSha256, array $changes): array
     {
@@ -860,7 +1019,7 @@ final class PdoStaffOrderRepository
             if ($counts['total_item_count'] <= 0 || $counts['completed_item_count'] !== $counts['total_item_count']) {
                 throw new CompleteOrderNotAllowedException('Every required item must be complete before finishing this order.');
             }
-            if (staffOrderHasBlockingFlags($lockedOrder['payload'] ?? [])) {
+            if (($lockedOrder['has_unresolved_blocking_flags'] ?? false) === true) {
                 throw new CompleteOrderNotAllowedException('Resolve every open flag before finishing this order.');
             }
 
@@ -1761,6 +1920,102 @@ final class PdoStaffOrderRepository
     /**
      * @return array<int, array<string, mixed>>
      */
+    private function loadFlagResolutionRowsForOrder(string $forgeOrderUuid): array
+    {
+        return $this->loadFlagResolutionRowsForOrders([$forgeOrderUuid])[$forgeOrderUuid] ?? [];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function loadFlagResolutionRowsForOrderForUpdate(string $forgeOrderUuid): array
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT
+                forge_order_uuid,
+                source_payload_sha256,
+                flag_key,
+                flag_scope,
+                line_id,
+                flag_code,
+                flag_message_sha256,
+                resolved_at,
+                created_at
+             FROM forge_order_flag_resolutions
+             WHERE forge_order_uuid = :forge_order_uuid
+             ORDER BY flag_key ASC
+             FOR UPDATE'
+        );
+        $statement->execute([
+            ':forge_order_uuid' => $forgeOrderUuid,
+        ]);
+
+        $records = $statement->fetchAll();
+        return is_array($records) ? $records : [];
+    }
+
+    /**
+     * @param array<int, string> $orderUuids
+     * @return array<string, array<int, array<string, mixed>>>
+     */
+    private function loadFlagResolutionRowsForOrders(array $orderUuids): array
+    {
+        $normalizedOrderUuids = array_values(array_filter(array_map(static function ($value): string {
+            return is_string($value) ? trim($value) : '';
+        }, $orderUuids), static function (string $value): bool {
+            return $value !== '';
+        }));
+
+        if ($normalizedOrderUuids === []) {
+            return [];
+        }
+
+        $placeholders = implode(', ', array_fill(0, count($normalizedOrderUuids), '?'));
+        try {
+            $statement = $this->pdo->prepare(
+                "SELECT
+                    forge_order_uuid,
+                    source_payload_sha256,
+                    flag_key,
+                    flag_scope,
+                    line_id,
+                    flag_code,
+                    flag_message_sha256,
+                    resolved_at,
+                    created_at
+                 FROM forge_order_flag_resolutions
+                 WHERE forge_order_uuid IN ({$placeholders})
+                 ORDER BY forge_order_uuid ASC, flag_key ASC"
+            );
+            foreach ($normalizedOrderUuids as $index => $orderUuid) {
+                $statement->bindValue($index + 1, $orderUuid, PDO::PARAM_STR);
+            }
+            $statement->execute();
+            $rows = $statement->fetchAll();
+        } catch (PDOException $exception) {
+            throw new StorageUnavailableException('Forge order flag storage is currently unavailable.', 0, $exception);
+        }
+
+        $grouped = [];
+        foreach ($normalizedOrderUuids as $orderUuid) {
+            $grouped[$orderUuid] = [];
+        }
+        foreach (is_array($rows) ? $rows : [] as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $orderUuid = trim((string) ($row['forge_order_uuid'] ?? ''));
+            if (array_key_exists($orderUuid, $grouped)) {
+                $grouped[$orderUuid][] = $row;
+            }
+        }
+
+        return $grouped;
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
     private function loadLegacyCleanupRows(string $cutoffDatabase, bool $eligible, bool $forUpdate, ?int $limit = null): array
     {
         $comparison = $eligible ? '<' : '>=';
@@ -1973,19 +2228,26 @@ final class PdoStaffOrderRepository
      * @param array<int, array<string, mixed>> $itemProductionRows
      * @param array<string, mixed>|null $confirmationEmailStatus
      * @param array<string, mixed>|null $completedTrayRelease
+     * @param array<int, array<string, mixed>>|null $flagResolutionRows
      * @return array<string, mixed>
      */
     private function normalizeStoredOrderRecord(
         $record,
         array $itemProductionRows = [],
         ?array $confirmationEmailStatus = null,
-        ?array $completedTrayRelease = null
+        ?array $completedTrayRelease = null,
+        ?array $flagResolutionRows = null
     ): array {
+        $orderUuid = is_array($record) ? trim((string) ($record['forge_order_uuid'] ?? '')) : '';
+        if ($flagResolutionRows === null) {
+            $flagResolutionRows = $orderUuid === '' ? [] : $this->loadFlagResolutionRowsForOrder($orderUuid);
+        }
         $normalized = normalizeStoredStaffOrderRecord(
             $record,
             $itemProductionRows,
             $confirmationEmailStatus,
-            $completedTrayRelease
+            $completedTrayRelease,
+            $flagResolutionRows
         );
 
         if ($this->artworkTemplateRepository === null) {
@@ -2012,9 +2274,10 @@ function normalizeStaffOrderLimit(int $limit): int
  * @param mixed $record
  * @param array<int, array<string, mixed>> $itemProductionRows
  * @param array<string, mixed>|null $completedTrayRelease
+ * @param array<int, array<string, mixed>> $flagResolutionRows
  * @return array<string, mixed>
  */
-function normalizeStoredStaffOrderRecord($record, array $itemProductionRows = [], ?array $confirmationEmailStatus = null, ?array $completedTrayRelease = null): array
+function normalizeStoredStaffOrderRecord($record, array $itemProductionRows = [], ?array $confirmationEmailStatus = null, ?array $completedTrayRelease = null, array $flagResolutionRows = []): array
 {
     if (!is_array($record)) {
         throw new \InvalidArgumentException('A valid stored staff order record is required.');
@@ -2042,13 +2305,26 @@ function normalizeStoredStaffOrderRecord($record, array $itemProductionRows = []
         $itemProductionRows
     );
     $hasOpenFlags = staffOrderHasBlockingFlags($normalizedPayload);
+    $operationalFlags = buildStaffOperationalFlags(
+        $normalizedPayload,
+        trim((string) ($record['forge_order_uuid'] ?? '')),
+        trim((string) ($record['payload_sha256'] ?? '')),
+        $flagResolutionRows
+    );
+    $unresolvedFlags = array_values(array_filter($operationalFlags, static function (array $flag): bool {
+        return !($flag['resolved'] ?? false);
+    }));
+    $resolvedFlags = array_values(array_filter($operationalFlags, static function (array $flag): bool {
+        return (bool) ($flag['resolved'] ?? false);
+    }));
+    $hasUnresolvedBlockingFlags = $unresolvedFlags !== [];
     $counts = deriveStaffOrderCompletionCounts($normalizedPayload['items'] ?? []);
     $productionStatus = deriveStaffOrderProductionStatus(
         $record['production_status'] ?? null,
         $currentTrayNumber,
         $counts['completed_item_count'],
         $counts['total_item_count'],
-        $hasOpenFlags
+        $hasUnresolvedBlockingFlags
     );
     $readyToPackAt = normalizeStaffReadyToPackAt($record['ready_to_pack_at'] ?? null, $productionStatus);
     $completedAt = normalizeStaffCompletedAt($record['completed_at'] ?? null, $productionStatus);
@@ -2083,6 +2359,10 @@ function normalizeStoredStaffOrderRecord($record, array $itemProductionRows = []
         'completed_at' => $completedAt,
         'completed_tray_release' => $normalizedCompletedTrayRelease,
         'has_open_flags' => $hasOpenFlags,
+        'has_unresolved_blocking_flags' => $hasUnresolvedBlockingFlags,
+        'operational_flags' => $operationalFlags,
+        'unresolved_flags' => $unresolvedFlags,
+        'resolved_flags' => $resolvedFlags,
         'confirmation_email_status' => $confirmationEmailStatusRecord['label'],
         'confirmation_email_status_key' => $confirmationEmailStatusRecord['status_key'],
         'confirmation_email_timestamp' => $confirmationEmailStatusRecord['timestamp'],
@@ -3031,6 +3311,140 @@ function staffOrderHasBlockingFlags(array $payload): bool
     }
 
     return false;
+}
+
+/**
+ * Build stable operational identities without changing the submitted payload.
+ * Item flags are canonical; matching order-level entries are historical projections.
+ *
+ * @param array<string, mixed> $payload
+ * @param array<int, array<string, mixed>> $resolutionRows
+ * @return array<int, array<string, mixed>>
+ */
+function buildStaffOperationalFlags(array $payload, string $forgeOrderUuid, string $payloadSha256, array $resolutionRows = []): array
+{
+    $flags = [];
+    $occurrences = [];
+    $itemProjectionKeys = [];
+    $items = is_array($payload['items'] ?? null) ? $payload['items'] : [];
+
+    foreach ($items as $index => $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $lineId = normalizeStaffLineId(
+            $item['line_id'] ?? null,
+            $forgeOrderUuid,
+            normalizeStaffLineNumber($item['line_number'] ?? null, $index + 1)
+        );
+        $itemFlags = is_array($item['open_flags'] ?? null) ? $item['open_flags'] : [];
+        foreach ($itemFlags as $submittedFlag) {
+            if (!is_array($submittedFlag)) {
+                continue;
+            }
+            $code = normalizeSubmittedFlagCode($submittedFlag['code'] ?? null);
+            $message = normalizeSubmittedFlagMessage($submittedFlag['message'] ?? null, $code);
+            $itemProjectionKeys[buildSubmittedFlagProjectionKey($code, $message)] = true;
+            $flags[] = buildStaffOperationalFlagIdentity('item', $lineId, $code, $message, $occurrences);
+        }
+        $structured = is_array($item['structured_attributes'] ?? null) ? $item['structured_attributes'] : [];
+        if ($itemFlags === [] && BooleanOrArrayHasValues($structured['has_open_flags'] ?? null)) {
+            $flags[] = buildStaffOperationalFlagIdentity(
+                'item',
+                $lineId,
+                'legacy_open_flag',
+                'Submitted item has an unspecified open flag.',
+                $occurrences
+            );
+        }
+    }
+
+    $topLevelFlags = is_array($payload['open_flags'] ?? null) ? $payload['open_flags'] : [];
+    foreach ($topLevelFlags as $submittedFlag) {
+        if (!is_array($submittedFlag)) {
+            continue;
+        }
+        $code = normalizeSubmittedFlagCode($submittedFlag['code'] ?? null);
+        $message = normalizeSubmittedFlagMessage($submittedFlag['message'] ?? null, $code);
+        if (isset($itemProjectionKeys[buildSubmittedFlagProjectionKey($code, $message)])) {
+            continue;
+        }
+        $flags[] = buildStaffOperationalFlagIdentity('order', null, $code, $message, $occurrences);
+    }
+
+    if ($flags === [] && BooleanOrArrayHasValues($payload['has_open_flags'] ?? null)) {
+        $flags[] = buildStaffOperationalFlagIdentity(
+            'order',
+            null,
+            'legacy_open_flag',
+            'Submitted order has an unspecified open flag.',
+            $occurrences
+        );
+    }
+
+    $resolutionsByKey = [];
+    foreach ($resolutionRows as $row) {
+        if (!is_array($row) || !hash_equals($payloadSha256, trim((string) ($row['source_payload_sha256'] ?? '')))) {
+            continue;
+        }
+        $key = trim((string) ($row['flag_key'] ?? ''));
+        if ($key !== '') {
+            $resolutionsByKey[$key] = $row;
+        }
+    }
+
+    return array_map(static function (array $flag) use ($resolutionsByKey): array {
+        $row = $resolutionsByKey[$flag['flag_key']] ?? null;
+        $matches = is_array($row)
+            && hash_equals($flag['message_sha256'], trim((string) ($row['flag_message_sha256'] ?? '')))
+            && $flag['scope'] === trim((string) ($row['flag_scope'] ?? ''))
+            && $flag['code'] === trim((string) ($row['flag_code'] ?? ''))
+            && (($flag['line_id'] ?? null) === normalizeNullableString($row['line_id'] ?? null));
+        return [
+            'flag_key' => $flag['flag_key'],
+            'scope' => $flag['scope'],
+            'line_id' => $flag['line_id'],
+            'code' => $flag['code'],
+            'message' => $flag['message'],
+            'resolved' => $matches,
+            'resolved_at' => $matches ? normalizeNullableDatabaseDateTimeValue($row['resolved_at'] ?? null) : null,
+        ];
+    }, $flags);
+}
+
+/** @param array<string, int> $occurrences */
+function buildStaffOperationalFlagIdentity(string $scope, ?string $lineId, string $code, string $message, array &$occurrences): array
+{
+    $base = json_encode([$scope, $lineId, $code, $message], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    $occurrence = ($occurrences[$base] ?? 0) + 1;
+    $occurrences[$base] = $occurrence;
+    $identity = json_encode(['forge-flag-v1', $scope, $lineId, $code, $message, $occurrence], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+
+    return [
+        'flag_key' => hash('sha256', $identity),
+        'scope' => $scope,
+        'line_id' => $lineId,
+        'code' => $code,
+        'message' => $message,
+        'message_sha256' => hash('sha256', $message),
+    ];
+}
+
+function buildSubmittedFlagProjectionKey(string $code, string $message): string
+{
+    return hash('sha256', json_encode([$code, $message], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+}
+
+function normalizeSubmittedFlagCode($value): string
+{
+    $code = is_string($value) ? trim($value) : '';
+    return $code !== '' ? $code : 'legacy_open_flag';
+}
+
+function normalizeSubmittedFlagMessage($value, string $code): string
+{
+    $message = is_string($value) ? trim($value) : '';
+    return $message !== '' ? $message : $code;
 }
 
 /**

@@ -1861,3 +1861,26 @@ test('submitted, tray-assigned, in-production, incomplete, flagged, no-tray, pac
   assert.equal(queueHelpers.isOrderEligibleForReadyToPack(createReadyRecord({ forge_order_uuid: 'picked-up-order', production_status: 'picked_up', current_tray_number: null })), false);
   assert.equal(queueHelpers.isOrderEligibleForReadyToPack(createReadyRecord({ forge_order_uuid: 'cancelled-order', production_status: 'cancelled', current_tray_number: null })), false);
 });
+
+test('resolved historical flags no longer block ready-to-pack eligibility or open-flag filtering', () => {
+  const resolved = createReadyRecord({
+    forge_order_uuid: 'resolved-flag-order',
+    has_open_flags: true,
+    has_unresolved_blocking_flags: false,
+    operational_flags: [{ flag_key: 'flag-1', scope: 'item', line_id: 'tree-line', code: 'custom_icon', resolved: true }],
+    unresolved_flags: [],
+    resolved_flags: [{ flag_key: 'flag-1', scope: 'item', line_id: 'tree-line', code: 'custom_icon', resolved: true }],
+    payload: {
+      has_open_flags: true,
+      open_flags: [{ code: 'custom_icon', message: 'Custom icon requested' }]
+    }
+  });
+  resolved.payload.items.forEach((item) => {
+    item.structured_attributes = { ...(item.structured_attributes || {}), has_open_flags: true };
+    item.open_flags = [{ code: 'custom_icon', message: 'Custom icon requested' }];
+  });
+
+  assert.equal(queueHelpers.isOrderEligibleForReadyToPack(resolved), true);
+  assert.deepEqual(queueHelpers.filterLocalOrders([resolved], { openFlags: 'with_flags' }), []);
+  assert.deepEqual(queueHelpers.filterLocalOrders([resolved], { openFlags: 'without_flags' }).map((order) => order.forge_order_uuid), ['resolved-flag-order']);
+});

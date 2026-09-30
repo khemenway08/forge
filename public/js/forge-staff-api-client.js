@@ -29,6 +29,7 @@
   const TRAYS_ENDPOINT = 'trays.php';
   const ASSIGN_TRAY_ENDPOINT = 'assign-tray.php';
   const COMPLETE_ITEM_ENDPOINT = 'complete-item.php';
+  const RESOLVE_FLAG_ENDPOINT = 'resolve-flag.php';
   const ARTWORK_TEMPLATES_ENDPOINT = 'artwork-templates.php';
   const ARTWORK_SETUP_TOKEN_ENDPOINT = 'artwork-template-setup-token.php';
   const SAFE_ERROR_MESSAGES = {
@@ -58,6 +59,9 @@
     item_not_found: 'That saved item could not be found.',
     item_conflict: 'That item was already updated. Refresh the order and try again.',
     item_not_completable: 'That item cannot be marked complete right now.',
+    flag_not_found: 'That submitted flag could not be found.',
+    flag_resolution_conflict: 'That flag or order changed. Refresh the order and try again.',
+    flag_resolution_not_allowed: 'Flags on completed or cancelled orders cannot be changed.',
     server_error: 'The Forge staff server is currently unavailable.',
     method_not_allowed: 'The Forge staff server rejected this request method.'
   };
@@ -495,6 +499,21 @@
       }
     }
 
+    async function resolveOrderFlag(forgeOrderUuid, expectedPayloadSha256, flagKey) {
+      const orderUuid = asTrimmedString(forgeOrderUuid);
+      const payloadHash = asTrimmedString(expectedPayloadSha256).toLowerCase();
+      const normalizedFlagKey = asTrimmedString(flagKey).toLowerCase();
+      if (!orderUuid || !/^[0-9a-f]{64}$/.test(payloadHash) || !/^[0-9a-f]{64}$/.test(normalizedFlagKey)) {
+        throw new ForgeStaffApiError('invalid_request', 'A saved order, current payload hash and submitted flag are required.');
+      }
+      return submitStaffMutation(
+        `${baseUrl}/${RESOLVE_FLAG_ENDPOINT}`,
+        { forge_order_uuid: orderUuid, expected_payload_sha256: payloadHash, flag_key: normalizedFlagKey },
+        'Flag resolution could not be prepared.',
+        normalizeResolveFlagPayload
+      );
+    }
+
     async function updateInternalNote(forgeOrderUuid, internalNote) {
       const orderUuid = asTrimmedString(forgeOrderUuid);
       if (!orderUuid) {
@@ -801,6 +820,7 @@
       completeOrder,
       assignTray,
       completeItemQuantity,
+      resolveOrderFlag,
       updateInternalNote,
       previewLegacyTestCleanup,
       applyLegacyTestCleanup,
@@ -1040,6 +1060,23 @@
       alreadyApplied: Boolean(data.already_applied),
       order: data.order && typeof data.order === 'object' ? data.order : null,
       item: data.item && typeof data.item === 'object' ? data.item : null
+    };
+  }
+
+  function normalizeResolveFlagPayload(payload) {
+    const application = asTrimmedString(payload && payload.application);
+    const apiVersion = asTrimmedString(payload && payload.api_version);
+    const status = asTrimmedString(payload && payload.status);
+    const data = payload && typeof payload === 'object' ? payload.data : null;
+    if (application !== 'Forge' || apiVersion !== '1' || status !== 'ok' || !data || typeof data !== 'object'
+        || !data.order || typeof data.order !== 'object' || !data.resolved_flag || typeof data.resolved_flag !== 'object') {
+      throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+    }
+    return {
+      ok: true,
+      authenticated: true,
+      order: data.order,
+      resolvedFlag: data.resolved_flag
     };
   }
 

@@ -4,8 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const BUILD_VERSION = '20260929-65';
-const CACHE_NAME = 'forge-starter-v65';
+const BUILD_VERSION = '20260930-66';
+const CACHE_NAME = 'forge-starter-v66';
 
 function normalizeRequestUrl(input) {
   if (typeof input === 'string') {

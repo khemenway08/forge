@@ -7,7 +7,7 @@ const vm = require('vm');
 const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'), 'utf8');
 const cssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
-const BUILD_VERSION = '20260929-65';
+const BUILD_VERSION = '20260930-66';
 
 function extractScreenMarkup(screenId) {
   const match = indexSource.match(new RegExp(`<section class="screen[\\s\\S]*?data-screen="${screenId}"[\\s\\S]*?<\\/section>`));
@@ -4007,6 +4007,48 @@ test('staff order detail puts items before shipping and secondary information wh
   assert.match(markup, /Artwork: Ready/);
   assert.match(markup, /staff-complete-item/);
   assert.match(markup, /<details class="staff-order-detail-section staff-order-detail-collapsible">\s*<summary><span>Internal Notes<\/span><\/summary>/);
+});
+
+test('staff order detail offers confirmed resolution only for unresolved operational flags and keeps resolved history visible', async () => {
+  const { context, detailDialog, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
+  setSharedRecord({
+    production_status: 'in_production',
+    current_tray_number: 3,
+    has_open_flags: true,
+    has_unresolved_blocking_flags: true,
+    operational_flags: [
+      { flag_key: 'a'.repeat(64), scope: 'item', line_id: 'line-1', code: 'custom_icon', message: 'Custom icon requested', resolved: false },
+      { flag_key: 'b'.repeat(64), scope: 'order', line_id: null, code: 'waiting_on_material', message: 'Waiting on walnut', resolved: true }
+    ],
+    unresolved_flags: [
+      { flag_key: 'a'.repeat(64), scope: 'item', line_id: 'line-1', code: 'custom_icon', message: 'Custom icon requested', resolved: false }
+    ],
+    resolved_flags: [
+      { flag_key: 'b'.repeat(64), scope: 'order', line_id: null, code: 'waiting_on_material', message: 'Waiting on walnut', resolved: true }
+    ],
+    payload: {
+      customer: { full_name: 'Flag Customer' },
+      fulfillment: { method: 'pickup' },
+      has_open_flags: true,
+      open_flags: [{ code: 'custom_icon', scope: 'order', line_id: null, message: 'Custom icon requested' }],
+      items: [{
+        line_id: 'line-1', product_display_name: 'Tree Ornament', quantity: 1, completed_quantity: 1, production_status: 'complete',
+        open_flags: [{ code: 'custom_icon', scope: 'item', line_id: 'line-1', message: 'Custom icon requested' }]
+      }],
+      forge_order_number: 1001
+    },
+    total_item_count: 1,
+    completed_item_count: 1
+  });
+  await context.openStaffAccessScreen('staff-orders');
+  await context.openStaffOrderDetail('shared-order-1');
+  const markup = String(detailDialog.innerHTML || '');
+
+  assert.match(markup, /data-action="staff-resolve-flag"/);
+  assert.match(markup, /Resolve Flag/);
+  assert.match(markup, /Waiting on walnut/);
+  assert.match(markup, /Resolved Flags/);
+  assert.match(appSource, /window\.confirm\('Resolve this flag\? It will no longer block production\.'\)/);
 });
 
 test('shared server order detail renders cancel-order confirmation with the stored order context', async () => {

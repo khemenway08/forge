@@ -473,8 +473,8 @@
       requiredQuantity,
       completedQuantity,
       remainingQuantity,
-      hasOpenFlags: itemHasAnyOpenFlags(item),
-      openFlags: getItemOpenFlags(item),
+      hasOpenFlags: itemHasAnyOpenFlags(item, record),
+      openFlags: getItemOpenFlags(item, record),
       orderOpenFlags: getOrderOpenFlags(record),
       conciseIdentifier: buildConciseProductionIdentifier(structured, configurationSnapshot, item, year)
     };
@@ -816,12 +816,18 @@
   }
 
   function recordHasAnyOpenFlags(record) {
-    return recordHasOrderLevelFlags(record) || getRecordItems(record).some((item) => itemHasAnyOpenFlags(item));
+    if (hasOperationalFlagOverlay(record)) {
+      return Boolean(record.has_unresolved_blocking_flags);
+    }
+    return recordHasOrderLevelFlags(record) || getRecordItems(record).some((item) => itemHasAnyOpenFlags(item, record));
   }
 
   function recordHasOrderLevelFlags(record) {
     if (!record || typeof record !== 'object') {
       return false;
+    }
+    if (hasOperationalFlagOverlay(record)) {
+      return getOrderOpenFlags(record).length > 0;
     }
     if (Boolean(record.has_open_flags)) {
       return true;
@@ -833,12 +839,15 @@
     return getOrderOpenFlags(record).length > 0;
   }
 
-  function itemHasAnyOpenFlags(item) {
+  function itemHasAnyOpenFlags(item, record = null) {
     if (!item || typeof item !== 'object') {
       return false;
     }
-    if (getItemOpenFlags(item).length > 0) {
+    if (getItemOpenFlags(item, record).length > 0) {
       return true;
+    }
+    if (hasOperationalFlagOverlay(record)) {
+      return false;
     }
     const structuredAttributes = item.structured_attributes && typeof item.structured_attributes === 'object'
       ? item.structured_attributes
@@ -847,12 +856,28 @@
   }
 
   function getOrderOpenFlags(record) {
+    if (hasOperationalFlagOverlay(record)) {
+      return record.unresolved_flags.filter((flag) => flag && flag.scope === 'order').map((flag) => ({ ...flag }));
+    }
     const payload = getPayload(record);
     return Array.isArray(payload.open_flags) ? payload.open_flags.slice() : [];
   }
 
-  function getItemOpenFlags(item) {
+  function getItemOpenFlags(item, record = null) {
+    if (hasOperationalFlagOverlay(record)) {
+      const lineId = asTrimmedString(item && item.line_id);
+      return record.unresolved_flags
+        .filter((flag) => flag && flag.scope === 'item' && asTrimmedString(flag.line_id) === lineId)
+        .map((flag) => ({ ...flag }));
+    }
     return Array.isArray(item && item.open_flags) ? item.open_flags.slice() : [];
+  }
+
+  function hasOperationalFlagOverlay(record) {
+    return Boolean(record && typeof record === 'object'
+      && Array.isArray(record.unresolved_flags)
+      && Array.isArray(record.resolved_flags)
+      && Object.prototype.hasOwnProperty.call(record, 'has_unresolved_blocking_flags'));
   }
 
   function hasCustomIconFlagSet(flags) {
@@ -1413,7 +1438,7 @@
 
       summary.totalItemCount += quantity;
       summary.completedItemCount += completedQuantity;
-      if (itemStatus === 'blocked' || completedQuantity !== quantity || itemHasAnyOpenFlags(item)) {
+      if (itemStatus === 'blocked' || completedQuantity !== quantity || itemHasAnyOpenFlags(item, record)) {
         summary.allRequiredItemsComplete = false;
       }
       return summary;

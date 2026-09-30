@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260929-65';
+const FORGE_BUILD_VERSION = '20260930-66';
 const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
 const USPS_ADDRESS_BOOK_HEADERS = Object.freeze([
   'First Name',
@@ -204,6 +204,7 @@ const staffOrdersState = {
   detailLoading: false,
   detailError: '',
   detailSavingLineId: '',
+  detailResolvingFlagKey: '',
   detailEditDraft: null,
   detailEditSaving: false,
   detailEditError: '',
@@ -5718,6 +5719,14 @@ function ensureStaffOrderDetailUi() {
       if (lineId) {
         submitStaffItemCompletion(orderUuid, lineId);
       }
+      return;
+    }
+
+    if (action === 'staff-resolve-flag' && orderUuid && !staffOrdersState.detailResolvingFlagKey) {
+      const flagKey = event.target.closest('[data-flag-key]')?.dataset.flagKey;
+      if (flagKey && window.confirm('Resolve this flag? It will no longer block production.')) {
+        submitStaffFlagResolution(orderUuid, flagKey);
+      }
     }
   });
 
@@ -6226,7 +6235,9 @@ function canCompleteStaffOrder(record) {
     && Boolean(getOrderTrayNumber(record))
     && counts.totalItemCount > 0
     && counts.completedItemCount === counts.totalItemCount
-    && !Boolean(record?.has_open_flags);
+    && !(Object.prototype.hasOwnProperty.call(record, 'has_unresolved_blocking_flags')
+      ? Boolean(record?.has_unresolved_blocking_flags)
+      : Boolean(record?.has_open_flags));
 }
 
 function getOrderCompletionTimestamp(record) {
@@ -8229,7 +8240,9 @@ function buildStaffOrderCardMarkup(record, filters) {
   const itemCount = matchingItems.reduce((sum, item) => sum + (Number.isInteger(item.quantity) ? item.quantity : 1), 0);
   const hasActiveItemFilters = ['product', 'ornamentType', 'size', 'treeColor', 'bowColor', 'year', 'productionStatus']
     .some((key) => String(filters?.[key] || 'all').toLowerCase() !== 'all');
-  const hasFlags = Array.isArray(payload.open_flags) && payload.open_flags.length > 0;
+  const hasFlags = Object.prototype.hasOwnProperty.call(record, 'has_unresolved_blocking_flags')
+    ? Boolean(record.has_unresolved_blocking_flags)
+    : Array.isArray(payload.open_flags) && payload.open_flags.length > 0;
   const hasInternalNote = Boolean(record.has_internal_note) || sanitizeText(record.internal_note || '') !== '';
   const trayLabel = getOrderTrayLabel(record);
   const completionSummary = getOrderCompletionSummary(record);
@@ -8347,6 +8360,7 @@ async function openStaffOrderDetail(forgeOrderUuid) {
   staffOrdersState.detailLoading = true;
   staffOrdersState.detailError = '';
   staffOrdersState.detailSavingLineId = '';
+  staffOrdersState.detailResolvingFlagKey = '';
   staffOrdersState.detailInternalNoteDraft = '';
   staffOrdersState.detailInternalNoteSaving = false;
   staffOrdersState.detailInternalNoteStatus = '';
@@ -8407,6 +8421,7 @@ function closeStaffOrderDetail() {
   staffOrdersState.detailPackingVerification = null;
   staffOrdersState.detailError = '';
   staffOrdersState.detailSavingLineId = '';
+  staffOrdersState.detailResolvingFlagKey = '';
   staffOrdersState.detailInternalNoteDraft = '';
   staffOrdersState.detailInternalNoteSaving = false;
   staffOrdersState.detailInternalNoteStatus = '';
@@ -8477,7 +8492,11 @@ function renderStaffOrderDetail() {
   const payload = record.payload || {};
   const customer = payload.customer || {};
   const fulfillment = payload.fulfillment || {};
-  const openFlags = Array.isArray(payload.open_flags) ? payload.open_flags : [];
+  const hasOperationalFlagOverlay = Array.isArray(record.unresolved_flags) && Array.isArray(record.resolved_flags);
+  const openFlags = hasOperationalFlagOverlay
+    ? record.unresolved_flags
+    : (Array.isArray(payload.open_flags) ? payload.open_flags : []);
+  const resolvedFlags = hasOperationalFlagOverlay ? record.resolved_flags : [];
   const shippingAddress = fulfillment.shipping_address || null;
   const productionStatusLabel = getOrderProductionStatusLabel(record);
   const trayLabel = getOrderTrayLabel(record);
@@ -8514,6 +8533,7 @@ function renderStaffOrderDetail() {
           ${buildOrderEventBadges(record)}
           ${hasInternalNote ? '<span class="staff-status-badge staff-status-badge--sync-pending">NOTE</span>' : ''}
           ${openFlags.length ? '<span class="staff-flag-badge">Open Flags</span>' : ''}
+          ${resolvedFlags.length ? '<span class="staff-status-badge staff-status-badge--synced">Resolved Flags</span>' : ''}
           ${staffOrderNeedsArtworkSetup(record) ? '<span class="staff-artwork-badge staff-artwork-badge--problem">Artwork Setup Needed</span>' : ''}
         </div>
       </div>
@@ -8542,7 +8562,14 @@ function renderStaffOrderDetail() {
 
     ${showOpenFlagProgressNote ? buildStaffNoticeMarkup('All required pieces are complete, but this order still has an open flag and cannot move to Ready to Pack yet.', 'muted') : ''}
     ${isCancelledRecord ? buildStaffNoticeMarkup('This order is cancelled and remains stored for history. Tray assignment, item completion, packing, and Ready-to-Pack progression are disabled.', 'muted') : ''}
-    ${openFlags.length ? `<section class="staff-order-detail-section staff-order-detail-flags"><h3>Open Flags</h3><ul>${openFlags.map((flag) => `<li>${escapeHtml(flag.message || flag.code || 'Open flag')}</li>`).join('')}</ul></section>` : ''}
+    ${openFlags.length ? `<section class="staff-order-detail-section staff-order-detail-flags"><h3>Open Flags</h3><ul>${openFlags.map((flag) => `
+      <li class="staff-order-flag-row">
+        <span>${escapeHtml(flag.message || flag.code || 'Open flag')}</span>
+        ${hasOperationalFlagOverlay && record.staff_data_source === 'server' && !isCancelledRecord && !isCompletedOrder(record)
+          ? `<button class="secondary-button" type="button" data-action="staff-resolve-flag" data-order-uuid="${escapeHtml(record.forge_order_uuid)}" data-flag-key="${escapeHtml(flag.flag_key || '')}"${staffOrdersState.detailResolvingFlagKey ? ' disabled' : ''}>${staffOrdersState.detailResolvingFlagKey === flag.flag_key ? 'Resolving...' : 'Resolve Flag'}</button>`
+          : ''}
+      </li>`).join('')}</ul></section>` : ''}
+    ${resolvedFlags.length ? `<section class="staff-order-detail-section staff-order-detail-flags staff-order-detail-flags--resolved"><h3>Resolved Flags</h3><ul>${resolvedFlags.map((flag) => `<li><span>${escapeHtml(flag.message || flag.code || 'Submitted flag')}</span><strong>Resolved</strong></li>`).join('')}</ul></section>` : ''}
 
     <section class="staff-order-detail-section staff-order-detail-items staff-order-detail-items--primary">
       <h3>Items</h3>
@@ -8714,6 +8741,37 @@ async function submitStaffItemCompletion(forgeOrderUuid, lineId) {
     renderStaffOrderDetail();
   } finally {
     staffOrdersState.detailSavingLineId = '';
+    renderStaffOrderDetail();
+  }
+}
+
+async function submitStaffFlagResolution(forgeOrderUuid, flagKey) {
+  const record = staffOrdersState.detailRecord;
+  const payloadHash = record?.server_payload_sha256 || record?.payload_sha256 || '';
+  if (!forgeOrderUuid || !flagKey || !payloadHash || staffOrdersState.detailResolvingFlagKey) {
+    return;
+  }
+
+  staffOrdersState.detailResolvingFlagKey = flagKey;
+  staffOrdersState.detailError = '';
+  renderStaffOrderDetail();
+  try {
+    const result = await staffRuntime.resolveOrderFlag(forgeOrderUuid, payloadHash, flagKey);
+    if (!result?.ok || !result.order) {
+      throw new Error(result?.errorMessage || 'Flag resolution could not be saved.');
+    }
+    await loadStaffOrdersQueue();
+    staffOrdersState.detailRecord = staffOrdersState.records.find((candidate) => candidate?.forge_order_uuid === forgeOrderUuid)
+      || result.order;
+    staffOrdersState.notice = 'Flag resolved.';
+    staffOrdersState.noticeTone = 'success';
+  } catch (error) {
+    console.error('Forge staff flag resolution failed', error);
+    staffOrdersState.notice = '';
+    staffOrdersState.noticeTone = 'error';
+    staffOrdersState.detailError = error?.message || 'Flag resolution could not be saved.';
+  } finally {
+    staffOrdersState.detailResolvingFlagKey = '';
     renderStaffOrderDetail();
   }
 }
@@ -9461,7 +9519,13 @@ function getStaffOrderItemsMarkup(record, items) {
   }
 
   return items.map((item) => {
-    const flags = Array.isArray(item.open_flags) ? item.open_flags : [];
+    const hasOperationalFlagOverlay = Array.isArray(record.unresolved_flags) && Array.isArray(record.resolved_flags);
+    const flags = hasOperationalFlagOverlay
+      ? record.unresolved_flags.filter((flag) => flag?.scope === 'item' && flag?.line_id === item?.line_id)
+      : (Array.isArray(item.open_flags) ? item.open_flags : []);
+    const resolvedItemFlags = hasOperationalFlagOverlay
+      ? record.resolved_flags.filter((flag) => flag?.scope === 'item' && flag?.line_id === item?.line_id)
+      : [];
     const itemDetails = buildStaffItemDetailRows(item);
     const showPersonalizationOrder = usesPeopleAndPetsPersonalization(item);
     const customerNote = sanitizeText(item.customer_note || '');
@@ -9485,6 +9549,7 @@ function getStaffOrderItemsMarkup(record, items) {
             <span class="staff-status-badge ${escapeHtml(getStaffItemProductionStatusBadgeClass(item))}">${escapeHtml(itemStatusLabel)}</span>
             ${artworkReadiness ? `<span class="staff-artwork-badge ${escapeHtml(getStaffArtworkReadinessBadgeClass(artworkReadiness))}">Artwork: ${escapeHtml(artworkReadiness.label)}</span>` : ''}
             ${flags.length ? '<span class="staff-flag-badge">Item Flags</span>' : ''}
+            ${resolvedItemFlags.length ? '<span class="staff-status-badge staff-status-badge--synced">Resolved Flag</span>' : ''}
           </div>
         </div>
         <div class="staff-item-progress-row">
@@ -9527,6 +9592,11 @@ function getStaffOrderItemsMarkup(record, items) {
         <div class="staff-order-detail-row">
           <span>Item Open Flags</span>
           <ul class="staff-order-detail-list">${flags.map((flag) => `<li>${escapeHtml(flag.message || flag.code || 'Open flag')}</li>`).join('')}</ul>
+        </div>` : ''}
+        ${resolvedItemFlags.length ? `
+        <div class="staff-order-detail-row">
+          <span>Resolved Item Flags</span>
+          <ul class="staff-order-detail-list">${resolvedItemFlags.map((flag) => `<li>${escapeHtml(flag.message || flag.code || 'Submitted flag')} — Resolved</li>`).join('')}</ul>
         </div>` : ''}
       </article>
     `;

@@ -5481,6 +5481,233 @@ $runner->run('submitted corrections preserve legacy fallback line identity and r
     assertSame(false, $pdo->inTransaction());
 });
 
+$runner->run('existing unflagged orders remain operationally unchanged without resolution rows', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    $uuid = '123e4567-e89b-42d3-a456-426614174619';
+    $payload = createValidPayload([
+        'forge_order_uuid' => $uuid,
+        'forge_order_number' => 1061,
+        'has_open_flags' => false,
+        'open_flags' => [],
+    ]);
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => $uuid,
+        'forge_order_number' => 1061,
+        'production_status' => 'tray_assigned',
+        'current_tray_number' => 2,
+        'payload' => $payload,
+    ]);
+    $repository = new \Forge\Server\PdoStaffOrderRepository($pdo, ['FORGE_TRAY_NUMBERS' => '1,2']);
+    $order = $repository->getOrder($uuid);
+
+    assertSame('tray_assigned', $order['production_status']);
+    assertSame(false, $order['has_open_flags']);
+    assertSame(false, $order['has_unresolved_blocking_flags']);
+    assertSame([], $order['operational_flags']);
+    assertSame([], $order['unresolved_flags']);
+    assertSame([], $order['resolved_flags']);
+    assertSame(0, (int) $pdo->query('SELECT COUNT(*) FROM forge_order_flag_resolutions')->fetchColumn());
+});
+
+$runner->run('operational flag resolutions preserve submitted payloads and resolve canonical item and order blockers independently', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    $uuid = '123e4567-e89b-42d3-a456-426614174620';
+    $baseItem = createValidPayload()['items'][0];
+    $baseItem['completed_quantity'] = 1;
+    $baseItem['production_status'] = 'complete';
+    $baseItem['completed_at'] = '2026-09-29 12:00:00.000000';
+    $itemOne = $baseItem;
+    $itemOne['line_id'] = 'flag-line-1';
+    $itemOne['line_number'] = 1;
+    $itemOne['structured_attributes']['has_open_flags'] = true;
+    $itemOne['open_flags'] = [[
+        'code' => 'custom_icon',
+        'scope' => 'item',
+        'line_id' => 'flag-line-1',
+        'message' => 'Custom icon requested: Cardinal',
+    ]];
+    $itemTwo = $itemOne;
+    $itemTwo['line_id'] = 'flag-line-2';
+    $itemTwo['line_number'] = 2;
+    $itemTwo['open_flags'][0]['line_id'] = 'flag-line-2';
+    $payload = createValidPayload([
+        'forge_order_uuid' => $uuid,
+        'forge_order_number' => 1062,
+        'items' => [$itemOne, $itemTwo],
+        'has_open_flags' => true,
+        'open_flags' => [
+            ['code' => 'custom_icon', 'scope' => 'order', 'line_id' => null, 'message' => 'Custom icon requested: Cardinal'],
+            ['code' => 'waiting_on_material', 'scope' => 'order', 'line_id' => null, 'message' => 'Waiting on walnut'],
+        ],
+    ]);
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => $uuid,
+        'forge_order_number' => 1062,
+        'production_status' => 'in_production',
+        'current_tray_number' => 4,
+        'payload' => $payload,
+    ]);
+    $repository = new \Forge\Server\PdoStaffOrderRepository($pdo, ['FORGE_TRAY_NUMBERS' => '1,2,3,4']);
+    $before = $pdo->query("SELECT payload_json, payload_sha256 FROM forge_orders WHERE forge_order_uuid = '{$uuid}'")->fetch(PDO::FETCH_ASSOC);
+    $order = $repository->getOrder($uuid);
+
+    assertSame(3, count($order['operational_flags']));
+    assertSame(3, count($order['unresolved_flags']));
+    assertSame(0, count($order['resolved_flags']));
+    assertSame(true, $order['has_unresolved_blocking_flags']);
+    assertSame('in_production', $order['production_status']);
+    $itemFlags = array_values(array_filter($order['operational_flags'], static fn (array $flag): bool => $flag['scope'] === 'item'));
+    $orderFlags = array_values(array_filter($order['operational_flags'], static fn (array $flag): bool => $flag['scope'] === 'order'));
+    assertSame(2, count($itemFlags));
+    assertTrue($itemFlags[0]['flag_key'] !== $itemFlags[1]['flag_key']);
+    assertSame('waiting_on_material', $orderFlags[0]['code']);
+
+    assertThrows(static function () use ($repository, $uuid): void {
+        $repository->completeOrder($uuid);
+    }, static function (\Throwable $exception): void {
+        assertTrue($exception instanceof \Forge\Server\CompleteOrderNotAllowedException);
+    });
+
+    $first = $repository->resolveOrderFlag($uuid, $before['payload_sha256'], $itemFlags[0]['flag_key']);
+    assertSame(true, $first['resolved_flag']['resolved']);
+    assertSame(true, $first['order']['has_unresolved_blocking_flags']);
+    assertSame('in_production', $first['order']['production_status']);
+    assertThrows(static function () use ($repository, $uuid, $before, $itemFlags): void {
+        $repository->resolveOrderFlag($uuid, $before['payload_sha256'], $itemFlags[0]['flag_key']);
+    }, static function (\Throwable $exception): void {
+        assertTrue($exception instanceof \Forge\Server\OrderFlagResolutionConflictException);
+    });
+
+    $second = $repository->resolveOrderFlag($uuid, $before['payload_sha256'], $itemFlags[1]['flag_key']);
+    assertSame(true, $second['order']['has_unresolved_blocking_flags']);
+    $final = $repository->resolveOrderFlag($uuid, $before['payload_sha256'], $orderFlags[0]['flag_key']);
+    assertSame(false, $final['order']['has_unresolved_blocking_flags']);
+    assertSame('ready_to_pack', $final['order']['production_status']);
+    assertTrue(is_string($final['order']['ready_to_pack_at']));
+    assertSame(3, count($final['order']['resolved_flags']));
+    $after = $pdo->query("SELECT payload_json, payload_sha256 FROM forge_orders WHERE forge_order_uuid = '{$uuid}'")->fetch(PDO::FETCH_ASSOC);
+    assertSame($before['payload_json'], $after['payload_json']);
+    assertSame($before['payload_sha256'], $after['payload_sha256']);
+});
+
+$runner->run('flag resolution rejects stale unknown terminal mutations and does not imply physical completion', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    $uuid = '123e4567-e89b-42d3-a456-426614174621';
+    $item = createValidPayload()['items'][0];
+    $item['line_id'] = 'unknown-flag-line';
+    $item['structured_attributes']['has_open_flags'] = true;
+    $item['open_flags'] = [[
+        'code' => 'future_unknown_code',
+        'scope' => 'item',
+        'line_id' => 'unknown-flag-line',
+        'message' => 'Future production concern',
+    ]];
+    $payload = createValidPayload([
+        'forge_order_uuid' => $uuid,
+        'forge_order_number' => 1063,
+        'items' => [$item],
+        'has_open_flags' => true,
+        'open_flags' => [['code' => 'future_unknown_code', 'scope' => 'order', 'line_id' => null, 'message' => 'Future production concern']],
+    ]);
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => $uuid,
+        'forge_order_number' => 1063,
+        'production_status' => 'tray_assigned',
+        'current_tray_number' => 3,
+        'payload' => $payload,
+    ]);
+    $repository = new \Forge\Server\PdoStaffOrderRepository($pdo, ['FORGE_TRAY_NUMBERS' => '1,2,3']);
+    $order = $repository->getOrder($uuid);
+    $flagKey = $order['unresolved_flags'][0]['flag_key'];
+    $hash = $order['payload_sha256'];
+    assertSame('future_unknown_code', $order['unresolved_flags'][0]['code']);
+    assertThrows(static fn () => $repository->resolveOrderFlag($uuid, str_repeat('a', 64), $flagKey), static function (\Throwable $exception): void {
+        assertTrue($exception instanceof \Forge\Server\OrderFlagResolutionConflictException);
+    });
+    assertThrows(static fn () => $repository->resolveOrderFlag($uuid, $hash, str_repeat('b', 64)), static function (\Throwable $exception): void {
+        assertTrue($exception instanceof \Forge\Server\OrderFlagNotFoundException);
+    });
+    $resolved = $repository->resolveOrderFlag($uuid, $hash, $flagKey);
+    assertSame(false, $resolved['order']['has_unresolved_blocking_flags']);
+    assertSame('tray_assigned', $resolved['order']['production_status']);
+    assertSame(0, $resolved['order']['completed_item_count']);
+
+    foreach (['completed', 'cancelled'] as $terminalStatus) {
+        $terminalUuid = $terminalStatus === 'completed'
+            ? '123e4567-e89b-42d3-a456-426614174622'
+            : '123e4567-e89b-42d3-a456-426614174623';
+        $terminalPayload = $payload;
+        $terminalPayload['forge_order_uuid'] = $terminalUuid;
+        $terminalPayload['items'][0]['line_id'] = $terminalStatus . '-flag-line';
+        $terminalPayload['items'][0]['open_flags'][0]['line_id'] = $terminalStatus . '-flag-line';
+        seedStaffOrderRepositoryTestOrder($pdo, [
+            'forge_order_uuid' => $terminalUuid,
+            'forge_order_number' => $terminalStatus === 'completed' ? 1064 : 1065,
+            'production_status' => $terminalStatus,
+            'payload' => $terminalPayload,
+            'completed_at' => $terminalStatus === 'completed' ? '2026-09-29 12:30:00.000000' : null,
+            'cancelled_at' => $terminalStatus === 'cancelled' ? '2026-09-29 12:30:00.000000' : null,
+        ]);
+        $terminal = $repository->getOrder($terminalUuid);
+        assertThrows(static fn () => $repository->resolveOrderFlag($terminalUuid, $terminal['payload_sha256'], $terminal['unresolved_flags'][0]['flag_key']), static function (\Throwable $exception): void {
+            assertTrue($exception instanceof \Forge\Server\OrderFlagResolutionNotAllowedException);
+        });
+    }
+});
+
+$runner->run('legacy boolean-only flags remain explicit unresolved blockers', static function (): void {
+    $payload = createValidPayload(['has_open_flags' => true, 'open_flags' => []]);
+    $payload['items'][0]['open_flags'] = [];
+    $payload['items'][0]['structured_attributes']['has_open_flags'] = true;
+    $flags = \Forge\Server\buildStaffOperationalFlags($payload, $payload['forge_order_uuid'], str_repeat('c', 64));
+    assertSame(1, count($flags));
+    assertSame('legacy_open_flag', $flags[0]['code']);
+    assertSame('item', $flags[0]['scope']);
+    assertSame(false, $flags[0]['resolved']);
+});
+
+$runner->run('physical item completion never creates a flag resolution', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    $uuid = '123e4567-e89b-42d3-a456-426614174624';
+    $item = createValidPayload()['items'][0];
+    $item['line_id'] = 'completion-flag-line';
+    $item['structured_attributes']['has_open_flags'] = true;
+    $item['open_flags'] = [[
+        'code' => 'custom_icon', 'scope' => 'item', 'line_id' => 'completion-flag-line', 'message' => 'Custom icon requested',
+    ]];
+    $payload = createValidPayload([
+        'forge_order_uuid' => $uuid,
+        'forge_order_number' => 1066,
+        'items' => [$item],
+        'has_open_flags' => true,
+        'open_flags' => [['code' => 'custom_icon', 'scope' => 'order', 'line_id' => null, 'message' => 'Custom icon requested']],
+    ]);
+    seedStaffOrderRepositoryTestOrder($pdo, [
+        'forge_order_uuid' => $uuid,
+        'forge_order_number' => 1066,
+        'production_status' => 'tray_assigned',
+        'current_tray_number' => 2,
+        'payload' => $payload,
+    ]);
+    $repository = new \Forge\Server\PdoStaffOrderRepository($pdo, ['FORGE_TRAY_NUMBERS' => '1,2']);
+    $result = $repository->completeItemQuantity($uuid, 'completion-flag-line', 0, 1);
+    assertSame('in_production', $result['order']['production_status']);
+    assertSame(true, $result['order']['has_unresolved_blocking_flags']);
+    assertSame(1, count($result['order']['unresolved_flags']));
+    assertSame(0, (int) $pdo->query('SELECT COUNT(*) FROM forge_order_flag_resolutions')->fetchColumn());
+});
+
+$runner->run('flag resolution migration and endpoint remain additive and staff authenticated', static function (): void {
+    $migration = file_get_contents(__DIR__ . '/../migrations/021_create_forge_order_flag_resolutions.sql');
+    $endpoint = file_get_contents(__DIR__ . '/../../public/api/v1/staff/resolve-flag.php');
+    assertTrue(is_string($migration) && str_contains($migration, 'CREATE TABLE IF NOT EXISTS forge_order_flag_resolutions'));
+    assertTrue(!str_contains($migration, 'UPDATE forge_orders'));
+    assertTrue(!str_contains($migration, 'payload_json'));
+    assertTrue(is_string($endpoint) && str_contains($endpoint, 'requireAuthenticatedStaffSession'));
+    assertTrue(str_contains($endpoint, "method !== 'POST'"));
+    assertTrue(!str_contains($endpoint, 'payload_json'));
+});
+
 function createArtworkRegistrationFixture(array $overrides = []): array
 {
     $digest = str_repeat('a', 64);
@@ -6214,6 +6441,20 @@ function createStaffOrderRepositoryTestPdo(bool $includeCleanupTombstones = true
             completed_at TEXT DEFAULT NULL,
             updated_at TEXT NOT NULL,
             PRIMARY KEY (forge_order_uuid, line_id)
+        )'
+    );
+    $pdo->exec(
+        'CREATE TABLE forge_order_flag_resolutions (
+            forge_order_uuid TEXT NOT NULL,
+            source_payload_sha256 TEXT NOT NULL,
+            flag_key TEXT NOT NULL,
+            flag_scope TEXT NOT NULL,
+            line_id TEXT DEFAULT NULL,
+            flag_code TEXT NOT NULL,
+            flag_message_sha256 TEXT NOT NULL,
+            resolved_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (forge_order_uuid, source_payload_sha256, flag_key)
         )'
     );
     $pdo->exec(

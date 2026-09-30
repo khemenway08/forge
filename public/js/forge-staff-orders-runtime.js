@@ -356,6 +356,37 @@
       };
     }
 
+    async function resolveOrderFlag(forgeOrderUuid, expectedPayloadSha256, flagKey) {
+      if (environment.dataSource === STAFF_DATA_SOURCES.local) {
+        return {
+          ok: false,
+          authenticated: true,
+          unsupported: true,
+          dataSource: STAFF_DATA_SOURCES.local,
+          readOnly: false
+        };
+      }
+      assertStaffApiClient(staffApiClient, 'resolveOrderFlag');
+      const result = await staffApiClient.resolveOrderFlag(forgeOrderUuid, expectedPayloadSha256, flagKey);
+      if (!result || (!result.ok && result.unauthenticated) || result.authenticated === false) {
+        return {
+          ok: false,
+          authenticated: false,
+          unauthenticated: true,
+          dataSource: STAFF_DATA_SOURCES.server,
+          readOnly: true
+        };
+      }
+      return {
+        ok: true,
+        authenticated: true,
+        dataSource: STAFF_DATA_SOURCES.server,
+        readOnly: true,
+        order: adaptServerOrderForQueue(result.order),
+        resolvedFlag: result.resolvedFlag && typeof result.resolvedFlag === 'object' ? deepCloneValue(result.resolvedFlag) : null
+      };
+    }
+
     async function updateInternalNote(forgeOrderUuid, internalNote) {
       if (environment.dataSource === STAFF_DATA_SOURCES.local) {
         assertLocalOrderStore(localOrderStore, 'updateInternalNote');
@@ -571,6 +602,7 @@
       cancelOrder,
       completeOrder,
       completeItemQuantity,
+      resolveOrderFlag,
       updateInternalNote,
       previewLegacyTestCleanup,
       applyLegacyTestCleanup,
@@ -691,6 +723,11 @@
     const confirmationEmailStatus = normalizeNullableString(record && record.confirmation_email_status);
     const confirmationEmailStatusKey = normalizeNullableString(record && record.confirmation_email_status_key);
     const confirmationEmailTimestamp = normalizeNullableString(record && record.confirmation_email_timestamp);
+    const hasOperationalFlagOverlay = Boolean(record)
+      && Object.prototype.hasOwnProperty.call(record, 'has_unresolved_blocking_flags')
+      && Array.isArray(record.operational_flags)
+      && Array.isArray(record.unresolved_flags)
+      && Array.isArray(record.resolved_flags);
     const canCompleteItems = Boolean(trayNumber)
       && ['tray_assigned', 'in_production'].includes(productionStatus);
     const canCompleteOrder = Boolean(trayNumber)
@@ -731,6 +768,12 @@
       total_item_count: totalItemCount,
       completed_item_count: completedItemCount,
       has_open_flags: Boolean(record && record.has_open_flags) || Boolean(payload && payload.has_open_flags),
+      ...(hasOperationalFlagOverlay ? {
+        has_unresolved_blocking_flags: Boolean(record.has_unresolved_blocking_flags),
+        operational_flags: deepCloneValue(record.operational_flags),
+        unresolved_flags: deepCloneValue(record.unresolved_flags),
+        resolved_flags: deepCloneValue(record.resolved_flags)
+      } : {}),
       artwork_setup_needed: Boolean(record && record.artwork_setup_needed),
       payload: normalizedPayload,
       staff_data_source: STAFF_DATA_SOURCES.server,
