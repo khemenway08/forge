@@ -40,6 +40,25 @@ test('checkSession sends same-origin credentials safely', async () => {
   assert.equal(requests[0].options.headers.Accept, 'application/json');
 });
 
+test('createArtworkPrepareToken sends only canonical order identity and accepts constrained launcher URL', async () => {
+  const requests = [];
+  const token = 'a'.repeat(64);
+  const client = staffApiClientModule.createForgeStaffApiClient({ fetchImpl: async (url, options) => {
+    requests.push({ url, options });
+    return createJsonResponse(200, { application: 'Forge', api_version: '1', status: 'ok', data: { prepare_url: `forge-artwork://prepare?token=${token}`, expires_at: '2026-09-30T12:05:00Z', association: { live_filename: 'SMITH_JOHN_CHRISTMAS-TREE-SMALL_LIVE.ai' } } });
+  } });
+  const result = await client.createArtworkPrepareToken('123e4567-e89b-42d3-a456-426614174599', 'line-1');
+  assert.equal(requests[0].url, '/api/v1/staff/artwork-prepare-token.php');
+  assert.deepEqual(JSON.parse(requests[0].options.body), { forge_order_uuid: '123e4567-e89b-42d3-a456-426614174599', line_id: 'line-1' });
+  assert.equal(result.prepareUrl, `forge-artwork://prepare?token=${token}`);
+  assert.equal(result.association.live_filename, 'SMITH_JOHN_CHRISTMAS-TREE-SMALL_LIVE.ai');
+});
+
+test('createArtworkPrepareToken rejects an unconstrained bridge URL', async () => {
+  const client = staffApiClientModule.createForgeStaffApiClient({ fetchImpl: async () => createJsonResponse(200, { application: 'Forge', api_version: '1', status: 'ok', data: { prepare_url: 'forge-artwork://prepare?token=short&path=/tmp/master.ai' } }) });
+  await assert.rejects(() => client.createArtworkPrepareToken('order-1', 'line-1'), (error) => error.code === 'invalid_response');
+});
+
 test('login sends POST JSON and same-origin credentials without leaking the pin to the URL', async () => {
   const requests = [];
   const client = staffApiClientModule.createForgeStaffApiClient({

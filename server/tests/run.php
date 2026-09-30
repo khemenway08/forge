@@ -6765,6 +6765,89 @@ function seedOutboundMessage(PDO $pdo, array $options = []): void
     ]);
 }
 
+$runner->run('artwork preparation reserves stable safe LIVE paths and preserves order data', static function (): void {
+    $pdo = createStaffOrderRepositoryTestPdo();
+    createArtworkPreparationTestTables($pdo);
+    $payload = createValidPayload(['forge_order_uuid'=>'123e4567-e89b-42d3-a456-426614174599','forge_order_number'=>1042]);
+    $payload['customer'] = ['first_name'=>'John','last_name'=>'Smith','full_name'=>'John Smith','email'=>'john@example.com'];
+    $payload['items'][0]['structured_attributes']['size'] = 'Small';
+    $payload['items'][0]['configuration_snapshot']['size'] = 'Small';
+    $second = $payload['items'][0]; $second['line_id'] = '123e4567-e89b-42d3-a456-426614174599-line-2'; $second['line_number'] = 2;
+    $payload['items'][] = $second;
+    seedStaffOrderRepositoryTestOrder($pdo, ['payload'=>$payload,'forge_order_uuid'=>$payload['forge_order_uuid'],'forge_order_number'=>1042,'submitted_at'=>'2026-09-30 12:00:00.000000']);
+    seedArtworkPreparationRegistration($pdo, true);
+    $before = $pdo->query('SELECT payload_json,payload_sha256,production_status FROM forge_orders')->fetch();
+    $repository = new \Forge\Server\PdoArtworkPreparationRepository($pdo);
+    $first = $repository->issuePrepareToken($payload['forge_order_uuid'], $payload['items'][0]['line_id']);
+    assertSame('2026/SMITH_JOHN_1042/SMITH_JOHN_CHRISTMAS-TREE-SMALL_LIVE.ai', $first['association']['relative_live_path']);
+    $retry = $repository->issuePrepareToken($payload['forge_order_uuid'], $payload['items'][0]['line_id']);
+    assertSame($first['association']['artwork_file_id'], $retry['association']['artwork_file_id']);
+    assertSame($first['association']['relative_live_path'], $retry['association']['relative_live_path']);
+    $secondResult = $repository->issuePrepareToken($payload['forge_order_uuid'], $payload['items'][1]['line_id']);
+    assertSame('SMITH_JOHN_CHRISTMAS-TREE-SMALL-2_LIVE.ai', $secondResult['association']['live_filename']);
+    assertSame(2, (int)$pdo->query('SELECT COUNT(*) FROM forge_order_artwork_files')->fetchColumn());
+    assertSame($before, $pdo->query('SELECT payload_json,payload_sha256,production_status FROM forge_orders')->fetch());
+    $exchange = $repository->exchangePrepareToken($first['prepare_token']);
+    assertSame('SMALL_CHRISTMAS TREE_MASTER.ai', $exchange['preparation']['expected_master_filename']);
+    assertThrows(static fn()=> $repository->exchangePrepareToken($first['prepare_token']), static fn($error)=>assertTrue($error instanceof InvalidArgumentException));
+    $hash = str_repeat('a',64);
+    $reported = $repository->reportPreparation($exchange['report_token'],'Test Mac','prepared',$hash,$hash,null);
+    assertSame('prepared',$reported['status']);
+    $retryExchange = $repository->exchangePrepareToken($retry['prepare_token']);
+    $failed = $repository->reportPreparation($retryExchange['report_token'],'Test Mac','failed',$hash,$hash,'open_failed');
+    assertSame('failed',$failed['status']);
+    assertSame('open_failed',$failed['last_error_code']);
+    $afterFailure = $repository->issuePrepareToken($payload['forge_order_uuid'], $payload['items'][0]['line_id']);
+    assertSame($first['association']['artwork_file_id'], $afterFailure['association']['artwork_file_id']);
+    $staff = new \Forge\Server\PdoStaffOrderRepository($pdo, [], null, new \Forge\Server\PdoArtworkTemplateRepository($pdo), $repository);
+    $staffOrder = $staff->getOrder($payload['forge_order_uuid']);
+    assertSame('failed', $staffOrder['payload']['items'][0]['artwork_file']['status']);
+    assertSame('SMITH_JOHN_CHRISTMAS-TREE-SMALL_LIVE.ai', $staffOrder['payload']['items'][0]['artwork_file']['live_filename']);
+    assertSame($before, $pdo->query('SELECT payload_json,payload_sha256,production_status FROM forge_orders')->fetch());
+});
+
+$runner->run('artwork preparation rejects unconfigured invalid and stale templates safely', static function (): void {
+    foreach (['unconfigured','invalid'] as $case) {
+        $pdo=createStaffOrderRepositoryTestPdo();createArtworkPreparationTestTables($pdo);$payload=createValidPayload(['forge_order_uuid'=>'123e4567-e89b-42d3-a456-426614174598','forge_order_number'=>1043]);$payload['customer']=['first_name'=>'Jane','last_name'=>'Doe','full_name'=>'Jane Doe'];$payload['items'][0]['structured_attributes']['size']='Small';$payload['items'][0]['configuration_snapshot']['size']='Small';seedStaffOrderRepositoryTestOrder($pdo,['payload'=>$payload,'forge_order_uuid'=>$payload['forge_order_uuid'],'forge_order_number'=>1043]);if($case==='invalid')seedArtworkPreparationRegistration($pdo,false);$repository=new \Forge\Server\PdoArtworkPreparationRepository($pdo);
+        assertThrows(static fn()=> $repository->issuePrepareToken($payload['forge_order_uuid'],$payload['items'][0]['line_id']),static function($error):void{assertTrue($error instanceof \Forge\Server\ArtworkPreparationNotReadyException);});
+        assertSame(0,(int)$pdo->query('SELECT COUNT(*) FROM forge_order_artwork_files')->fetchColumn());
+    }
+});
+
+$runner->run('artwork preparation migration and endpoints are additive token scoped and staff initiated', static function (): void {
+    $migration=file_get_contents(dirname(__DIR__).'/migrations/022_create_forge_artwork_files.sql');
+    $start=file_get_contents(dirname(__DIR__,2).'/public/api/v1/staff/artwork-prepare-token.php');
+    $launcher=file_get_contents(dirname(__DIR__,2).'/public/api/v1/staff/artwork-template-launcher.php');
+    assertTrue(is_string($migration)&&is_string($start)&&is_string($launcher));
+    assertTrue(strpos($migration,'forge_order_artwork_files')!==false);
+    assertTrue(strpos($migration,'UNIQUE KEY ux_forge_order_artwork_line')!==false);
+    assertTrue(strpos($migration,'forge_artwork_prepare_tokens')!==false);
+    assertTrue(strpos($migration,'forge_artwork_prepare_report_tokens')!==false);
+    assertTrue(strpos($migration,'ALTER TABLE forge_orders')===false);
+    assertTrue(strpos($migration,'UPDATE forge_orders')===false);
+    assertTrue(strpos($start,'requireAuthenticatedStaffSession')!==false);
+    assertTrue(strpos($start,'forge-artwork://prepare?token=')!==false);
+    assertTrue(strpos($launcher,"exchange_prepare")!==false);
+    assertTrue(strpos($launcher,"report_prepare")!==false);
+    assertTrue(strpos($launcher,'requireAuthenticatedStaffSession')===false);
+});
+
+function createArtworkPreparationTestTables(PDO $pdo): void
+{
+    $pdo->exec('CREATE TABLE forge_artwork_template_registrations (registration_id TEXT PRIMARY KEY,product_definition_id TEXT UNIQUE,family_id TEXT,selector_type TEXT,allowed_variants_json TEXT,resolution_config_json TEXT,launcher_family_id TEXT,artwork_label TEXT,configuration_revision INTEGER,configuration_digest TEXT,registration_status TEXT,created_at TEXT,updated_at TEXT)');
+    $pdo->exec('CREATE TABLE forge_artwork_template_validations (registration_id TEXT,variant_key TEXT,validation_status TEXT,validated_at TEXT,launcher_profile_label TEXT,configuration_revision INTEGER,configuration_digest TEXT,validation_error_code TEXT,updated_at TEXT,PRIMARY KEY(registration_id,variant_key))');
+    $pdo->exec('CREATE TABLE forge_order_artwork_files (artwork_file_id TEXT PRIMARY KEY,forge_order_uuid TEXT,line_id TEXT,registration_id TEXT,product_definition_id TEXT,variant_key TEXT,configuration_revision INTEGER,configuration_digest TEXT,order_year INTEGER,customer_folder_name TEXT,live_filename TEXT,relative_live_path TEXT UNIQUE,preparation_status TEXT,launcher_profile_label TEXT,master_sha256 TEXT,live_sha256 TEXT,prepared_at TEXT,last_error_code TEXT,created_at TEXT,updated_at TEXT,UNIQUE(forge_order_uuid,line_id))');
+    $pdo->exec('CREATE TABLE forge_artwork_prepare_tokens (token_hash TEXT PRIMARY KEY,artwork_file_id TEXT,configuration_revision INTEGER,configuration_digest TEXT,expires_at TEXT,consumed_at TEXT,created_at TEXT)');
+    $pdo->exec('CREATE TABLE forge_artwork_prepare_report_tokens (token_hash TEXT PRIMARY KEY,artwork_file_id TEXT,configuration_revision INTEGER,configuration_digest TEXT,expires_at TEXT,consumed_at TEXT,created_at TEXT)');
+}
+
+function seedArtworkPreparationRegistration(PDO $pdo, bool $valid): void
+{
+    $digest=str_repeat('b',64);$now='2026-09-30 12:00:00.000000';
+    $pdo->prepare('INSERT INTO forge_artwork_template_registrations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')->execute(['registration-tree','tree_ornament','tree-family','size','{"small":"Small","large":"Large"}','{"filenames":{"small":"SMALL_CHRISTMAS TREE_MASTER.ai","large":"LARGE_CHRISTMAS TREE_MASTER.ai"}}','tree-launcher','Tree Ornament',1,$digest,'active',$now,$now]);
+    $pdo->prepare('INSERT INTO forge_artwork_template_validations VALUES (?,?,?,?,?,?,?,?,?)')->execute(['registration-tree','small',$valid?'valid':'invalid',$now,'Test Mac',1,$digest,$valid?null:'master_missing',$now]);
+}
+
 $runner->run('inventory location endpoints and repository support staff management without catalog placement coupling', static function (): void {
     $repositorySource = file_get_contents(dirname(__DIR__) . '/lib/inventory-location-repository.php');
     $locationsEndpoint = file_get_contents(dirname(__DIR__, 2) . '/public/api/v1/staff/inventory/locations.php');

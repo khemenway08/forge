@@ -18,7 +18,17 @@ try{
         $registration=$repository->reportValidation(trim((string)($payload['report_token']??'')),trim((string)($payload['launcher_profile_label']??'')),$results);
         \Forge\Server\ApiResponse::send(200,\Forge\Server\ApiResponse::success(['registration'=>$registration]));exit;
     }
+    if($action==='exchange_prepare'){
+        $result=\Forge\Server\buildArtworkPreparationRepositoryFromEnvironment()->exchangePrepareToken(trim((string)($payload['prepare_token']??'')));
+        \Forge\Server\ApiResponse::send(200,\Forge\Server\ApiResponse::success($result));exit;
+    }
+    if($action==='report_prepare'){
+        $association=\Forge\Server\buildArtworkPreparationRepositoryFromEnvironment()->reportPreparation(trim((string)($payload['report_token']??'')),trim((string)($payload['launcher_profile_label']??'')),trim((string)($payload['status']??'')),isset($payload['master_sha256'])?(string)$payload['master_sha256']:null,isset($payload['live_sha256'])?(string)$payload['live_sha256']:null,isset($payload['error_code'])?(string)$payload['error_code']:null);
+        \Forge\Server\ApiResponse::send(200,\Forge\Server\ApiResponse::success(['association'=>$association]));exit;
+    }
     throw new InvalidArgumentException('A valid launcher action is required.');
 }catch(\Forge\Server\ApiProblem $problem){\Forge\Server\ApiResponse::send($problem->getHttpStatus(),\Forge\Server\ApiResponse::error($problem->getErrorCodeValue(),$problem->getSafeMessage()),$problem->getHeaders());}
 catch(InvalidArgumentException $exception){\Forge\Server\ApiResponse::send(422,\Forge\Server\ApiResponse::error('invalid_request',$exception->getMessage()));}
+catch(\Forge\Server\ArtworkPreparationNotReadyException $exception){\Forge\Server\ApiResponse::send(409,\Forge\Server\ApiResponse::error('artwork_not_ready',$exception->getMessage()));}
+catch(\Forge\Server\ArtworkPreparationConflictException $exception){\Forge\Server\ApiResponse::send(409,\Forge\Server\ApiResponse::error('artwork_conflict',$exception->getMessage()));}
 catch(Throwable $exception){forge_staff_log_unexpected_exception($exception,$bootstrapPath,'artwork launcher endpoint');forge_staff_send_fallback_response(503,['application'=>'Forge','api_version'=>'1','status'=>'error','error'=>['code'=>'storage_unavailable','message'=>'Artwork validation is currently unavailable.']]);}

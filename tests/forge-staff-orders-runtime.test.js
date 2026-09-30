@@ -189,6 +189,7 @@ test('authenticated hosted session loads adapted server orders', async () => {
   assert.equal(result.records[0].current_tray_number, 12);
   assert.equal(result.records[0].artwork_setup_needed, true);
   assert.equal(result.records[0].staff_can_assign_tray, false);
+  assert.equal(result.records[0].staff_can_prepare_artwork, true);
   assert.equal(result.records[1].forge_order_uuid, 'order-2');
   assert.equal(result.records[1].production_status, 'submitted');
   assert.equal(result.records[1].current_tray_number, null);
@@ -964,6 +965,7 @@ test('hosted orders preserve completed status tray release and confirmation emai
   assert.equal(record.current_tray_number, null);
   assert.equal(record.staff_can_assign_tray, false);
   assert.equal(record.staff_can_complete_order, false);
+  assert.equal(record.staff_can_prepare_artwork, false);
   assert.equal(record.confirmation_email_status, 'Email Sent');
   assert.equal(record.confirmation_email_status_key, 'sent');
   assert.equal(record.confirmation_email_timestamp, '2026-07-30T12:26:00Z');

@@ -121,8 +121,11 @@ final class PdoStaffOrderRepository
     private array $trayConfig;
     private ?PdoOutboundMessageRepository $outboundMessageRepository;
     private ?PdoArtworkTemplateRepository $artworkTemplateRepository;
+    private ?PdoArtworkPreparationRepository $artworkPreparationRepository;
     /** @var array<string, array<string, mixed>>|null */
     private ?array $activeArtworkRegistrations = null;
+    /** @var array<string, array<string, array<string, mixed>>>|null */
+    private ?array $artworkAssociationsByOrder = null;
 
     /**
      * @param array{FORGE_TRAY_NUMBERS?: mixed} $trayConfig
@@ -131,13 +134,15 @@ final class PdoStaffOrderRepository
         PDO $pdo,
         array $trayConfig = [],
         ?PdoOutboundMessageRepository $outboundMessageRepository = null,
-        ?PdoArtworkTemplateRepository $artworkTemplateRepository = null
+        ?PdoArtworkTemplateRepository $artworkTemplateRepository = null,
+        ?PdoArtworkPreparationRepository $artworkPreparationRepository = null
     )
     {
         $this->pdo = $pdo;
         $this->trayConfig = $trayConfig;
         $this->outboundMessageRepository = $outboundMessageRepository;
         $this->artworkTemplateRepository = $artworkTemplateRepository;
+        $this->artworkPreparationRepository = $artworkPreparationRepository;
     }
 
     /**
@@ -198,6 +203,9 @@ final class PdoStaffOrderRepository
         $flagResolutionRowsByOrder = $this->loadFlagResolutionRowsForOrders($orderUuids);
         $emailStatusesByOrderUuid = $this->loadOrderConfirmationMetadata($orderUuids);
         $completedTrayReleaseByOrderUuid = $this->loadCompletedTrayReleaseHistory($orderUuids);
+        $this->artworkAssociationsByOrder = $this->artworkPreparationRepository === null
+            ? []
+            : $this->artworkPreparationRepository->listAssociationsForOrders($orderUuids);
         $normalized = [];
         foreach ($recordsByOrderUuid as $orderUuid => $record) {
             $normalized[] = $this->normalizeStoredOrderRecord(
@@ -2257,7 +2265,13 @@ final class PdoStaffOrderRepository
             $this->activeArtworkRegistrations = $this->artworkTemplateRepository->listActiveRegistrationsByProduct();
         }
 
-        return applyArtworkReadinessToStaffOrderRecord($normalized, $this->activeArtworkRegistrations);
+        $normalized = applyArtworkReadinessToStaffOrderRecord($normalized, $this->activeArtworkRegistrations);
+        if ($this->artworkPreparationRepository === null) {
+            return $normalized;
+        }
+        $byLine = $this->artworkAssociationsByOrder[$orderUuid]
+            ?? ($this->artworkPreparationRepository->listAssociationsForOrders([$orderUuid])[$orderUuid] ?? []);
+        return applyArtworkAssociationsToStaffOrderRecord($normalized, $byLine);
     }
 }
 

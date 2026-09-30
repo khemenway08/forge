@@ -23,11 +23,13 @@ PY
 [[ "$ORIGIN" == "https://forge.localhost:8443" ]] || { echo 'Launcher tests refuse non-local Forge origins.' >&2; exit 1; }
 [[ -n "$ROOT" ]] || { echo 'The approved master root is missing from local configuration.' >&2; exit 1; }
 TREE="$ROOT/CRISTMAS TREE"
-TEMP_ROOT="$(mktemp -d /tmp/forge-artwork-launcher-test.XXXXXX)"
+mkdir -p "$REPO_ROOT/.deploy"
+TEMP_ROOT="$(mktemp -d "$REPO_ROOT/.deploy/forge-artwork-launcher-test.XXXXXX")"
 trap 'rm -rf "$TEMP_ROOT"' EXIT
 
 "$SCRIPT_DIR/install.sh" --build-only >/dev/null
 "$BIN" --validate-url "forge-artwork://setup?token=$(printf 'a%.0s' {1..64})" | grep -q 'url_valid=yes'
+"$BIN" --validate-url "forge-artwork://prepare?token=$(printf 'b%.0s' {1..64})" | grep -q 'action=prepare'
 "$BIN" --probe-connection "$CONFIG_PATH" | grep -q 'http_status=422'
 python3 - "$CONFIG_PATH" "$TEMP_ROOT/bad-pin.json" <<'PY'
 import json, sys
@@ -45,6 +47,30 @@ if "$BIN" --probe-connection "$TEMP_ROOT/bad-pin.json" >/dev/null 2>&1; then
 fi
 if "$BIN" --validate-url 'forge-artwork://setup?token=short&path=/tmp/master.ai' >/dev/null 2>&1; then
   echo 'unsafe URL was accepted' >&2; exit 1
+fi
+mkdir "$TEMP_ROOT/masters" "$TEMP_ROOT/customers"
+printf 'safe synthetic illustrator data' > "$TEMP_ROOT/masters/MASTER.ai"
+SOURCE_HASH="$(shasum -a 256 "$TEMP_ROOT/masters/MASTER.ai" | awk '{print $1}')"
+SOURCE_STAT="$(stat -f '%i:%z:%m' "$TEMP_ROOT/masters/MASTER.ai")"
+"$BIN" --copy-live "$TEMP_ROOT/masters" "$TEMP_ROOT/masters/MASTER.ai" "$TEMP_ROOT/customers" '2026/SMITH_JOHN_1042/SMITH_JOHN_TEST_LIVE.ai' | grep -q 'copy_valid=yes'
+test "$(shasum -a 256 "$TEMP_ROOT/customers/2026/SMITH_JOHN_1042/SMITH_JOHN_TEST_LIVE.ai" | awk '{print $1}')" = "$SOURCE_HASH"
+test "$(stat -f '%i:%z:%m' "$TEMP_ROOT/masters/MASTER.ai")" = "$SOURCE_STAT"
+if "$BIN" --copy-live "$TEMP_ROOT/masters" "$TEMP_ROOT/masters/MASTER.ai" "$TEMP_ROOT/customers" '2026/SMITH_JOHN_1042/SMITH_JOHN_TEST_LIVE.ai' >/dev/null 2>&1; then
+  echo 'existing LIVE destination was overwritten' >&2; exit 1
+fi
+test "$(find "$TEMP_ROOT/customers" -type f | wc -l | tr -d ' ')" = 1
+"$BIN" --copy-live-background "$TEMP_ROOT/masters" "$TEMP_ROOT/masters/MASTER.ai" "$TEMP_ROOT/customers" '2026/SMITH_JOHN_1042/SMITH_JOHN_BACKGROUND_LIVE.ai' | grep -q 'copy_valid=yes'
+test "$(shasum -a 256 "$TEMP_ROOT/customers/2026/SMITH_JOHN_1042/SMITH_JOHN_BACKGROUND_LIVE.ai" | awk '{print $1}')" = "$SOURCE_HASH"
+test "$(stat -f '%i:%z:%m' "$TEMP_ROOT/masters/MASTER.ai")" = "$SOURCE_STAT"
+test "$(find "$TEMP_ROOT/customers" -type f | wc -l | tr -d ' ')" = 2
+if "$BIN" --copy-live "$TEMP_ROOT/masters" "$TEMP_ROOT/masters/MISSING.ai" "$TEMP_ROOT/customers" '2026/SMITH_JOHN_1042/SMITH_JOHN_MISSING_LIVE.ai' >/dev/null 2>&1; then
+  echo 'missing master was copied' >&2; exit 1
+fi
+if "$BIN" --copy-live "$TEMP_ROOT/masters" "$TEMP_ROOT/masters/MASTER.ai" "$TEMP_ROOT/customers" '../UNSAFE_LIVE.ai' >/dev/null 2>&1; then
+  echo 'unsafe relative destination was accepted' >&2; exit 1
+fi
+if "$BIN" --test-open-live "$TEMP_ROOT/customers/2026/SMITH_JOHN_1042/SMITH_JOHN_TEST_LIVE.ai" "$TEMP_ROOT/Missing Illustrator.app" >/dev/null 2>&1; then
+  echo 'missing Illustrator application was accepted' >&2; exit 1
 fi
 "$BIN" --validate-master "$ROOT" "$TREE" 'SMALL_CHRISTMAS TREE_MASTER.ai' small | grep -q 'status=valid'
 "$BIN" --validate-master "$ROOT" "$TREE" 'LARGE_CHRISTMAS TREE_MASTER.ai' large | grep -q 'status=valid'

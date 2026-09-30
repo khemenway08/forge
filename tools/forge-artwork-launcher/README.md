@@ -1,11 +1,14 @@
 # Forge Artwork Launcher
 
 This is the maintained macOS source for Forge artwork-template setup and
-read-only master validation. It registers the `forge-artwork://` URL scheme,
+read-only master validation and prepared LIVE artwork creation. It registers the `forge-artwork://` URL scheme,
 opens a native master file or folder picker, validates explicitly configured
 variants, and reports limited validation results to Forge.
 
-It does not create customer artwork, modify masters, or open Illustrator.
+For an authenticated Forge preparation request, it exclusively copies the exact
+registered master into the configured customer artwork root, verifies both
+SHA-256 values, records the local association, and opens only the LIVE copy in
+Adobe Illustrator 2025. It never opens or modifies a master.
 
 ## Local configuration
 
@@ -17,6 +20,10 @@ Create that protected local file from `config.example.json`. Keep absolute
 paths, launcher profile details, and development certificate fingerprints out
 of Git. The installer preserves an existing local configuration and sets its
 permissions to `0600`.
+
+`customer_artwork_root` must point to the permanent
+`07_PRODUCTION/CUSTOMER_ARTWORK` directory. Forge supplies only the approved
+relative year/customer/file path.
 
 Local development at `https://forge.localhost:8443` additionally requires a
 `development_certificate_sha256` value containing the exact lowercase SHA-256

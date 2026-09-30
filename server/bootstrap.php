@@ -21,6 +21,7 @@ require_once __DIR__ . '/lib/order-repository.php';
 require_once __DIR__ . '/lib/staff-auth.php';
 require_once __DIR__ . '/lib/artwork-template-readiness.php';
 require_once __DIR__ . '/lib/artwork-template-repository.php';
+require_once __DIR__ . '/lib/artwork-preparation-repository.php';
 require_once __DIR__ . '/lib/staff-order-repository.php';
 require_once __DIR__ . '/lib/staff-catalog-sort-order.php';
 require_once __DIR__ . '/lib/staff-design-catalog-importer.php';
@@ -64,7 +65,8 @@ function buildStaffOrderRepositoryFromEnvironment(): PdoStaffOrderRepository
         $pdo,
         loadPrivateTrayConfig(),
         new PdoOutboundMessageRepository($pdo),
-        new PdoArtworkTemplateRepository($pdo)
+        new PdoArtworkTemplateRepository($pdo),
+        new PdoArtworkPreparationRepository($pdo)
     );
 }
 
@@ -73,6 +75,12 @@ function buildArtworkTemplateRepositoryFromEnvironment(): PdoArtworkTemplateRepo
     return new PdoArtworkTemplateRepository(
         DatabaseConnectionFactory::createFromEnvironment(loadPrivateDatabaseConfig())
     );
+}
+
+function buildArtworkPreparationRepositoryFromEnvironment(): PdoArtworkPreparationRepository
+{
+    $pdo = DatabaseConnectionFactory::createFromEnvironment(loadPrivateDatabaseConfig());
+    return new PdoArtworkPreparationRepository($pdo, new PdoArtworkTemplateRepository($pdo));
 }
 
 function buildEventRepositoryFromEnvironment(): PdoEventRepository

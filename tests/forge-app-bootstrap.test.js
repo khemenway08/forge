@@ -7,7 +7,7 @@ const vm = require('vm');
 const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'), 'utf8');
 const cssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
-const BUILD_VERSION = '20260930-66';
+const BUILD_VERSION = '20260930-67';
 
 function extractScreenMarkup(screenId) {
   const match = indexSource.match(new RegExp(`<section class="screen[\\s\\S]*?data-screen="${screenId}"[\\s\\S]*?<\\/section>`));
@@ -3294,10 +3294,22 @@ test('shared server order detail assign tray button opens the tray picker after 
   assert.match(trayDialog.innerHTML, /Assign Tray/);
 });
 
+test('staff artwork preparation is gated by ready status and uses the constrained local bridge', () => {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(app, /artworkReadiness\?\.state === 'ready'/);
+  assert.match(app, /record\?\.staff_can_prepare_artwork === true/);
+  assert.match(app, /data-action="staff-prepare-artwork"/);
+  assert.match(app, /createArtworkPrepareToken\(forgeOrderUuid, lineId\)/);
+  assert.match(app, /window\.location\.href = result\.prepareUrl/);
+  assert.match(app, /The local bridge did not report completion/);
+  assert.match(app, /artworkFile\?\.status === 'prepared' \? 'Open LIVE Artwork' : 'Prepare Artwork'/);
+});
+
 test('staff orders update per-line artwork readiness and clear the aggregate warning when ready', async () => {
   const { context, detailDialog, setSharedRecord } = loadForgeHostedStaffAppForTrayDetail();
   setSharedRecord({
     artwork_setup_needed: false,
+    staff_can_prepare_artwork: true,
     payload: {
       forge_order_number: 1001,
       customer: { full_name: 'Kyle Hemenway' },
@@ -3335,6 +3347,8 @@ test('staff orders update per-line artwork readiness and clear the aggregate war
   assert.match(String(detailDialog.innerHTML || ''), /Artwork: Ready/);
   assert.match(String(detailDialog.innerHTML || ''), /Ready — Antler 9-position/);
   assert.match(String(detailDialog.innerHTML || ''), /Last validated [^<]+ on Production Mac/);
+  assert.match(String(detailDialog.innerHTML || ''), /data-action="staff-prepare-artwork"/);
+  assert.match(String(detailDialog.innerHTML || ''), />Prepare Artwork<\/button>/);
 
   const queueCardHtml = vm.runInContext(
     'buildStaffOrderCardMarkup(staffOrdersState.records[0], staffOrdersState.filters)',
@@ -3353,6 +3367,8 @@ test('staff orders update per-line artwork readiness and clear the aggregate war
     }
   }, {})`, context);
   assert.equal((String(problemCardHtml).match(/Artwork Setup Needed/g) || []).length, 1);
+  const problemItemMarkup = vm.runInContext(`getStaffOrderItemsMarkup({ forge_order_uuid: 'ornament-order', staff_can_prepare_artwork: true }, [{ line_id: 'ornament-line', product_category: 'ornament', product_display_name: 'Tree Ornament', quantity: 1, artwork_readiness: { state: 'template_validation_problem', label: 'Template Validation Problem' } }])`, context);
+  assert.doesNotMatch(String(problemItemMarkup), /data-action="staff-prepare-artwork"/);
 
   const ordinaryItemCardHtml = vm.runInContext(`buildStaffOrderCardMarkup({
     forge_order_uuid: 'sign-order',

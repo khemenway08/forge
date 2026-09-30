@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260930-66';
+const FORGE_BUILD_VERSION = '20260930-67';
 const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
 const USPS_ADDRESS_BOOK_HEADERS = Object.freeze([
   'First Name',
@@ -205,6 +205,11 @@ const staffOrdersState = {
   detailError: '',
   detailSavingLineId: '',
   detailResolvingFlagKey: '',
+  detailPreparingArtworkLineId: '',
+  detailArtworkStatus: '',
+  detailArtworkStatusTone: 'success',
+  detailArtworkStatusLineId: '',
+  detailArtworkPollTimer: null,
   detailEditDraft: null,
   detailEditSaving: false,
   detailEditError: '',
@@ -5722,6 +5727,12 @@ function ensureStaffOrderDetailUi() {
       return;
     }
 
+    if (action === 'staff-prepare-artwork' && orderUuid && !staffOrdersState.detailPreparingArtworkLineId) {
+      const lineId = event.target.closest('[data-line-id]')?.dataset.lineId;
+      if (lineId) prepareStaffArtwork(orderUuid, lineId);
+      return;
+    }
+
     if (action === 'staff-resolve-flag' && orderUuid && !staffOrdersState.detailResolvingFlagKey) {
       const flagKey = event.target.closest('[data-flag-key]')?.dataset.flagKey;
       if (flagKey && window.confirm('Resolve this flag? It will no longer block production.')) {
@@ -8356,11 +8367,17 @@ async function openStaffOrderDetail(forgeOrderUuid) {
 
   staffOrdersState.detailEditDraft = null;
   staffOrdersState.detailEditError = '';
+  if (staffOrdersState.detailArtworkPollTimer) window.clearInterval(staffOrdersState.detailArtworkPollTimer);
+  staffOrdersState.detailArtworkPollTimer = null;
   staffOrdersState.detailOpen = true;
   staffOrdersState.detailLoading = true;
   staffOrdersState.detailError = '';
   staffOrdersState.detailSavingLineId = '';
   staffOrdersState.detailResolvingFlagKey = '';
+  staffOrdersState.detailPreparingArtworkLineId = '';
+  staffOrdersState.detailArtworkStatus = '';
+  staffOrdersState.detailArtworkStatusTone = 'success';
+  staffOrdersState.detailArtworkStatusLineId = '';
   staffOrdersState.detailInternalNoteDraft = '';
   staffOrdersState.detailInternalNoteSaving = false;
   staffOrdersState.detailInternalNoteStatus = '';
@@ -8422,6 +8439,11 @@ function closeStaffOrderDetail() {
   staffOrdersState.detailError = '';
   staffOrdersState.detailSavingLineId = '';
   staffOrdersState.detailResolvingFlagKey = '';
+  staffOrdersState.detailPreparingArtworkLineId = '';
+  staffOrdersState.detailArtworkStatus = '';
+  staffOrdersState.detailArtworkStatusLineId = '';
+  if (staffOrdersState.detailArtworkPollTimer) window.clearInterval(staffOrdersState.detailArtworkPollTimer);
+  staffOrdersState.detailArtworkPollTimer = null;
   staffOrdersState.detailInternalNoteDraft = '';
   staffOrdersState.detailInternalNoteSaving = false;
   staffOrdersState.detailInternalNoteStatus = '';
@@ -9538,6 +9560,11 @@ function getStaffOrderItemsMarkup(record, items) {
     const completionActionLabel = isSaving ? 'Saving...' : getStaffItemCompletionActionLabel(item);
     const quantityLabel = `${Number.isInteger(item.quantity) ? item.quantity : 1} × Piece${Number.isInteger(item.quantity) && item.quantity === 1 ? '' : 's'}`;
     const artworkReadiness = getStaffArtworkReadiness(item);
+    const artworkFile = getStaffArtworkFile(item);
+    const canPrepareArtwork = artworkReadiness?.state === 'ready'
+      && (!isReadOnlyRecord || record?.staff_can_prepare_artwork === true)
+      && staffOrdersState.dataSource === 'server';
+    const isPreparingArtwork = staffOrdersState.detailPreparingArtworkLineId === item.line_id;
     return `
       <article>
         <div class="staff-order-card-header">
@@ -9570,6 +9597,9 @@ function getStaffOrderItemsMarkup(record, items) {
           `}
         </div>
         ${artworkReadiness ? buildStaffArtworkReadinessMarkup(artworkReadiness) : ''}
+        ${artworkFile ? `<div class="staff-artwork-readiness"><span>Customer Artwork</span><strong>${escapeHtml(artworkFile.liveFilename)}</strong><p>${artworkFile.status === 'prepared' ? 'LIVE file prepared' : (artworkFile.status === 'failed' ? 'Preparation needs attention' : 'Waiting for the Mac launcher')}</p></div>` : ''}
+        ${canPrepareArtwork ? `<div class="staff-order-card-actions"><button class="primary-button" type="button" data-action="staff-prepare-artwork" data-order-uuid="${escapeHtml(record.forge_order_uuid)}" data-line-id="${escapeHtml(item.line_id || '')}" ${isPreparingArtwork ? 'disabled' : ''}>${isPreparingArtwork ? 'Opening Launcher…' : (artworkFile?.status === 'prepared' ? 'Open LIVE Artwork' : 'Prepare Artwork')}</button></div>` : ''}
+        ${staffOrdersState.detailArtworkStatusLineId === item.line_id && staffOrdersState.detailArtworkStatus ? `<p class="form-status ${staffOrdersState.detailArtworkStatusTone === 'error' ? 'is-error' : 'is-success'}">${escapeHtml(staffOrdersState.detailArtworkStatus)}</p>` : ''}
         <div class="staff-order-detail-grid">
           ${itemDetails.map((detail) => `
             <div>
@@ -9637,6 +9667,77 @@ function getStaffArtworkReadiness(item) {
     validatedAt: sanitizeText(readiness.validated_at || ''),
     launcherProfileLabel: sanitizeText(readiness.launcher_profile_label || '')
   };
+}
+
+function getStaffArtworkFile(item) {
+  const file = item?.artwork_file;
+  if (!file || typeof file !== 'object') return null;
+  const status = sanitizeText(file.status || '').toLowerCase();
+  const liveFilename = sanitizeText(file.live_filename || '');
+  if (!['pending', 'prepared', 'failed'].includes(status) || !liveFilename) return null;
+  return { status, liveFilename, relativeLivePath: sanitizeText(file.relative_live_path || ''), preparedAt: sanitizeText(file.prepared_at || ''), errorCode: sanitizeText(file.last_error_code || '') };
+}
+
+async function prepareStaffArtwork(forgeOrderUuid, lineId) {
+  if (!staffApiClient || typeof staffApiClient.createArtworkPrepareToken !== 'function') return;
+  staffOrdersState.detailPreparingArtworkLineId = lineId;
+  staffOrdersState.detailArtworkStatusLineId = lineId;
+  staffOrdersState.detailArtworkStatus = 'Opening Forge Artwork Launcher…';
+  staffOrdersState.detailArtworkStatusTone = 'success';
+  renderStaffOrderDetail();
+  try {
+    const result = await staffApiClient.createArtworkPrepareToken(forgeOrderUuid, lineId);
+    if (!result.ok || !result.prepareUrl) throw new Error('Artwork preparation could not be started.');
+    window.location.href = result.prepareUrl;
+    let remaining = 30;
+    if (staffOrdersState.detailArtworkPollTimer) window.clearInterval(staffOrdersState.detailArtworkPollTimer);
+    let pollInFlight = false;
+    staffOrdersState.detailArtworkPollTimer = window.setInterval(async () => {
+      if (pollInFlight) return;
+      pollInFlight = true;
+      remaining--;
+      try {
+        const ordersResult = await staffRuntime.loadOrders();
+        const record = ordersResult?.records?.find((candidate) => candidate?.forge_order_uuid === forgeOrderUuid) || null;
+        if (!record || !staffOrdersState.detailOpen || staffOrdersState.detailOrderUuid !== forgeOrderUuid) {
+          window.clearInterval(staffOrdersState.detailArtworkPollTimer); staffOrdersState.detailArtworkPollTimer = null; return;
+        }
+        staffOrdersState.detailRecord = record;
+        staffOrdersState.records = Array.isArray(ordersResult.records) ? forgeLocalOrdersQueue.sortLocalOrdersNewestFirst(ordersResult.records) : staffOrdersState.records;
+        const item = (record.payload?.items || []).find((candidate) => candidate?.line_id === lineId);
+        const file = getStaffArtworkFile(item);
+        if (file?.status === 'prepared') {
+          window.clearInterval(staffOrdersState.detailArtworkPollTimer); staffOrdersState.detailArtworkPollTimer = null;
+          staffOrdersState.detailPreparingArtworkLineId = '';
+          staffOrdersState.detailArtworkStatus = `LIVE artwork ready: ${file.liveFilename}`;
+          staffOrdersState.notice = staffOrdersState.detailArtworkStatus; staffOrdersState.noticeTone = 'success';
+        } else if (file?.status === 'failed') {
+          window.clearInterval(staffOrdersState.detailArtworkPollTimer); staffOrdersState.detailArtworkPollTimer = null;
+          staffOrdersState.detailPreparingArtworkLineId = '';
+          staffOrdersState.detailArtworkStatus = 'Artwork preparation stopped safely. Check the Mac launcher message and try again.';
+          staffOrdersState.detailArtworkStatusTone = 'error';
+        } else if (remaining <= 0) {
+          window.clearInterval(staffOrdersState.detailArtworkPollTimer); staffOrdersState.detailArtworkPollTimer = null;
+          staffOrdersState.detailPreparingArtworkLineId = '';
+          staffOrdersState.detailArtworkStatus = 'The local bridge did not report completion. Confirm the Forge Artwork Launcher is installed and try again.';
+          staffOrdersState.detailArtworkStatusTone = 'error';
+        }
+        renderStaffOrderDetail();
+      } catch (error) {
+        if (remaining <= 0) {
+          window.clearInterval(staffOrdersState.detailArtworkPollTimer); staffOrdersState.detailArtworkPollTimer = null;
+          staffOrdersState.detailPreparingArtworkLineId = '';
+          staffOrdersState.detailArtworkStatus = 'Artwork status could not be refreshed.';
+          staffOrdersState.detailArtworkStatusTone = 'error'; renderStaffOrderDetail();
+        }
+      } finally { pollInFlight = false; }
+    }, 2000);
+  } catch (error) {
+    staffOrdersState.detailPreparingArtworkLineId = '';
+    staffOrdersState.detailArtworkStatus = error?.message || 'Artwork preparation could not be started.';
+    staffOrdersState.detailArtworkStatusTone = 'error';
+    renderStaffOrderDetail();
+  }
 }
 
 function getStaffArtworkReadinessBadgeClass(readiness) {

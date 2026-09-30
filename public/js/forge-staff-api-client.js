@@ -32,6 +32,7 @@
   const RESOLVE_FLAG_ENDPOINT = 'resolve-flag.php';
   const ARTWORK_TEMPLATES_ENDPOINT = 'artwork-templates.php';
   const ARTWORK_SETUP_TOKEN_ENDPOINT = 'artwork-template-setup-token.php';
+  const ARTWORK_PREPARE_TOKEN_ENDPOINT = 'artwork-prepare-token.php';
   const SAFE_ERROR_MESSAGES = {
     invalid_request: 'Staff authentication could not be prepared.',
     invalid_credentials: 'Invalid staff credentials.',
@@ -62,6 +63,8 @@
     flag_not_found: 'That submitted flag could not be found.',
     flag_resolution_conflict: 'That flag or order changed. Refresh the order and try again.',
     flag_resolution_not_allowed: 'Flags on completed or cancelled orders cannot be changed.',
+    artwork_not_ready: 'This item does not have a valid configured artwork template.',
+    artwork_conflict: 'The existing artwork association needs attention before this item can be prepared.',
     server_error: 'The Forge staff server is currently unavailable.',
     method_not_allowed: 'The Forge staff server rejected this request method.'
   };
@@ -803,6 +806,14 @@
       });
     }
 
+    function createArtworkPrepareToken(forgeOrderUuid, lineId) {
+      return submitStaffMutation(`${baseUrl}/${ARTWORK_PREPARE_TOKEN_ENDPOINT}`, { forge_order_uuid: forgeOrderUuid, line_id: lineId }, 'Artwork preparation could not be started.', (payload) => {
+        const data = normalizeArtworkData(payload);
+        if (typeof data.prepare_url !== 'string' || !/^forge-artwork:\/\/prepare\?token=[a-f0-9]{64}$/.test(data.prepare_url)) throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+        return { ok: true, authenticated: true, prepareUrl: data.prepare_url, expiresAt: data.expires_at || null, association: data.association || null };
+      });
+    }
+
     return {
       checkSession,
       login,
@@ -830,7 +841,8 @@
       listArtworkTemplates,
       saveArtworkTemplate,
       setArtworkTemplateActive,
-      createArtworkSetupToken
+      createArtworkSetupToken,
+      createArtworkPrepareToken
     };
   }
 

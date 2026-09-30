@@ -780,7 +780,8 @@
       staff_read_only: true,
       staff_can_assign_tray: productionStatus === 'submitted' && trayNumber === null,
       staff_can_complete_items: canCompleteItems,
-      staff_can_complete_order: canCompleteOrder
+      staff_can_complete_order: canCompleteOrder,
+      staff_can_prepare_artwork: !['completed', 'cancelled'].includes(productionStatus)
     };
   }
 

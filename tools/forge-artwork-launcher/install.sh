@@ -39,6 +39,7 @@ rm -rf "$BUILD_ROOT/module-cache"
 codesign --force --sign - --identifier com.thehilltopshop.forge-artwork-launcher "$BUILD_APP" >/dev/null
 plutil -lint "$BUILD_APP/Contents/Info.plist"
 "$BUILD_APP/Contents/MacOS/ForgeArtworkLauncher" --validate-url 'forge-artwork://setup?token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+"$BUILD_APP/Contents/MacOS/ForgeArtworkLauncher" --validate-url 'forge-artwork://prepare?token=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 
 echo "Build succeeded: $BUILD_APP"
 
