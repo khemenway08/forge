@@ -31,6 +31,7 @@ trap 'rm -rf "$TEMP_ROOT"' EXIT
 "$BIN" --validate-url "forge-artwork://setup?token=$(printf 'a%.0s' {1..64})" | grep -q 'url_valid=yes'
 "$BIN" --validate-url "forge-artwork://prepare?token=$(printf 'b%.0s' {1..64})" | grep -q 'action=prepare'
 "$BIN" --validate-url "forge-artwork://open-group?token=$(printf 'c%.0s' {1..64})" | grep -q 'action=open-group'
+"$BIN" --validate-url "forge-artwork://proof?token=$(printf 'd%.0s' {1..64})" | grep -q 'action=proof'
 "$BIN" --probe-connection "$CONFIG_PATH" | grep -q 'http_status=422'
 python3 - "$CONFIG_PATH" "$TEMP_ROOT/bad-pin.json" <<'PY'
 import json, sys
@@ -84,6 +85,17 @@ fi
 "$BIN" --validate-master "$ROOT" "$TREE" 'LARGE_CHRISTMAS TREE_MASTER.ai' large | grep -q 'status=valid'
 "$BIN" --validate-master-background "$ROOT" "$TREE" 'SMALL_CHRISTMAS TREE_MASTER.ai' small | grep -q 'status=valid'
 "$BIN" --validate-master-background "$ROOT" "$TREE" 'LARGE_CHRISTMAS TREE_MASTER.ai' large | grep -q 'status=valid'
+mkdir -p "$TEMP_ROOT/customers/2026/PROOF_TEST_1001"
+cp "$TREE/SMALL_CHRISTMAS TREE_MASTER.ai" "$TEMP_ROOT/customers/2026/PROOF_TEST_1001/PROOF_TEST_CHRISTMAS-TREE-SMALL_LIVE.ai"
+PROOF_SOURCE_STAT="$(stat -f '%i:%z:%m' "$TEMP_ROOT/customers/2026/PROOF_TEST_1001/PROOF_TEST_CHRISTMAS-TREE-SMALL_LIVE.ai")"
+PROOF_SOURCE_HASH="$(shasum -a 256 "$TEMP_ROOT/customers/2026/PROOF_TEST_1001/PROOF_TEST_CHRISTMAS-TREE-SMALL_LIVE.ai" | awk '{print $1}')"
+"$BIN" --render-proof "$TEMP_ROOT/customers" '2026/PROOF_TEST_1001/PROOF_TEST_CHRISTMAS-TREE-SMALL_LIVE.ai' "$TEMP_ROOT/proof.png" | grep -q 'proof_valid=yes'
+file "$TEMP_ROOT/proof.png" | grep -q 'PNG image data'
+test "$(stat -f '%i:%z:%m' "$TEMP_ROOT/customers/2026/PROOF_TEST_1001/PROOF_TEST_CHRISTMAS-TREE-SMALL_LIVE.ai")" = "$PROOF_SOURCE_STAT"
+test "$(shasum -a 256 "$TEMP_ROOT/customers/2026/PROOF_TEST_1001/PROOF_TEST_CHRISTMAS-TREE-SMALL_LIVE.ai" | awk '{print $1}')" = "$PROOF_SOURCE_HASH"
+if "$BIN" --render-proof "$TEMP_ROOT/customers" '../UNSAFE_LIVE.ai' "$TEMP_ROOT/unsafe-proof.png" >/dev/null 2>&1; then
+  echo 'unsafe proof artwork path was accepted' >&2; exit 1
+fi
 if "$BIN" --validate-master "$ROOT" /tmp 'MASTER.ai' outside >/dev/null 2>&1; then
   echo 'outside-root path was accepted' >&2; exit 1
 fi
@@ -97,4 +109,6 @@ ln -s "$TEMP_ROOT/real" "$TEMP_ROOT/link"
 if "$BIN" --validate-master "$TEMP_ROOT" "$TEMP_ROOT/link" 'MASTER.ai' symlink >/dev/null 2>&1; then
   echo 'symbolic master path was accepted' >&2; exit 1
 fi
+test "$(grep -o '\[self completeSilentlyOnMain\]' "$SCRIPT_DIR/ForgeArtworkLauncher.m" | wc -l | tr -d ' ')" = 3
+test "$(grep -o '\[self finishOnMain:' "$SCRIPT_DIR/ForgeArtworkLauncher.m" | wc -l | tr -d ' ')" = 1
 echo 'launcher focused tests passed'

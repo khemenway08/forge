@@ -79,6 +79,33 @@ test('createArtworkOpenGroupToken rejects paths or extra data in a bridge URL', 
   await assert.rejects(() => client.createArtworkOpenGroupToken('tree_ornament', 'small'), (error) => error.code === 'invalid_response');
 });
 
+test('artwork proof client loads context starts a constrained launcher action and records decisions', async () => {
+  const requests = [];
+  const token = 'd'.repeat(64);
+  const responses = [
+    createJsonResponse(200, { application: 'Forge', api_version: '1', status: 'ok', data: { association: { artwork_file_id: 'artwork-1' }, proof: { status: 'waiting_for_proof', preview_revision: 1 }, history: [], can_update: true } }),
+    createJsonResponse(200, { application: 'Forge', api_version: '1', status: 'ok', data: { proof_url: `forge-artwork://proof?token=${token}`, proof: { preview_revision: 1 } } }),
+    createJsonResponse(200, { application: 'Forge', api_version: '1', status: 'ok', data: { proof: { status: 'correction_needed', preview_revision: 1 }, history: [{ event_type: 'correction_needed' }] } })
+  ];
+  const client = staffApiClientModule.createForgeStaffApiClient({ fetchImpl: async (url, options) => { requests.push({ url, options }); return responses.shift(); } });
+  const context = await client.getArtworkProof('order-1', 'line-1');
+  assert.equal(context.proof.preview_revision, 1);
+  assert.equal(requests[0].url, '/api/v1/staff/artwork-proof.php?forge_order_uuid=order-1&line_id=line-1');
+  const started = await client.createArtworkProofToken('order-1', 'line-1');
+  assert.equal(started.proofUrl, `forge-artwork://proof?token=${token}`);
+  assert.deepEqual(JSON.parse(requests[1].options.body), { forge_order_uuid: 'order-1', line_id: 'line-1' });
+  const saved = await client.saveArtworkProofDecision('order-1', 'line-1', 'correction_needed', 'Move the second name left.', 1);
+  assert.equal(saved.proof.status, 'correction_needed');
+  assert.deepEqual(JSON.parse(requests[2].options.body), { forge_order_uuid: 'order-1', line_id: 'line-1', status: 'correction_needed', correction_note: 'Move the second name left.', expected_preview_revision: 1 });
+  assert.equal(requests[2].options.credentials, 'same-origin');
+});
+
+test('artwork proof client rejects path-bearing launcher URLs', async () => {
+  const token = 'e'.repeat(64);
+  const client = staffApiClientModule.createForgeStaffApiClient({ fetchImpl: async () => createJsonResponse(200, { application: 'Forge', api_version: '1', status: 'ok', data: { proof_url: `forge-artwork://proof?token=${token}&path=/tmp/customer.ai` } }) });
+  await assert.rejects(() => client.createArtworkProofToken('order-1', 'line-1'), (error) => error.code === 'invalid_response');
+});
+
 test('login sends POST JSON and same-origin credentials without leaking the pin to the URL', async () => {
   const requests = [];
   const client = staffApiClientModule.createForgeStaffApiClient({

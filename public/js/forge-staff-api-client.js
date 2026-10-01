@@ -34,6 +34,8 @@
   const ARTWORK_SETUP_TOKEN_ENDPOINT = 'artwork-template-setup-token.php';
   const ARTWORK_PREPARE_TOKEN_ENDPOINT = 'artwork-prepare-token.php';
   const ARTWORK_OPEN_GROUP_TOKEN_ENDPOINT = 'artwork-open-group-token.php';
+  const ARTWORK_PROOF_ENDPOINT = 'artwork-proof.php';
+  const ARTWORK_PROOF_TOKEN_ENDPOINT = 'artwork-proof-token.php';
   const SAFE_ERROR_MESSAGES = {
     invalid_request: 'Staff authentication could not be prepared.',
     invalid_credentials: 'Invalid staff credentials.',
@@ -66,6 +68,8 @@
     flag_resolution_not_allowed: 'Flags on completed or cancelled orders cannot be changed.',
     artwork_not_ready: 'This item does not have a valid configured artwork template.',
     artwork_conflict: 'The existing artwork association needs attention before this item can be prepared.',
+    artwork_proof_not_found: 'That prepared artwork proof could not be found.',
+    artwork_proof_conflict: 'The artwork proof changed. Refresh it and try again.',
     server_error: 'The Forge staff server is currently unavailable.',
     method_not_allowed: 'The Forge staff server rejected this request method.'
   };
@@ -823,6 +827,33 @@
       });
     }
 
+    async function getArtworkProof(forgeOrderUuid, lineId) {
+      try {
+        const url = `${baseUrl}/${ARTWORK_PROOF_ENDPOINT}?forge_order_uuid=${encodeURIComponent(asTrimmedString(forgeOrderUuid))}&line_id=${encodeURIComponent(asTrimmedString(lineId))}`;
+        const response = await performJsonRequest(fetchImpl, url, timeoutMs, { method: 'GET', headers: { Accept: 'application/json' }, credentials: 'same-origin', cache: 'no-store' });
+        const payload = await parseJsonResponse(response);
+        if (response.status === 401) return { ok: false, authenticated: false, unauthenticated: true };
+        if (!response.ok) throw buildServerError(response.status, payload);
+        const data = normalizeArtworkData(payload);
+        return { ok: true, authenticated: true, association: data.association || null, proof: data.proof || null, history: Array.isArray(data.history) ? data.history : [], canUpdate: data.can_update === true };
+      } catch (error) { throw normalizeClientError(error); }
+    }
+
+    function createArtworkProofToken(forgeOrderUuid, lineId) {
+      return submitStaffMutation(`${baseUrl}/${ARTWORK_PROOF_TOKEN_ENDPOINT}`, { forge_order_uuid: forgeOrderUuid, line_id: lineId }, 'Artwork proof generation could not be started.', (payload) => {
+        const data = normalizeArtworkData(payload);
+        if (typeof data.proof_url !== 'string' || !/^forge-artwork:\/\/proof\?token=[a-f0-9]{64}$/.test(data.proof_url)) throw new ForgeStaffApiError('invalid_response', 'The Forge staff server returned an unexpected response.');
+        return { ok: true, authenticated: true, proofUrl: data.proof_url, expiresAt: data.expires_at || null, proof: data.proof || null };
+      });
+    }
+
+    function saveArtworkProofDecision(forgeOrderUuid, lineId, status, correctionNote, expectedPreviewRevision) {
+      return submitStaffMutation(`${baseUrl}/${ARTWORK_PROOF_ENDPOINT}`, { forge_order_uuid: forgeOrderUuid, line_id: lineId, status, correction_note: correctionNote || '', expected_preview_revision: expectedPreviewRevision }, 'The proof decision could not be saved.', (payload) => {
+        const data = normalizeArtworkData(payload);
+        return { ok: true, authenticated: true, proof: data.proof || null, history: Array.isArray(data.history) ? data.history : [] };
+      });
+    }
+
     return {
       checkSession,
       login,
@@ -852,7 +883,10 @@
       setArtworkTemplateActive,
       createArtworkSetupToken,
       createArtworkPrepareToken,
-      createArtworkOpenGroupToken
+      createArtworkOpenGroupToken,
+      getArtworkProof,
+      createArtworkProofToken,
+      saveArtworkProofDecision
     };
   }
 

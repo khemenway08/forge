@@ -1,5 +1,5 @@
 const screens = [...document.querySelectorAll('[data-screen]')];
-const FORGE_BUILD_VERSION = '20260930-68';
+const FORGE_BUILD_VERSION = '20261001-76';
 const PINTEREST_NOPIN_IMAGE_ATTRIBUTES = ' nopin="nopin" data-pin-nopin="true"';
 const USPS_ADDRESS_BOOK_HEADERS = Object.freeze([
   'First Name',
@@ -91,6 +91,8 @@ const staffOrdersFilters = document.querySelector('[data-staff-orders-filters]')
 const staffDemoControls = document.querySelector('[data-staff-demo-controls]');
 const staffBatchGroups = document.querySelector('[data-staff-batch-groups]');
 const staffArtworkGroups = document.querySelector('[data-staff-artwork-groups]');
+const staffProofQueue = document.querySelector('[data-staff-proof-queue]');
+const staffStartProofingButton = document.querySelector('[data-action="staff-start-proofing"]');
 const staffOrdersList = document.querySelector('[data-staff-orders-list]');
 const staffOrdersStatus = document.querySelector('[data-staff-orders-status]');
 const staffOrdersLead = document.querySelector('[data-staff-orders-lead]');
@@ -214,6 +216,26 @@ const staffOrdersState = {
   detailArtworkStatusTone: 'success',
   detailArtworkStatusLineId: '',
   detailArtworkPollTimer: null,
+  proofOpen: false,
+  proofOrderUuid: '',
+  proofLineId: '',
+  proofRecord: null,
+  proofItem: null,
+  proofContext: null,
+  proofLoading: false,
+  proofSaving: false,
+  proofGenerating: false,
+  proofError: '',
+  proofNotice: '',
+  proofCorrectionNote: '',
+  proofCorrectionEntryOpen: false,
+  proofZoom: 'fit',
+  proofPollTimer: null,
+  proofQueueMode: false,
+  proofQueueSessionKeys: [],
+  proofQueueSessionPosition: 0,
+  proofQueueDeferredKeys: [],
+  proofQueueNotice: '',
   detailEditDraft: null,
   detailEditSaving: false,
   detailEditError: '',
@@ -852,6 +874,9 @@ let savedOrdersStatus = null;
 let staffOrderDetailBackdrop = null;
 let staffOrderDetailDialog = null;
 let lastStaffOrderDetailFocusTarget = null;
+let staffArtworkProofBackdrop = null;
+let staffArtworkProofDialog = null;
+let lastStaffArtworkProofFocusTarget = null;
 let staffTrayAssignmentBackdrop = null;
 let staffTrayAssignmentDialog = null;
 let lastStaffTrayAssignmentFocusTarget = null;
@@ -5737,6 +5762,12 @@ function ensureStaffOrderDetailUi() {
       return;
     }
 
+    if (action === 'staff-open-artwork-proof' && orderUuid) {
+      const lineId = event.target.closest('[data-line-id]')?.dataset.lineId;
+      if (lineId) openStaffArtworkProof(orderUuid, lineId);
+      return;
+    }
+
     if (action === 'staff-resolve-flag' && orderUuid && !staffOrdersState.detailResolvingFlagKey) {
       const flagKey = event.target.closest('[data-flag-key]')?.dataset.flagKey;
       if (flagKey && window.confirm('Resolve this flag? It will no longer block production.')) {
@@ -6901,6 +6932,65 @@ function buildPreparedArtworkGroupsMarkup(groups) {
   }).join('')}`;
 }
 
+function buildStaffProofQueueItems(records) {
+  const terminalStatuses = new Set(['completed', 'packed', 'shipped', 'picked_up', 'cancelled']);
+  const queue = [];
+  (Array.isArray(records) ? records : []).forEach((record) => {
+    const productionStatus = sanitizeText(record?.production_status || 'submitted').toLowerCase() || 'submitted';
+    if (terminalStatuses.has(productionStatus)) return;
+    (Array.isArray(record?.payload?.items) ? record.payload.items : []).forEach((item) => {
+      const artworkFile = getStaffArtworkFile(item);
+      if (!artworkFile || artworkFile.status !== 'prepared' || !artworkFile.artworkFileId) return;
+      if (artworkFile.proof?.status === 'approved') return;
+      const lineId = sanitizeText(item?.line_id || '');
+      const orderUuid = sanitizeText(record?.forge_order_uuid || '');
+      if (!lineId || !orderUuid) return;
+      queue.push({
+        key: `${orderUuid}:${lineId}`,
+        orderUuid,
+        lineId,
+        record,
+        item,
+        artworkFile,
+        proofStatus: artworkFile.proof?.status === 'correction_needed' ? 'correction_needed' : 'needs_proof'
+      });
+    });
+  });
+  return queue;
+}
+
+function buildStaffProofQueueMarkup(needsProofCount, correctionCount) {
+  const notice = buildStaffNoticeMarkup(staffOrdersState.proofQueueNotice, 'success');
+  const strips = [
+    needsProofCount > 0 ? `<div class="staff-proof-queue-strip"><strong>${escapeHtml(String(needsProofCount))}</strong> ${needsProofCount === 1 ? 'Item' : 'Items'} to Proof</div>` : '',
+    correctionCount > 0 ? `<div class="staff-proof-queue-strip staff-proof-queue-strip--correction"><strong>${escapeHtml(String(correctionCount))}</strong> ${correctionCount === 1 ? 'Correction' : 'Corrections'} to Review</div>` : ''
+  ].filter(Boolean).join('');
+  return `${notice}${strips ? `<div class="staff-proof-queue-strips">${strips}</div>` : ''}`;
+}
+
+function renderStaffProofQueue(records) {
+  if (!staffProofQueue) return;
+  const items = buildStaffProofQueueItems(records);
+  const correctionCount = items.filter((entry) => entry.proofStatus === 'correction_needed').length;
+  const needsProofCount = items.length - correctionCount;
+  if (staffStartProofingButton) {
+    staffStartProofingButton.textContent = needsProofCount > 0 ? 'Start Proofing' : (correctionCount > 0 ? 'Review Corrections' : 'Start Proofing');
+    staffStartProofingButton.disabled = items.length === 0 || staffOrdersState.loading;
+  }
+  staffProofQueue.innerHTML = buildStaffProofQueueMarkup(needsProofCount, correctionCount);
+}
+
+function getNextStaffProofQueueEntry(records, sessionKeys, startIndex, deferredKeys) {
+  const queueByKey = new Map(buildStaffProofQueueItems(records).map((entry) => [entry.key, entry]));
+  const deferred = new Set(Array.isArray(deferredKeys) ? deferredKeys : []);
+  const keys = Array.isArray(sessionKeys) ? sessionKeys : [];
+  for (let index = Math.max(0, Number(startIndex) || 0); index < keys.length; index += 1) {
+    const entry = queueByKey.get(keys[index]);
+    if (entry && !deferred.has(keys[index])) return { index, entry };
+  }
+  return null;
+}
+
 async function openPreparedArtworkGroup(productDefinitionId, variantKey) {
   if (!staffApiClient || typeof staffApiClient.createArtworkOpenGroupToken !== 'function' || staffOrdersState.artworkGroupOpeningKey) return;
   const key = `${productDefinitionId}:${variantKey}`;
@@ -7005,6 +7095,8 @@ function renderStaffOrdersQueue() {
     staffOrdersList.innerHTML = '';
     staffBatchGroups.innerHTML = '';
     staffArtworkGroups.innerHTML = '<p class="staff-orders-status">Loading prepared artwork…</p>';
+    if (staffProofQueue) staffProofQueue.innerHTML = '<p class="staff-orders-status">Loading proofing queue…</p>';
+    if (staffStartProofingButton) staffStartProofingButton.disabled = true;
     return;
   }
 
@@ -7012,6 +7104,7 @@ function renderStaffOrdersQueue() {
 
   staffBatchGroups.innerHTML = buildStaffBatchMarkup(batchSummary, staffOrdersState.batchError);
   staffArtworkGroups.innerHTML = buildPreparedArtworkGroupsMarkup(buildPreparedArtworkGroups(queueRecords));
+  renderStaffProofQueue(queueRecords);
   staffOrdersList.innerHTML = `
     ${buildStaffNoticeMarkup(staffOrdersState.notice, staffOrdersState.noticeTone)}
     ${filteredRecords.length
@@ -8329,6 +8422,8 @@ function buildStaffOrderCardMarkup(record, filters) {
   const artworkSetupNeeded = staffOrderNeedsArtworkSetup(record);
   const eventSnapshot = getOrderEventSnapshot(record);
   const trayNumber = getOrderTrayNumber(record);
+  const correctionItems = (Array.isArray(payload.items) ? payload.items : []).map((item) => ({ item, artworkFile: getStaffArtworkFile(item) }))
+    .filter(({ artworkFile }) => artworkFile?.status === 'prepared' && artworkFile.proof?.status === 'correction_needed');
 
   return `
     <article class="staff-order-card staff-order-card--production">
@@ -8346,6 +8441,7 @@ function buildStaffOrderCardMarkup(record, filters) {
           ${hasInternalNote ? '<span class="staff-status-badge staff-status-badge--sync-pending">NOTE</span>' : ''}
           ${hasFlags ? '<span class="staff-flag-badge">Open Flags</span>' : ''}
           ${artworkSetupNeeded ? '<span class="staff-artwork-badge staff-artwork-badge--problem">Artwork Setup Needed</span>' : ''}
+          ${correctionItems.length ? '<span class="staff-proof-correction-badge">Correction Needed</span>' : ''}
         </div>
       </div>
       <div class="staff-order-products staff-order-products--prominent">
@@ -8364,6 +8460,7 @@ function buildStaffOrderCardMarkup(record, filters) {
         </div>
         ${isShippingOrder ? `<button class="secondary-button" type="button" data-action="staff-copy-shipping-address" data-order-uuid="${escapeHtml(record.forge_order_uuid)}">Copy Address</button>` : ''}
       </div>
+      ${correctionItems.length ? `<section class="staff-order-corrections"><strong class="staff-order-corrections-title">Artwork Correction${correctionItems.length === 1 ? '' : 's'}</strong>${correctionItems.map(({ item, artworkFile }) => { const variantLabel = getStaffArtworkReadiness(item)?.variantLabel || ''; const artworkLabel = `${item.product_display_name || item.product_definition_id || 'Artwork'}${variantLabel ? ` · ${variantLabel}` : ''}`; return `<div class="staff-order-correction-row"><p>${escapeHtml(artworkFile.proof?.correctionNote || 'Open the proof history for correction details.')}</p><button class="secondary-button staff-proof-correction-action" type="button" data-action="staff-open-artwork-proof" data-order-uuid="${escapeHtml(record.forge_order_uuid)}" data-line-id="${escapeHtml(item.line_id || '')}" aria-label="Review correction for ${escapeHtml(artworkLabel)}">Review Correction</button></div>`; }).join('')}</section>` : ''}
     </article>
   `;
 }
@@ -9633,6 +9730,7 @@ function getStaffOrderItemsMarkup(record, items) {
       && (!isReadOnlyRecord || record?.staff_can_prepare_artwork === true)
       && staffOrdersState.dataSource === 'server';
     const isPreparingArtwork = staffOrdersState.detailPreparingArtworkLineId === item.line_id;
+    const canProofArtwork = artworkFile?.status === 'prepared' && staffOrdersState.dataSource === 'server';
     return `
       <article>
         <div class="staff-order-card-header">
@@ -9645,6 +9743,7 @@ function getStaffOrderItemsMarkup(record, items) {
             ${artworkReadiness ? `<span class="staff-artwork-badge ${escapeHtml(getStaffArtworkReadinessBadgeClass(artworkReadiness))}">Artwork: ${escapeHtml(artworkReadiness.label)}</span>` : ''}
             ${flags.length ? '<span class="staff-flag-badge">Item Flags</span>' : ''}
             ${resolvedItemFlags.length ? '<span class="staff-status-badge staff-status-badge--synced">Resolved Flag</span>' : ''}
+            ${artworkFile?.proof?.status === 'correction_needed' ? '<span class="staff-proof-correction-badge">Correction Needed</span>' : ''}
           </div>
         </div>
         <div class="staff-item-progress-row">
@@ -9665,8 +9764,9 @@ function getStaffOrderItemsMarkup(record, items) {
           `}
         </div>
         ${artworkReadiness ? buildStaffArtworkReadinessMarkup(artworkReadiness) : ''}
-        ${artworkFile ? `<div class="staff-artwork-readiness"><span>Customer Artwork</span><strong>${escapeHtml(artworkFile.liveFilename)}</strong><p>${artworkFile.status === 'prepared' ? 'LIVE file prepared' : (artworkFile.status === 'failed' ? 'Preparation needs attention' : 'Waiting for the Mac launcher')}</p></div>` : ''}
-        ${canPrepareArtwork ? `<div class="staff-order-card-actions"><button class="primary-button" type="button" data-action="staff-prepare-artwork" data-order-uuid="${escapeHtml(record.forge_order_uuid)}" data-line-id="${escapeHtml(item.line_id || '')}" ${isPreparingArtwork ? 'disabled' : ''}>${isPreparingArtwork ? 'Opening Launcher…' : (artworkFile?.status === 'prepared' ? 'Open LIVE Artwork' : 'Prepare Artwork')}</button></div>` : ''}
+        ${artworkFile ? `<div class="staff-artwork-readiness"><span>Customer Artwork</span><strong>${escapeHtml(artworkFile.liveFilename)}</strong><p>${artworkFile.status === 'prepared' ? 'LIVE file prepared' : (artworkFile.status === 'failed' ? 'Preparation needs attention' : 'Waiting for the Mac launcher')}</p>${artworkFile.status === 'prepared' ? `<p><strong>Proof: ${escapeHtml(getStaffArtworkProofStatusLabel(artworkFile.proof))}</strong></p>` : ''}</div>` : ''}
+        ${artworkFile?.proof?.status === 'correction_needed' ? `<div class="staff-proof-correction-alert"><strong>Correction Needed</strong><p>${escapeHtml(artworkFile.proof.correctionNote || 'Review the proof history for the requested correction.')}</p></div>` : ''}
+        ${canPrepareArtwork || canProofArtwork ? `<div class="staff-order-card-actions">${canPrepareArtwork ? `<button class="primary-button" type="button" data-action="staff-prepare-artwork" data-order-uuid="${escapeHtml(record.forge_order_uuid)}" data-line-id="${escapeHtml(item.line_id || '')}" ${isPreparingArtwork ? 'disabled' : ''}>${isPreparingArtwork ? 'Opening Launcher…' : (artworkFile?.status === 'prepared' ? 'Open LIVE Artwork' : 'Prepare Artwork')}</button>` : ''}${canProofArtwork ? `<button class="secondary-button" type="button" data-action="staff-open-artwork-proof" data-order-uuid="${escapeHtml(record.forge_order_uuid)}" data-line-id="${escapeHtml(item.line_id || '')}">${escapeHtml(getStaffArtworkProofActionLabel(artworkFile.proof))}</button>` : ''}</div>` : ''}
         ${staffOrdersState.detailArtworkStatusLineId === item.line_id && staffOrdersState.detailArtworkStatus ? `<p class="form-status ${staffOrdersState.detailArtworkStatusTone === 'error' ? 'is-error' : 'is-success'}">${escapeHtml(staffOrdersState.detailArtworkStatus)}</p>` : ''}
         <div class="staff-order-detail-grid">
           ${itemDetails.map((detail) => `
@@ -9743,7 +9843,28 @@ function getStaffArtworkFile(item) {
   const status = sanitizeText(file.status || '').toLowerCase();
   const liveFilename = sanitizeText(file.live_filename || '');
   if (!['pending', 'prepared', 'failed'].includes(status) || !liveFilename) return null;
-  return { status, liveFilename, relativeLivePath: sanitizeText(file.relative_live_path || ''), preparedAt: sanitizeText(file.prepared_at || ''), errorCode: sanitizeText(file.last_error_code || '') };
+  const proof = file.proof && typeof file.proof === 'object' ? {
+    status: sanitizeText(file.proof.status || 'waiting_for_proof').toLowerCase(),
+    previewStatus: sanitizeText(file.proof.preview_status || 'not_generated').toLowerCase(),
+    previewRevision: Number.parseInt(file.proof.preview_revision || 0, 10) || 0,
+    decidedBy: sanitizeText(file.proof.decided_by || ''),
+    decidedAt: sanitizeText(file.proof.decided_at || ''),
+    correctionNote: sanitizeText(file.proof.correction_note || '')
+  } : null;
+  return { artworkFileId: sanitizeText(file.artwork_file_id || ''), status, liveFilename, relativeLivePath: sanitizeText(file.relative_live_path || ''), preparedAt: sanitizeText(file.prepared_at || ''), errorCode: sanitizeText(file.last_error_code || ''), proof };
+}
+
+function getStaffArtworkProofActionLabel(proof) {
+  if (proof?.status === 'approved') return 'View Approved Proof';
+  if (proof?.status === 'correction_needed') return 'Review Correction';
+  if (proof?.previewStatus === 'ready') return 'Proof Artwork';
+  return 'Create Proof';
+}
+
+function getStaffArtworkProofStatusLabel(proof) {
+  if (proof?.status === 'approved') return 'Approved';
+  if (proof?.status === 'correction_needed') return 'Correction Needed';
+  return 'Waiting for Proof';
 }
 
 async function prepareStaffArtwork(forgeOrderUuid, lineId) {
@@ -9806,6 +9927,258 @@ async function prepareStaffArtwork(forgeOrderUuid, lineId) {
     staffOrdersState.detailArtworkStatusTone = 'error';
     renderStaffOrderDetail();
   }
+}
+
+function ensureStaffArtworkProofUi() {
+  if (!shouldCreateStaffUiShell() || staffArtworkProofDialog) return;
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="staff-artwork-proof-backdrop" data-staff-artwork-proof-backdrop hidden>
+      <div class="staff-artwork-proof-dialog" data-staff-artwork-proof-dialog role="dialog" aria-modal="true" aria-labelledby="staff-artwork-proof-title" tabindex="-1" hidden></div>
+    </div>
+  `);
+  staffArtworkProofBackdrop = document.querySelector('[data-staff-artwork-proof-backdrop]');
+  staffArtworkProofDialog = document.querySelector('[data-staff-artwork-proof-dialog]');
+  staffArtworkProofDialog?.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    if (!action) return;
+    if (action === 'close-staff-artwork-proof') { closeStaffArtworkProof(); return; }
+    if (action === 'staff-generate-artwork-proof') { generateStaffArtworkProof(); return; }
+    if (action === 'staff-proof-fit') { staffOrdersState.proofZoom = 'fit'; renderStaffArtworkProof(); return; }
+    if (action === 'staff-proof-zoom-in' || action === 'staff-proof-zoom-out') {
+      const current = staffOrdersState.proofZoom === 'fit' ? 1 : Number(staffOrdersState.proofZoom) || 1;
+      staffOrdersState.proofZoom = Math.min(3, Math.max(0.5, current + (action === 'staff-proof-zoom-in' ? 0.25 : -0.25)));
+      renderStaffArtworkProof(); return;
+    }
+    if (action === 'staff-approve-artwork-proof') { saveStaffArtworkProofDecision('approved'); return; }
+    if (action === 'staff-correction-artwork-proof') { saveStaffArtworkProofDecision('correction_needed'); }
+    if (action === 'staff-skip-artwork-proof') { skipStaffArtworkProofQueueItem(); }
+    if (action === 'staff-show-proof-correction-entry') { staffOrdersState.proofCorrectionEntryOpen = true; renderStaffArtworkProof(); }
+  });
+  staffArtworkProofDialog?.addEventListener('input', (event) => {
+    if (event.target.matches('[data-staff-proof-correction-note]')) staffOrdersState.proofCorrectionNote = event.target.value.slice(0, 1000);
+  });
+  staffArtworkProofBackdrop?.addEventListener('click', (event) => {
+    if (event.target === staffArtworkProofBackdrop && !staffOrdersState.proofQueueMode && !staffOrdersState.proofSaving && !staffOrdersState.proofGenerating) closeStaffArtworkProof();
+  });
+}
+
+async function startStaffArtworkProofQueue() {
+  const items = buildStaffProofQueueItems(staffOrdersState.records);
+  if (!items.length) { staffOrdersState.proofQueueNotice = 'Proofing is caught up.'; renderStaffOrdersQueue(); return; }
+  staffOrdersState.proofQueueMode = true;
+  staffOrdersState.proofQueueSessionKeys = items.map((entry) => entry.key);
+  staffOrdersState.proofQueueSessionPosition = 0;
+  staffOrdersState.proofQueueDeferredKeys = [];
+  staffOrdersState.proofQueueNotice = '';
+  await openStaffArtworkProof(items[0].orderUuid, items[0].lineId, { record: items[0].record, queueMode: true });
+}
+
+async function openStaffArtworkProof(orderUuid, lineId, options = {}) {
+  ensureStaffArtworkProofUi();
+  if (!staffArtworkProofDialog || !staffApiClient?.getArtworkProof) return;
+  const record = options.record || staffOrdersState.detailRecord || staffOrdersState.records.find((candidate) => candidate?.forge_order_uuid === orderUuid);
+  const item = (record?.payload?.items || []).find((candidate) => candidate?.line_id === lineId);
+  if (!record || !item) return;
+  if (options.queueMode !== true) {
+    staffOrdersState.proofQueueMode = false;
+    staffOrdersState.proofQueueSessionKeys = [];
+    staffOrdersState.proofQueueSessionPosition = 0;
+    staffOrdersState.proofQueueDeferredKeys = [];
+  }
+  lastStaffArtworkProofFocusTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  staffOrdersState.proofOpen = true;
+  staffOrdersState.proofOrderUuid = orderUuid;
+  staffOrdersState.proofLineId = lineId;
+  staffOrdersState.proofRecord = record;
+  staffOrdersState.proofItem = item;
+  staffOrdersState.proofContext = null;
+  staffOrdersState.proofLoading = true;
+  staffOrdersState.proofError = '';
+  staffOrdersState.proofNotice = '';
+  staffOrdersState.proofCorrectionNote = '';
+  staffOrdersState.proofCorrectionEntryOpen = false;
+  staffOrdersState.proofZoom = 'fit';
+  renderStaffArtworkProof();
+  const context = await refreshStaffArtworkProof();
+  const proof = context?.proof;
+  if (staffOrdersState.proofQueueMode && context?.canUpdate === true && (proof?.preview_status !== 'ready' || proof?.status === 'correction_needed')) {
+    await generateStaffArtworkProof();
+  }
+  window.setTimeout(() => staffArtworkProofDialog?.focus(), 0);
+}
+
+function closeStaffArtworkProof() {
+  if (staffOrdersState.proofSaving || staffOrdersState.proofGenerating) return;
+  if (staffOrdersState.proofPollTimer) window.clearInterval(staffOrdersState.proofPollTimer);
+  staffOrdersState.proofPollTimer = null;
+  staffOrdersState.proofOpen = false;
+  staffOrdersState.proofContext = null;
+  staffOrdersState.proofRecord = null;
+  staffOrdersState.proofItem = null;
+  staffOrdersState.proofQueueMode = false;
+  staffOrdersState.proofQueueSessionKeys = [];
+  staffOrdersState.proofQueueSessionPosition = 0;
+  staffOrdersState.proofQueueDeferredKeys = [];
+  renderStaffArtworkProof();
+  lastStaffArtworkProofFocusTarget?.focus();
+  lastStaffArtworkProofFocusTarget = null;
+}
+
+async function advanceStaffArtworkProofQueue(decisionStatus) {
+  if (!staffOrdersState.proofQueueMode) return false;
+  const currentKey = `${staffOrdersState.proofOrderUuid}:${staffOrdersState.proofLineId}`;
+  if (['correction_needed', 'skipped'].includes(decisionStatus) && !staffOrdersState.proofQueueDeferredKeys.includes(currentKey)) {
+    staffOrdersState.proofQueueDeferredKeys.push(currentKey);
+  }
+  const next = getNextStaffProofQueueEntry(
+    staffOrdersState.records,
+    staffOrdersState.proofQueueSessionKeys,
+    staffOrdersState.proofQueueSessionPosition + 1,
+    staffOrdersState.proofQueueDeferredKeys
+  );
+  if (next) {
+    staffOrdersState.proofQueueSessionPosition = next.index;
+    await openStaffArtworkProof(next.entry.orderUuid, next.entry.lineId, { record: next.entry.record, queueMode: true });
+    return true;
+  }
+  const deferredCount = staffOrdersState.proofQueueDeferredKeys.length;
+  closeStaffArtworkProof();
+  staffOrdersState.proofQueueNotice = deferredCount
+    ? `Proofing pass complete. ${deferredCount} item${deferredCount === 1 ? '' : 's'} remain available in the proofing queue.`
+    : 'Proofing pass complete.';
+  renderStaffOrdersQueue();
+  return true;
+}
+
+async function skipStaffArtworkProofQueueItem() {
+  if (!staffOrdersState.proofQueueMode || staffOrdersState.proofSaving || staffOrdersState.proofGenerating) return;
+  await advanceStaffArtworkProofQueue('skipped');
+}
+
+async function refreshStaffArtworkProof() {
+  try {
+    const result = await staffApiClient.getArtworkProof(staffOrdersState.proofOrderUuid, staffOrdersState.proofLineId);
+    if (result?.unauthenticated) { closeStaffArtworkProof(); showUnauthenticatedStaffAccess(); return null; }
+    if (!result?.ok) throw new Error('Artwork proofing could not be loaded.');
+    staffOrdersState.proofContext = result;
+    staffOrdersState.proofCorrectionNote = result.proof?.correction_note || '';
+    staffOrdersState.proofError = '';
+    return result;
+  } catch (error) {
+    staffOrdersState.proofError = error?.message || 'Artwork proofing could not be loaded.';
+    return null;
+  } finally {
+    staffOrdersState.proofLoading = false;
+    renderStaffArtworkProof();
+  }
+}
+
+async function generateStaffArtworkProof() {
+  if (staffOrdersState.proofGenerating || !staffApiClient?.createArtworkProofToken) return;
+  const priorRevision = Number(staffOrdersState.proofContext?.proof?.preview_revision || 0);
+  staffOrdersState.proofGenerating = true;
+  staffOrdersState.proofError = '';
+  staffOrdersState.proofNotice = 'Opening Forge Artwork Launcher…';
+  renderStaffArtworkProof();
+  try {
+    const result = await staffApiClient.createArtworkProofToken(staffOrdersState.proofOrderUuid, staffOrdersState.proofLineId);
+    if (!result?.ok || !result.proofUrl) throw new Error('Artwork proof generation could not be started.');
+    window.location.href = result.proofUrl;
+    let remaining = 45;
+    if (staffOrdersState.proofPollTimer) window.clearInterval(staffOrdersState.proofPollTimer);
+    let inFlight = false;
+    staffOrdersState.proofPollTimer = window.setInterval(async () => {
+      if (inFlight || !staffOrdersState.proofOpen) return;
+      inFlight = true; remaining--;
+      try {
+        const refreshed = await staffApiClient.getArtworkProof(staffOrdersState.proofOrderUuid, staffOrdersState.proofLineId);
+        if (refreshed?.ok && Number(refreshed.proof?.preview_revision || 0) > priorRevision) {
+          window.clearInterval(staffOrdersState.proofPollTimer); staffOrdersState.proofPollTimer = null;
+          staffOrdersState.proofContext = refreshed; staffOrdersState.proofGenerating = false;
+          staffOrdersState.proofNotice = 'Fresh artboard proof received. Review it before recording a decision.';
+          staffOrdersState.proofCorrectionNote = ''; renderStaffArtworkProof(); return;
+        }
+        if (remaining <= 0) {
+          window.clearInterval(staffOrdersState.proofPollTimer); staffOrdersState.proofPollTimer = null;
+          staffOrdersState.proofGenerating = false; staffOrdersState.proofNotice = '';
+          staffOrdersState.proofError = 'The local bridge did not report a proof. Confirm the Forge Artwork Launcher is installed and try again.';
+          renderStaffArtworkProof();
+        }
+      } catch (error) {
+        if (remaining <= 0) { staffOrdersState.proofGenerating = false; staffOrdersState.proofError = error?.message || 'Proof status could not be refreshed.'; renderStaffArtworkProof(); }
+      } finally { inFlight = false; }
+    }, 2000);
+  } catch (error) {
+    staffOrdersState.proofGenerating = false;
+    staffOrdersState.proofNotice = '';
+    staffOrdersState.proofError = error?.message || 'Artwork proof generation could not be started.';
+    renderStaffArtworkProof();
+  }
+}
+
+async function saveStaffArtworkProofDecision(status) {
+  if (staffOrdersState.proofSaving || !staffApiClient?.saveArtworkProofDecision) return;
+  const note = staffOrdersState.proofCorrectionNote.trim();
+  const revision = Number(staffOrdersState.proofContext?.proof?.preview_revision || 0);
+  if (status === 'correction_needed' && !note) { staffOrdersState.proofError = 'Enter a correction note before marking Correction Needed.'; renderStaffArtworkProof(); return; }
+  staffOrdersState.proofSaving = true; staffOrdersState.proofError = ''; renderStaffArtworkProof();
+  let saved = false;
+  try {
+    const result = await staffApiClient.saveArtworkProofDecision(staffOrdersState.proofOrderUuid, staffOrdersState.proofLineId, status, note, revision);
+    if (!result?.ok) throw new Error('The proof decision could not be saved.');
+    staffOrdersState.proofContext = { ...staffOrdersState.proofContext, proof: result.proof, history: result.history };
+    staffOrdersState.proofNotice = status === 'approved' ? 'Artwork proof approved.' : 'Correction request recorded. Generate a fresh proof after the LIVE artwork is corrected.';
+    staffOrdersState.proofCorrectionNote = result.proof?.correction_note || '';
+    await loadStaffOrdersQueue();
+    staffOrdersState.detailRecord = staffOrdersState.records.find((candidate) => candidate?.forge_order_uuid === staffOrdersState.proofOrderUuid) || staffOrdersState.detailRecord;
+    saved = true;
+  } catch (error) { staffOrdersState.proofError = error?.message || 'The proof decision could not be saved.'; }
+  finally { staffOrdersState.proofSaving = false; renderStaffOrderDetail(); renderStaffArtworkProof(); }
+  if (saved && staffOrdersState.proofQueueMode) await advanceStaffArtworkProofQueue(status);
+}
+
+function renderStaffArtworkProof() {
+  ensureStaffArtworkProofUi();
+  if (!staffArtworkProofBackdrop || !staffArtworkProofDialog) return;
+  staffArtworkProofBackdrop.hidden = !staffOrdersState.proofOpen;
+  staffArtworkProofDialog.hidden = !staffOrdersState.proofOpen;
+  if (!staffOrdersState.proofOpen) { staffArtworkProofDialog.innerHTML = ''; return; }
+  const record = staffOrdersState.proofRecord || {};
+  const item = staffOrdersState.proofItem || {};
+  const payload = record.payload || {};
+  const proof = staffOrdersState.proofContext?.proof || null;
+  const canUpdate = staffOrdersState.proofContext?.canUpdate === true;
+  const hasPreview = proof?.preview_status === 'ready' && proof?.preview_url;
+  const statusLabels = { waiting_for_proof: 'Waiting for Proof', approved: 'Approved', correction_needed: 'Correction Needed' };
+  const status = proof?.status || 'waiting_for_proof';
+  const itemDetails = buildStaffItemDetailRows(item);
+  const yearMode = itemDetails.find((detail) => detail.label === 'Year on Star')?.value || '';
+  const storedYear = itemDetails.find((detail) => detail.label === 'Year')?.value || '';
+  const proofYear = String(yearMode).toLowerCase().replace(/[_-]+/g, ' ') === 'no year' ? 'No Year' : storedYear;
+  const priorityLabels = new Set(['Family Name', 'Baby Name', 'Engraved Text', 'Personalization', 'Memorial Text', 'Bottom Text Line 1', 'Bottom Text Line 2', 'Edge Text']);
+  const priorityDetails = itemDetails.filter((detail) => priorityLabels.has(detail.label));
+  const optionDetails = itemDetails.filter((detail) => !priorityLabels.has(detail.label) && !['Year', 'Year on Star'].includes(detail.label));
+  const zoom = staffOrdersState.proofZoom;
+  const imageStyle = zoom === 'fit' ? '' : `width:${Math.round(Number(zoom) * 100)}%;max-width:none;max-height:none;height:auto;`;
+  const history = Array.isArray(staffOrdersState.proofContext?.history) ? staffOrdersState.proofContext.history : [];
+  const latestCorrection = history.find((entry) => entry?.event_type === 'correction_needed' && sanitizeText(entry.note || ''));
+  const correctionContext = status === 'correction_needed'
+    ? { note: proof?.correction_note || latestCorrection?.note || '', revision: proof?.preview_revision || latestCorrection?.preview_revision || '' }
+    : (status === 'waiting_for_proof' && latestCorrection ? { note: latestCorrection.note, revision: latestCorrection.preview_revision || '' } : null);
+  const queueProgress = staffOrdersState.proofQueueMode
+    ? `${staffOrdersState.proofQueueSessionPosition + 1} of ${staffOrdersState.proofQueueSessionKeys.length}`
+    : '';
+  staffArtworkProofDialog.innerHTML = `
+    <header class="staff-artwork-proof-header"><div><p class="eyebrow">Artwork Proofing${queueProgress ? ` · ${escapeHtml(queueProgress)}` : ''}</p><h2 id="staff-artwork-proof-title">${escapeHtml(getOrderDisplayReference(record))} · ${escapeHtml(item.product_display_name || 'Artwork')}</h2></div><button class="text-button" type="button" data-action="close-staff-artwork-proof" ${staffOrdersState.proofSaving || staffOrdersState.proofGenerating ? 'disabled' : ''}>${staffOrdersState.proofQueueMode ? 'Exit Proofing' : 'Close'}</button></header>
+    ${staffOrdersState.proofError ? buildStaffNoticeMarkup(staffOrdersState.proofError, 'error') : ''}
+    ${staffOrdersState.proofNotice ? buildStaffNoticeMarkup(staffOrdersState.proofNotice, 'success') : ''}
+    ${staffOrdersState.proofLoading ? '<p class="staff-orders-status">Loading proof…</p>' : `
+    <div class="staff-artwork-proof-layout">
+      <aside class="staff-artwork-proof-info"><div class="staff-proof-order-context"><strong>${escapeHtml(item.product_display_name || item.product_definition_id || 'Artwork')}</strong><span>${escapeHtml(getStaffArtworkReadiness(item)?.variantLabel || item.structured_attributes?.size || 'Configured variant')} · ${escapeHtml(getOrderDisplayReference(record))}</span><small>${escapeHtml(payload.customer?.full_name || 'Unknown customer')}</small></div><section class="staff-proof-priority-section"><h3>Names</h3>${Array.isArray(item.personalization_order) && item.personalization_order.length ? buildStaffPersonalizationGridMarkup(item.personalization_order) : '<p>No people or pet names.</p>'}</section>${proofYear ? `<section class="staff-proof-priority-section"><h3>Year</h3><strong class="staff-proof-priority-value staff-proof-priority-value--year">${escapeHtml(proofYear)}</strong></section>` : ''}${priorityDetails.map((detail) => `<section class="staff-proof-priority-section"><h3>${escapeHtml(detail.label)}</h3><strong class="staff-proof-priority-value">${detail.isHtml ? detail.value : escapeHtml(detail.value)}</strong></section>`).join('')}${optionDetails.length ? `<section class="staff-proof-options"><h3>Options</h3><dl>${optionDetails.map((detail) => `<div><dt>${escapeHtml(detail.label)}</dt><dd>${detail.isHtml ? detail.value : escapeHtml(detail.value)}</dd></div>`).join('')}</dl></section>` : ''}${item.customer_note ? `<div class="staff-proof-note"><strong>Customer Note</strong><p>${escapeHtml(item.customer_note)}</p></div>` : ''}${item.production_note ? `<div class="staff-proof-note"><strong>Production Note</strong><p>${escapeHtml(item.production_note)}</p></div>` : ''}</aside>
+      <main class="staff-artwork-proof-viewer"><div class="staff-artwork-proof-toolbar"><button type="button" class="secondary-button" data-action="staff-proof-zoom-out" ${hasPreview ? '' : 'disabled'}>−</button><button type="button" class="secondary-button" data-action="staff-proof-fit" ${hasPreview ? '' : 'disabled'}>Fit</button><button type="button" class="secondary-button" data-action="staff-proof-zoom-in" ${hasPreview ? '' : 'disabled'}>+</button><span>${zoom === 'fit' ? 'Fit to View' : `${Math.round(Number(zoom) * 100)}%`}</span></div><div class="staff-artwork-proof-canvas">${hasPreview ? `<img class="staff-artwork-proof-image${zoom === 'fit' ? ' is-fit' : ' is-zoomed'}" src="${escapeHtml(proof.preview_url)}" alt="Artboard-only proof for ${escapeHtml(item.product_display_name || 'customer artwork')}" draggable="false" style="${imageStyle}">` : '<div class="staff-empty-state"><h3>No proof preview yet</h3><p>The Mac launcher will prepare the artboard-only proof automatically.</p></div>'}</div><p class="staff-order-detail-note">Artboard only · customer LIVE file unchanged</p></main>
+      <aside class="staff-artwork-proof-actions"><div class="staff-proof-status-row"><span class="staff-status-badge ${status === 'approved' ? 'staff-status-badge--synced' : (status === 'correction_needed' ? 'staff-status-badge--sync-pending' : '')}">${escapeHtml(statusLabels[status] || 'Waiting for Proof')}</span><span>Revision ${escapeHtml(String(proof?.preview_revision || '—'))}</span></div>${correctionContext ? `<section class="staff-proof-correction-focus"><h3>${status === 'correction_needed' ? 'Correction Requested' : 'Correction to Verify'}</h3><p>${escapeHtml(correctionContext.note || 'Review the proof history for the requested correction.')}</p><span>Previous proof revision ${escapeHtml(String(correctionContext.revision || ''))}</span><small>Current LIVE artwork · ${escapeHtml(getStaffArtworkFile(item)?.liveFilename || 'Associated customer artwork')}</small></section>` : ''}${proof?.decided_at ? `<p class="staff-proof-decision-meta">${escapeHtml(formatReadableDateTime(proof.decided_at))}${proof.decided_by ? ` · ${escapeHtml(proof.decided_by)}` : ''}</p>` : ''}<button class="text-button staff-proof-tertiary-button" type="button" data-action="staff-generate-artwork-proof" ${!canUpdate || staffOrdersState.proofGenerating ? 'disabled' : ''}>${staffOrdersState.proofGenerating ? 'Opening Launcher…' : (status === 'correction_needed' ? 'Generate Fresh Proof After Correction' : (hasPreview ? 'Generate Fresh Proof' : 'Generate Proof on Mac'))}</button><button class="primary-button" type="button" data-action="staff-approve-artwork-proof" ${!hasPreview || !canUpdate || staffOrdersState.proofSaving || staffOrdersState.proofGenerating ? 'disabled' : ''}>Approve${staffOrdersState.proofQueueMode ? ' & Next' : ''}</button>${staffOrdersState.proofQueueMode ? `<button class="secondary-button staff-proof-skip-button" type="button" data-action="staff-skip-artwork-proof" ${staffOrdersState.proofSaving || staffOrdersState.proofGenerating ? 'disabled' : ''}>Skip &amp; Next</button>` : ''}${staffOrdersState.proofCorrectionEntryOpen ? `<div class="staff-proof-correction-entry"><label class="field staff-proof-correction-field"><span>Correction Note</span><textarea rows="3" maxlength="1000" data-staff-proof-correction-note ${staffOrdersState.proofSaving || staffOrdersState.proofGenerating ? 'disabled' : ''}>${escapeHtml(staffOrdersState.proofCorrectionNote)}</textarea></label><button class="secondary-button" type="button" data-action="staff-correction-artwork-proof" ${!hasPreview || !canUpdate || staffOrdersState.proofSaving || staffOrdersState.proofGenerating ? 'disabled' : ''}>Correction Needed${staffOrdersState.proofQueueMode ? ' & Next' : ''}</button></div>` : `<button class="text-button staff-proof-tertiary-button" type="button" data-action="staff-show-proof-correction-entry" ${!hasPreview || !canUpdate || staffOrdersState.proofSaving || staffOrdersState.proofGenerating ? 'disabled' : ''}>Need Another Correction</button>`}<details class="staff-artwork-proof-history"><summary>Proof History (${escapeHtml(String(history.length))})</summary>${history.length ? `<ol>${history.map((entry) => `<li><strong>${escapeHtml((statusLabels[entry.event_type] || (entry.event_type === 'preview_created' ? 'Proof Generated' : entry.event_type)))}</strong><span>Revision ${escapeHtml(String(entry.preview_revision || ''))}${entry.staff_identity ? ` · ${escapeHtml(entry.staff_identity)}` : ''}</span>${entry.note ? `<p>${escapeHtml(entry.note)}</p>` : ''}<time>${escapeHtml(formatReadableDateTime(entry.created_at || ''))}</time></li>`).join('')}</ol>` : '<p>No proof history yet.</p>'}</details></aside>
+    </div>`}
+  `;
 }
 
 function getStaffArtworkReadinessBadgeClass(readiness) {
@@ -12002,6 +12375,12 @@ if (treeForm) {
       return;
     }
 
+    if (action === 'staff-open-artwork-proof' && orderUuid) {
+      const lineId = event.target.closest('[data-line-id]')?.dataset.lineId;
+      if (lineId) openStaffArtworkProof(orderUuid, lineId);
+      return;
+    }
+
     if (action === 'staff-view-order' && orderUuid) {
       openStaffOrderDetail(orderUuid);
     }
@@ -12011,6 +12390,11 @@ if (treeForm) {
       const productDefinitionId = button?.dataset.productDefinitionId || '';
       const variantKey = button?.dataset.variantKey || '';
       if (productDefinitionId && variantKey) openPreparedArtworkGroup(productDefinitionId, variantKey);
+      return;
+    }
+
+    if (action === 'staff-start-proofing') {
+      startStaffArtworkProofQueue();
       return;
     }
 

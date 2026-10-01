@@ -22,6 +22,7 @@ require_once __DIR__ . '/lib/staff-auth.php';
 require_once __DIR__ . '/lib/artwork-template-readiness.php';
 require_once __DIR__ . '/lib/artwork-template-repository.php';
 require_once __DIR__ . '/lib/artwork-preparation-repository.php';
+require_once __DIR__ . '/lib/artwork-proof-repository.php';
 require_once __DIR__ . '/lib/staff-order-repository.php';
 require_once __DIR__ . '/lib/staff-catalog-sort-order.php';
 require_once __DIR__ . '/lib/staff-design-catalog-importer.php';
@@ -81,6 +82,13 @@ function buildArtworkPreparationRepositoryFromEnvironment(): PdoArtworkPreparati
 {
     $pdo = DatabaseConnectionFactory::createFromEnvironment(loadPrivateDatabaseConfig());
     return new PdoArtworkPreparationRepository($pdo, new PdoArtworkTemplateRepository($pdo));
+}
+
+function buildArtworkProofRepositoryFromEnvironment(): PdoArtworkProofRepository
+{
+    return new PdoArtworkProofRepository(
+        DatabaseConnectionFactory::createFromEnvironment(loadPrivateDatabaseConfig())
+    );
 }
 
 function buildEventRepositoryFromEnvironment(): PdoEventRepository

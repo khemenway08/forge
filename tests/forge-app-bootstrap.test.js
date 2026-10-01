@@ -7,7 +7,7 @@ const vm = require('vm');
 const indexSource = fs.readFileSync(path.join(process.cwd(), 'public/index.html'), 'utf8');
 const cssSource = fs.readFileSync(path.join(process.cwd(), 'public/css/app.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(process.cwd(), 'public/js/app.js'), 'utf8');
-const BUILD_VERSION = '20260930-68';
+const BUILD_VERSION = '20261001-76';
 
 function extractScreenMarkup(screenId) {
   const match = indexSource.match(new RegExp(`<section class="screen[\\s\\S]*?data-screen="${screenId}"[\\s\\S]*?<\\/section>`));
@@ -3309,6 +3309,144 @@ test('staff artwork preparation is gated by ready status and uses the constraine
   assert.match(app, /window\.location\.href = result\.prepareUrl/);
   assert.match(app, /The local bridge did not report completion/);
   assert.match(app, /artworkFile\?\.status === 'prepared' \? 'Open LIVE Artwork' : 'Prepare Artwork'/);
+});
+
+test('staff manual proofing uses prepared associations artboard previews and explicit revisioned decisions', () => {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(app, /data-action="staff-open-artwork-proof"/);
+  assert.match(app, /createArtworkProofToken\(staffOrdersState\.proofOrderUuid, staffOrdersState\.proofLineId\)/);
+  assert.match(app, /window\.location\.href = result\.proofUrl/);
+  assert.match(app, /data-action="staff-approve-artwork-proof"/);
+  assert.match(app, /data-action="staff-correction-artwork-proof"/);
+  assert.match(app, /saveArtworkProofDecision[\s\S]{0,500}revision/);
+  assert.match(app, /staff-proof-priority-section"><h3>Names/);
+  assert.match(app, /artboard only/i);
+  assert.match(app, /staff-proof-zoom-in/);
+  assert.match(app, /staff-proof-zoom-out/);
+  assert.match(app, /staff-proof-fit/);
+  assert.match(app, /staff-artwork-proof-image\$\{zoom === 'fit' \? ' is-fit' : ' is-zoomed'\}/);
+  assert.doesNotMatch(app, /staff-artwork-proof[\s\S]{0,3000}relativeLivePath/);
+  assert.doesNotMatch(app, /OCR|optical character|automatic comparison/i);
+});
+
+test('manual proofing prioritizes readable personalization in a viewport-contained three-column layout', () => {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(app, /staff-proof-priority-section"><h3>Names/);
+  assert.match(app, /staff-proof-priority-value--year/);
+  assert.match(app, /staff-proof-order-context/);
+  assert.match(cssSource, /\.staff-artwork-proof-dialog[\s\S]*?height: calc\(100dvh - 2rem\)[\s\S]*?overflow: hidden/);
+  assert.match(cssSource, /\.staff-artwork-proof-layout[\s\S]*?grid-template-columns: minmax\(350px/);
+  assert.match(cssSource, /\.staff-artwork-proof-info \.staff-personalization-grid-row span:nth-child\(2\)[\s\S]*?white-space: nowrap/);
+  assert.match(cssSource, /\.staff-artwork-proof-image\.is-fit[\s\S]*?max-width: 100%[\s\S]*?max-height: 100%[\s\S]*?object-fit: contain/);
+  assert.doesNotMatch(app, /data-staff-proof-identity|Staff Name/);
+  assert.doesNotMatch(app, /Decision recorded by the authenticated staff session/);
+});
+
+test('correction-needed artwork is obvious on the order card and opens the exact affected line', () => {
+  const { context } = loadForgeHostedStaffAppForTrayDetail();
+  const markup = vm.runInContext(`buildStaffOrderCardMarkup({
+    forge_order_uuid: 'order-correction', forge_order_number: 1099, production_status: 'submitted', submitted_at: '2026-10-01T12:00:00Z',
+    payload: { customer: { full_name: 'Proof Customer' }, fulfillment: { method: 'pickup' }, items: [{
+      line_id: 'line-needs-fix', quantity: 1, product_definition_id: 'tree_ornament', product_display_name: 'Tree Ornament',
+      artwork_file: { artwork_file_id: 'art-fix', status: 'prepared', live_filename: 'PROOF_CUSTOMER_TREE_LIVE.ai', proof: { status: 'correction_needed', preview_status: 'ready', preview_revision: 1, correction_note: 'Center Jamie under Alex.' } }
+    }] }
+  }, forgeLocalOrdersQueue.createEmptyOrderFilters())`, context);
+  assert.match(markup, /Correction Needed/);
+  assert.match(markup, /staff-order-corrections-title">Artwork Correction/);
+  assert.match(markup, /staff-order-correction-row/);
+  assert.match(markup, />Review Correction<\/button>/);
+  assert.match(markup, /aria-label="Review correction for Tree Ornament/);
+  assert.match(markup, /data-order-uuid="order-correction"/);
+  assert.match(markup, /data-line-id="line-needs-fix"/);
+  assert.match(markup, /Center Jamie under Alex\./);
+  assert.match(cssSource, /\.staff-order-correction-row[\s\S]*?display: flex[\s\S]*?justify-content: space-between/);
+  assert.match(cssSource, /\.staff-proof-correction-action[\s\S]*?color: #5d1713[\s\S]*?font-weight: 800/);
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(app, /Correction Requested/);
+  assert.match(app, /Generate Fresh Proof After Correction/);
+  assert.match(app, /Current LIVE artwork/);
+  assert.match(app, /Previous proof revision/);
+});
+
+test('staff proofing queue includes active prepared unapproved items without tray eligibility', () => {
+  const { context } = loadForgeHostedStaffAppForTrayDetail();
+  const queue = JSON.parse(vm.runInContext(`JSON.stringify(buildStaffProofQueueItems([
+    { forge_order_uuid: 'active-no-tray', forge_order_number: 1001, production_status: null, current_tray_number: null, payload: { customer: { full_name: 'Active Customer' }, items: [
+      { line_id: 'needs-proof', product_display_name: 'Tree Ornament', artwork_file: { artwork_file_id: 'art-1', status: 'prepared', live_filename: 'ACTIVE_TREE_LIVE.ai', proof: { status: 'waiting_for_proof', preview_status: 'ready', preview_revision: 1 } } },
+      { line_id: 'correction', product_display_name: 'Antler Ornament', artwork_file: { artwork_file_id: 'art-2', status: 'prepared', live_filename: 'ACTIVE_ANTLER_LIVE.ai', proof: { status: 'correction_needed', preview_status: 'ready', preview_revision: 1 } } },
+      { line_id: 'approved', product_display_name: 'Tree Ornament', artwork_file: { artwork_file_id: 'art-3', status: 'prepared', live_filename: 'APPROVED_TREE_LIVE.ai', proof: { status: 'approved', preview_status: 'ready', preview_revision: 2 } } },
+      { line_id: 'pending-file', product_display_name: 'Tree Ornament', artwork_file: { artwork_file_id: 'art-4', status: 'pending', live_filename: 'PENDING_TREE_LIVE.ai' } }
+    ] } },
+    { forge_order_uuid: 'terminal', forge_order_number: 1002, production_status: 'completed', current_tray_number: 8, payload: { items: [
+      { line_id: 'terminal-proof', product_display_name: 'Tree Ornament', artwork_file: { artwork_file_id: 'art-5', status: 'prepared', live_filename: 'DONE_TREE_LIVE.ai' } }
+    ] } },
+    { forge_order_uuid: 'active-with-tray', forge_order_number: 1003, production_status: 'tray_assigned', current_tray_number: 4, payload: { items: [
+      { line_id: 'tray-proof', product_display_name: 'Tree Ornament', artwork_file: { artwork_file_id: 'art-6', status: 'prepared', live_filename: 'TRAY_TREE_LIVE.ai' } }
+    ] } }
+  ]))`, context));
+  assert.deepEqual(queue.map((entry) => entry.lineId), ['needs-proof', 'correction', 'tray-proof']);
+  assert.deepEqual(queue.map((entry) => entry.proofStatus), ['needs_proof', 'correction_needed', 'needs_proof']);
+  const terminalCount = vm.runInContext(`buildStaffProofQueueItems(['completed', 'packed', 'shipped', 'picked_up', 'cancelled'].map((production_status, index) => ({ forge_order_uuid: 'terminal-' + index, production_status, payload: { items: [{ line_id: 'line-' + index, artwork_file: { artwork_file_id: 'art-' + index, status: 'prepared', live_filename: 'TERMINAL_' + index + '_LIVE.ai' } }] } }))).length`, context);
+  assert.equal(terminalCount, 0);
+});
+
+test('staff proofing queue renders compact counts without repeating order rows and uses sequential decisions', () => {
+  const { context } = loadForgeHostedStaffAppForTrayDetail();
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(indexSource, /data-staff-proof-queue/);
+  assert.match(indexSource, /staff-proof-queue-heading[\s\S]*data-action="staff-start-proofing"[\s\S]*data-staff-proof-queue/);
+  assert.doesNotMatch(indexSource, /data-staff-proof-queue-count/);
+  const bothCounts = vm.runInContext('buildStaffProofQueueMarkup(2, 1)', context);
+  assert.match(bothCounts, />2<\/strong> Items to Proof/);
+  assert.match(bothCounts, />1<\/strong> Correction to Review/);
+  const proofOnly = vm.runInContext('buildStaffProofQueueMarkup(3, 0)', context);
+  assert.match(proofOnly, />3<\/strong> Items to Proof/);
+  assert.doesNotMatch(proofOnly, /Correction/);
+  const correctionOnly = vm.runInContext('buildStaffProofQueueMarkup(0, 1)', context);
+  assert.match(correctionOnly, />1<\/strong> Correction to Review/);
+  assert.doesNotMatch(correctionOnly, /Item/);
+  assert.equal(vm.runInContext('buildStaffProofQueueMarkup(0, 0)', context), '');
+  assert.match(cssSource, /\.staff-proof-queue-strip[\s\S]*?width: 100%[\s\S]*?overflow-wrap: anywhere/);
+  assert.doesNotMatch(app, /staff-proof-queue-row--correction/);
+  assert.doesNotMatch(app, /staff-proof-review-button/);
+  assert.doesNotMatch(app, /staff-proof-queue-summary/);
+  assert.match(cssSource, /\.staff-start-proofing-button[\s\S]*?width: auto[\s\S]*?white-space: nowrap/);
+  assert.match(app, /proofQueueSessionPosition \+ 1/);
+  assert.match(app, /Approve\$\{staffOrdersState\.proofQueueMode \? ' & Next' : ''\}/);
+  assert.match(app, /Correction Needed\$\{staffOrdersState\.proofQueueMode \? ' & Next' : ''\}/);
+  assert.match(app, /data-action="staff-skip-artwork-proof"/);
+  assert.match(app, /data-action="staff-show-proof-correction-entry"/);
+  assert.match(app, /proofCorrectionEntryOpen \? `<div class="staff-proof-correction-entry/);
+  assert.match(app, /<details class="staff-artwork-proof-history"><summary>Proof History/);
+  assert.doesNotMatch(app, /staff-artwork-proof-history"\$\{correctionContext \? ' open'/);
+  assert.match(app, /await advanceStaffArtworkProofQueue\('skipped'\)/);
+  assert.match(app, /\['correction_needed', 'skipped'\]\.includes\(decisionStatus\)/);
+  assert.match(app, /await advanceStaffArtworkProofQueue\(status\)/);
+  assert.match(app, /proof\?\.preview_status !== 'ready' \|\| proof\?\.status === 'correction_needed'/);
+  assert.match(cssSource, /\.staff-artwork-proof-info dd[\s\S]*?color: #211b17/);
+  assert.doesNotMatch(bothCounts, /1001|Customer|Product|correction note/);
+  assert.match(app, /needsProofCount > 0 \? 'Start Proofing' : \(correctionCount > 0 \? 'Review Corrections' : 'Start Proofing'\)/);
+});
+
+test('staff proofing queue progression leaves skipped or correction items available while selecting the next item', () => {
+  const { context } = loadForgeHostedStaffAppForTrayDetail();
+  const next = JSON.parse(vm.runInContext(`JSON.stringify(getNextStaffProofQueueEntry([
+    { forge_order_uuid: 'order-1', production_status: 'submitted', payload: { items: [
+      { line_id: 'approved-line', artwork_file: { artwork_file_id: 'art-approved', status: 'prepared', live_filename: 'APPROVED_LIVE.ai', proof: { status: 'approved', preview_status: 'ready', preview_revision: 1 } } },
+      { line_id: 'deferred-line', artwork_file: { artwork_file_id: 'art-deferred', status: 'prepared', live_filename: 'DEFERRED_LIVE.ai', proof: { status: 'correction_needed', preview_status: 'ready', preview_revision: 1 } } },
+      { line_id: 'next-line', artwork_file: { artwork_file_id: 'art-next', status: 'prepared', live_filename: 'NEXT_LIVE.ai', proof: { status: 'waiting_for_proof', preview_status: 'not_generated', preview_revision: 0 } } }
+    ] } }
+  ], ['order-1:approved-line', 'order-1:deferred-line', 'order-1:next-line'], 0, ['order-1:deferred-line']))`, context));
+  assert.equal(next.index, 2);
+  assert.equal(next.entry.lineId, 'next-line');
+  const stillQueued = vm.runInContext(`buildStaffProofQueueItems([{
+    forge_order_uuid: 'order-1', production_status: 'submitted', payload: { items: [
+      { line_id: 'deferred-line', artwork_file: { artwork_file_id: 'art-deferred', status: 'prepared', live_filename: 'DEFERRED_LIVE.ai', proof: { status: 'waiting_for_proof', preview_status: 'ready', preview_revision: 1 } } }
+    ] }
+  }]).length`, context);
+  assert.equal(stillQueued, 1);
+  assert.match(appSource, /async function skipStaffArtworkProofQueueItem\(\)[\s\S]*?advanceStaffArtworkProofQueue\('skipped'\)/);
+  assert.doesNotMatch(appSource.match(/async function skipStaffArtworkProofQueueItem\(\)[\s\S]*?\n}/)?.[0] || '', /saveArtworkProofDecision/);
 });
 
 test('prepared artwork groups use canonical product and variant identity for active prepared associations only', () => {

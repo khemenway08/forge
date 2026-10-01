@@ -39,9 +39,29 @@ working file. Continue to the next ornament/order.
 
 ### 2. Proof
 
-Meagan proofs artwork against Forge order data. Artwork proof state is
-separate from Forge's physical production status. The already-tested
-proof-sheet concept remains part of V1.
+From Staff Orders, Meagan opens the **Proofing Queue** and chooses **Start
+Proofing**. The active queue contains prepared customer working files on
+nonterminal orders that have not been approved for their current proof
+revision. Tray assignment and production batches do not affect eligibility.
+Forge asks the local launcher to render a missing or corrected proof as needed,
+then presents items sequentially without requiring Meagan to use Illustrator or
+return to the order list between items.
+
+The launcher renders the Illustrator artboard as a read-only PNG preview. The
+proof contains only the artboard; it does not include the Illustrator workspace
+or editable artwork parked outside the artboard, and rendering must leave the
+`_LIVE.ai` file unchanged.
+
+Forge displays that preview beside the submitted order and personalization.
+Staff records either **Approve** or **Correction Needed** with a correction
+note. Forge records the authenticated staff session automatically; the proofing
+screen does not ask for a separate name. Either decision advances to the next
+item in the current proofing pass. An approved item leaves the active queue. A
+correction remains visible on the order and identifiable for a later pass; a
+fresh render after the LIVE artwork is fixed creates a new proof revision and
+returns the current decision to **Waiting for Proof** while retaining the prior
+proof history. Proof state is separate from Forge's physical production status
+and does not change tray or item completion.
 
 ### 3. Production Artwork
 
@@ -435,10 +455,11 @@ The maintained launcher source is tracked at
 local template registry remain protected under
 `~/Library/Application Support/Forge Artwork Launcher/`.
 
-This bridge implements template registration and validation plus Prepare
-Artwork/Open LIVE Artwork. It creates or reopens the explicitly associated
-customer working file and opens that file in Illustrator without modifying the
-MASTER.
+This bridge implements template registration and validation, Prepare
+Artwork/Open LIVE Artwork, grouped opening, and artboard-only proof rendering.
+It creates or reopens the explicitly associated customer working file, opens
+that file in Illustrator when requested, and renders proofs without modifying
+the customer file or MASTER.
 
 ------------------------------------------------------------------------
 
@@ -562,7 +583,12 @@ transfer behavior approved in Milestone 4, with overwrite safeguards.
 
 ### Milestone 7 --- Proofing Integration
 
-Integrate the validated proof workflow with artwork records/states.
+Implemented as a sequential Manual Proofing queue in Staff Orders, with the
+individual proof action retained in Staff Order Detail. Missing and corrected
+previews are requested from the secure local launcher when encountered. Proof
+previews, decisions, correction notes, staff identity, revisions, and history
+are stored as additive artwork metadata. No OCR or automatic comparison is
+performed.
 
 ### Milestone 8 --- Operational Validation
 
@@ -624,6 +650,8 @@ Parked ideas:
 -   Open All Artwork groups existing prepared customer working files by
     canonical product/variant and opens them without creating or changing
     artwork.
+-   Manual Proofing renders the associated customer file's artboard without
+    changing the file and records staff decisions separately from production.
 
 Representative clean masters: - Acrylic Star/Tree - Christmas Tree ---
 Small - Christmas Tree --- Large - Baby's First Christmas --- single

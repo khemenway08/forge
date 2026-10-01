@@ -16,6 +16,15 @@ through Forge, validates that every file is an existing regular file inside
 the configured customer artwork root, and opens the complete set in
 Illustrator. It does not create, copy, rename, or modify artwork in this mode.
 
+For an authenticated proof request, the launcher resolves the exact associated
+customer LIVE file from its local receipt, validates it inside the configured
+customer artwork root, and renders the single PDF-compatible Illustrator
+artboard through macOS PDFKit. It uploads only the PNG preview and hashes to
+Forge. It verifies the LIVE file's inode, size, modification time, and SHA-256
+before and after rendering and never opens Illustrator for proof generation.
+Successful preparation, group-open, and proof operations close the launcher
+silently after reporting to Forge; validation and error handling remain active.
+
 ## Local configuration
 
 The launcher reads its machine-specific configuration from:

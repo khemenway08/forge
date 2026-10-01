@@ -6876,6 +6876,9 @@ function createArtworkPreparationTestTables(PDO $pdo): void
     $pdo->exec('CREATE TABLE forge_order_artwork_files (artwork_file_id TEXT PRIMARY KEY,forge_order_uuid TEXT,line_id TEXT,registration_id TEXT,product_definition_id TEXT,variant_key TEXT,configuration_revision INTEGER,configuration_digest TEXT,order_year INTEGER,customer_folder_name TEXT,live_filename TEXT,relative_live_path TEXT UNIQUE,preparation_status TEXT,launcher_profile_label TEXT,master_sha256 TEXT,live_sha256 TEXT,prepared_at TEXT,last_error_code TEXT,created_at TEXT,updated_at TEXT,UNIQUE(forge_order_uuid,line_id))');
     $pdo->exec('CREATE TABLE forge_artwork_prepare_tokens (token_hash TEXT PRIMARY KEY,artwork_file_id TEXT,configuration_revision INTEGER,configuration_digest TEXT,expires_at TEXT,consumed_at TEXT,created_at TEXT)');
     $pdo->exec('CREATE TABLE forge_artwork_prepare_report_tokens (token_hash TEXT PRIMARY KEY,artwork_file_id TEXT,configuration_revision INTEGER,configuration_digest TEXT,expires_at TEXT,consumed_at TEXT,created_at TEXT)');
+    $pdo->exec('CREATE TABLE forge_artwork_proofs (proof_id TEXT PRIMARY KEY,artwork_file_id TEXT UNIQUE,preview_revision INTEGER,preview_status TEXT,source_live_sha256 TEXT,preview_sha256 TEXT,preview_mime_type TEXT,preview_width INTEGER,preview_height INTEGER,preview_bytes BLOB,rendered_at TEXT,renderer_profile_label TEXT,proof_status TEXT,correction_note TEXT,decided_at TEXT,decided_by TEXT,created_at TEXT,updated_at TEXT)');
+    $pdo->exec('CREATE TABLE forge_artwork_proof_events (proof_event_id TEXT PRIMARY KEY,proof_id TEXT,event_type TEXT,preview_revision INTEGER,note TEXT,staff_identity TEXT,created_at TEXT)');
+    $pdo->exec('CREATE TABLE forge_artwork_proof_tokens (token_hash TEXT PRIMARY KEY,token_type TEXT,artwork_file_id TEXT,expected_preview_revision INTEGER,expires_at TEXT,consumed_at TEXT,created_at TEXT)');
 }
 
 function seedArtworkPreparationRegistration(PDO $pdo, bool $valid): void
@@ -6884,6 +6887,52 @@ function seedArtworkPreparationRegistration(PDO $pdo, bool $valid): void
     $pdo->prepare('INSERT INTO forge_artwork_template_registrations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')->execute(['registration-tree','tree_ornament','tree-family','size','{"small":"Small","large":"Large"}','{"filenames":{"small":"SMALL_CHRISTMAS TREE_MASTER.ai","large":"LARGE_CHRISTMAS TREE_MASTER.ai"}}','tree-launcher','Tree Ornament',1,$digest,'active',$now,$now]);
     $pdo->prepare('INSERT INTO forge_artwork_template_validations VALUES (?,?,?,?,?,?,?,?,?)')->execute(['registration-tree','small',$valid?'valid':'invalid',$now,'Test Mac',1,$digest,$valid?null:'master_missing',$now]);
 }
+
+$runner->run('artwork proof lifecycle is token scoped revision safe and preserves submitted order data', static function (): void {
+    $pdo=createStaffOrderRepositoryTestPdo();createArtworkPreparationTestTables($pdo);
+    $uuid='123e4567-e89b-42d3-a456-426614174620';$line='123e4567-e89b-42d3-a456-426614174620-line-1';
+    $payload=createValidPayload(['forge_order_uuid'=>$uuid,'forge_order_number'=>1070]);
+    $payload['items'][0]['line_id']=$line;
+    seedStaffOrderRepositoryTestOrder($pdo,['payload'=>$payload,'forge_order_uuid'=>$uuid,'forge_order_number'=>1070,'production_status'=>'submitted']);
+    $now='2026-10-01 12:00:00.000000';$artwork='123e4567-e89b-42d3-a456-426614174720';
+    $pdo->prepare('INSERT INTO forge_order_artwork_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')->execute([$artwork,$uuid,$line,'registration-tree','tree_ornament','small',1,str_repeat('b',64),2026,'DOE_JANE_1070','DOE_JANE_CHRISTMAS-TREE-SMALL_LIVE.ai','2026/DOE_JANE_1070/DOE_JANE_CHRISTMAS-TREE-SMALL_LIVE.ai','prepared','Test Mac',str_repeat('a',64),str_repeat('c',64),$now,null,$now,$now]);
+    $before=$pdo->query('SELECT payload_json,payload_sha256,production_status FROM forge_orders')->fetch();
+    $repository=new \Forge\Server\PdoArtworkProofRepository($pdo);
+    $issued=$repository->issueProofToken($uuid,$line);assertSame(64,strlen($issued['proof_token']));assertSame('waiting_for_proof',$issued['proof']['status']);
+    $exchange=$repository->exchangeProofToken($issued['proof_token']);assertSame($artwork,$exchange['artwork']['artwork_file_id']);assertSame('2026/DOE_JANE_1070/DOE_JANE_CHRISTMAS-TREE-SMALL_LIVE.ai',$exchange['artwork']['relative_live_path']);
+    assertThrows(static fn()=>$repository->exchangeProofToken($issued['proof_token']),static fn($error)=>assertTrue($error instanceof InvalidArgumentException));
+    $png=base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',true);assertTrue(is_string($png));
+    $proof=$repository->reportProof($exchange['report_token'],'Test Mac',str_repeat('d',64),hash('sha256',$png),1,1,base64_encode($png));
+    assertSame(1,$proof['preview_revision']);assertSame('ready',$proof['preview_status']);assertSame('waiting_for_proof',$proof['status']);
+    $preview=$repository->loadPreview($artwork);assertSame($png,$preview['bytes']);assertSame(hash('sha256',$png),$preview['sha256']);
+    $correction=$repository->saveDecision($uuid,$line,'correction_needed','Move the second name left.','Meagan',1);
+    assertSame('correction_needed',$correction['proof']['status']);assertSame('Move the second name left.',$correction['proof']['correction_note']);assertSame('Meagan',$correction['proof']['decided_by']);assertSame(2,count($correction['history']));
+    assertThrows(static fn()=>$repository->saveDecision($uuid,$line,'approved','', 'Meagan',2),static fn($error)=>assertTrue($error instanceof \Forge\Server\ArtworkProofConflictException));
+    $refresh=$repository->issueProofToken($uuid,$line);$refreshExchange=$repository->exchangeProofToken($refresh['proof_token']);
+    $refreshed=$repository->reportProof($refreshExchange['report_token'],'Test Mac',str_repeat('e',64),hash('sha256',$png),1,1,base64_encode($png));
+    assertSame(2,$refreshed['preview_revision']);assertSame('waiting_for_proof',$refreshed['status']);assertSame(null,$refreshed['decided_at']);
+    $approved=$repository->saveDecision($uuid,$line,'approved','ignored','Kyle',2);assertSame('approved',$approved['proof']['status']);assertSame(null,$approved['proof']['correction_note']);assertSame(4,count($approved['history']));
+    assertSame($before,$pdo->query('SELECT payload_json,payload_sha256,production_status FROM forge_orders')->fetch());
+    assertThrows(static fn()=>$repository->reportProof($refreshExchange['report_token'],'Test Mac',str_repeat('e',64),hash('sha256',$png),1,1,base64_encode($png)),static fn($error)=>assertTrue($error instanceof InvalidArgumentException));
+    assertThrows(static fn()=>$repository->reportProof(str_repeat('f',64),'Test Mac',str_repeat('e',64),str_repeat('0',64),1,1,'not-base64'),static fn($error)=>assertTrue($error instanceof InvalidArgumentException));
+    $pdo->prepare('UPDATE forge_orders SET production_status=? WHERE forge_order_uuid=?')->execute(['completed',$uuid]);
+    assertThrows(static fn()=>$repository->issueProofToken($uuid,$line),static fn($error)=>assertTrue($error instanceof \Forge\Server\ArtworkProofConflictException));
+});
+
+$runner->run('artwork proof migration and endpoints are additive authenticated and path safe', static function (): void {
+    $migration=file_get_contents(dirname(__DIR__).'/migrations/023_create_forge_artwork_proofs.sql');
+    $proof=file_get_contents(dirname(__DIR__,2).'/public/api/v1/staff/artwork-proof.php');
+    $preview=file_get_contents(dirname(__DIR__,2).'/public/api/v1/staff/artwork-proof-preview.php');
+    $token=file_get_contents(dirname(__DIR__,2).'/public/api/v1/staff/artwork-proof-token.php');
+    $launcher=file_get_contents(dirname(__DIR__,2).'/public/api/v1/staff/artwork-template-launcher.php');
+    assertTrue(is_string($migration)&&is_string($proof)&&is_string($preview)&&is_string($token)&&is_string($launcher));
+    assertTrue(strpos($migration,'forge_artwork_proofs')!==false);assertTrue(strpos($migration,'forge_artwork_proof_events')!==false);assertTrue(strpos($migration,'forge_artwork_proof_tokens')!==false);
+    assertTrue(strpos($migration,'ALTER TABLE forge_orders')===false);assertTrue(strpos($migration,'UPDATE forge_orders')===false);
+    assertTrue(strpos($proof,'requireAuthenticatedStaffSession')!==false);assertTrue(strpos($preview,'requireAuthenticatedStaffSession')!==false);assertTrue(strpos($token,'requireAuthenticatedStaffSession')!==false);
+    assertTrue(strpos($proof,"'Authenticated Staff'")!==false);assertTrue(strpos($proof,"\$payload['staff_identity']")===false);
+    assertTrue(strpos($token,'forge-artwork://proof?token=')!==false);assertTrue(strpos($launcher,"exchange_proof")!==false);assertTrue(strpos($launcher,"report_proof")!==false);assertTrue(strpos($launcher,'requireAuthenticatedStaffSession')===false);
+    assertTrue(strpos($proof,'relative_live_path')===false);assertTrue(strpos($preview,'relative_live_path')===false);
+});
 
 $runner->run('inventory location endpoints and repository support staff management without catalog placement coupling', static function (): void {
     $repositorySource = file_get_contents(dirname(__DIR__) . '/lib/inventory-location-repository.php');

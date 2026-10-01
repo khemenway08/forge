@@ -30,9 +30,19 @@ try{
         $result=\Forge\Server\buildArtworkPreparationRepositoryFromEnvironment()->exchangeOpenGroupToken(trim((string)($payload['open_token']??'')));
         \Forge\Server\ApiResponse::send(200,\Forge\Server\ApiResponse::success($result));exit;
     }
+    if($action==='exchange_proof'){
+        $result=\Forge\Server\buildArtworkProofRepositoryFromEnvironment()->exchangeProofToken(trim((string)($payload['proof_token']??'')));
+        \Forge\Server\ApiResponse::send(200,\Forge\Server\ApiResponse::success($result));exit;
+    }
+    if($action==='report_proof'){
+        $proof=\Forge\Server\buildArtworkProofRepositoryFromEnvironment()->reportProof(trim((string)($payload['report_token']??'')),trim((string)($payload['launcher_profile_label']??'')),trim((string)($payload['source_live_sha256']??'')),trim((string)($payload['preview_sha256']??'')),(int)($payload['preview_width']??0),(int)($payload['preview_height']??0),(string)($payload['preview_png_base64']??''));
+        \Forge\Server\ApiResponse::send(200,\Forge\Server\ApiResponse::success(['proof'=>$proof]));exit;
+    }
     throw new InvalidArgumentException('A valid launcher action is required.');
 }catch(\Forge\Server\ApiProblem $problem){\Forge\Server\ApiResponse::send($problem->getHttpStatus(),\Forge\Server\ApiResponse::error($problem->getErrorCodeValue(),$problem->getSafeMessage()),$problem->getHeaders());}
 catch(InvalidArgumentException $exception){\Forge\Server\ApiResponse::send(422,\Forge\Server\ApiResponse::error('invalid_request',$exception->getMessage()));}
 catch(\Forge\Server\ArtworkPreparationNotReadyException $exception){\Forge\Server\ApiResponse::send(409,\Forge\Server\ApiResponse::error('artwork_not_ready',$exception->getMessage()));}
 catch(\Forge\Server\ArtworkPreparationConflictException $exception){\Forge\Server\ApiResponse::send(409,\Forge\Server\ApiResponse::error('artwork_conflict',$exception->getMessage()));}
+catch(\Forge\Server\ArtworkProofNotFoundException $exception){\Forge\Server\ApiResponse::send(404,\Forge\Server\ApiResponse::error('artwork_proof_not_found',$exception->getMessage()));}
+catch(\Forge\Server\ArtworkProofConflictException $exception){\Forge\Server\ApiResponse::send(409,\Forge\Server\ApiResponse::error('artwork_proof_conflict',$exception->getMessage()));}
 catch(Throwable $exception){forge_staff_log_unexpected_exception($exception,$bootstrapPath,'artwork launcher endpoint');forge_staff_send_fallback_response(503,['application'=>'Forge','api_version'=>'1','status'=>'error','error'=>['code'=>'storage_unavailable','message'=>'Artwork validation is currently unavailable.']]);}

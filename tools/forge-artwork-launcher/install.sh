@@ -32,6 +32,7 @@ xcrun clang \
   -Wno-deprecated-declarations \
   -framework AppKit \
   -framework Carbon \
+  -framework PDFKit \
   -framework Security \
   -o "$BUILD_APP/Contents/MacOS/ForgeArtworkLauncher" \
   "$SCRIPT_DIR/ForgeArtworkLauncher.m"
@@ -40,6 +41,7 @@ codesign --force --sign - --identifier com.thehilltopshop.forge-artwork-launcher
 plutil -lint "$BUILD_APP/Contents/Info.plist"
 "$BUILD_APP/Contents/MacOS/ForgeArtworkLauncher" --validate-url 'forge-artwork://setup?token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 "$BUILD_APP/Contents/MacOS/ForgeArtworkLauncher" --validate-url 'forge-artwork://prepare?token=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+"$BUILD_APP/Contents/MacOS/ForgeArtworkLauncher" --validate-url 'forge-artwork://proof?token=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
 
 echo "Build succeeded: $BUILD_APP"
 
